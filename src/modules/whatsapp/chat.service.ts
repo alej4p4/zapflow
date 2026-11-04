@@ -181,6 +181,7 @@ export class ChatService {
                 keyId: true,
                 content: true,
                 fromMe: true,
+                senderJid: true,
                 timestamp: true,
                 type: true,
                 status: true,
@@ -196,19 +197,22 @@ export class ChatService {
 
         // Fetch quoted messages
         const quoteIds = messages.map(m => m.quoteId).filter((id): id is string => !!id);
-        const quotedMessagesMap = new Map<string, { content: string | null; fromMe: boolean; senderJid: string | null; pushName: string | null }>();
+        const quotedMessagesMap = new Map<string, { content: string | null; fromMe: boolean; senderJid: string | null; pushName: string | null; type: string; mediaUrl: string | null }>();
+        let quotedMsgs: any[] = [];
         if (quoteIds.length > 0) {
             try {
-                const quotedMsgs = await prisma.message.findMany({
+                quotedMsgs = await prisma.message.findMany({
                     where: { sessionId: dbSessionId, keyId: { in: quoteIds } },
-                    select: { keyId: true, content: true, fromMe: true, senderJid: true, pushName: true }
+                    select: { keyId: true, content: true, fromMe: true, senderJid: true, pushName: true, type: true, mediaUrl: true }
                 });
                 quotedMsgs.forEach(qm => {
                     quotedMessagesMap.set(qm.keyId, {
                         content: qm.content,
                         fromMe: qm.fromMe,
                         senderJid: qm.senderJid,
-                        pushName: qm.pushName
+                        pushName: qm.pushName,
+                        type: qm.type,
+                        mediaUrl: qm.mediaUrl
                     });
                 });
             } catch (e) {
@@ -225,15 +229,133 @@ export class ChatService {
                     content: quoted.content,
                     fromMe: quoted.fromMe,
                     senderJid: quoted.senderJid,
-                    pushName: quoted.pushName
+                    pushName: quoted.pushName,
+                    type: quoted.type,
+                    mediaUrl: quoted.mediaUrl
                 } : null
             };
         });
 
+        // Build contactMap & participantNames for mentions and headers
+        const contactMap: Record<string, string> = {};
+        const participantNamesSet = new Set<string>();
+        const candidateIds = new Set<string>();
+
+        let groupParticipants: Array<{ id: string; phoneNumber?: string }> = [];
+        if (isGroup) {
+            try {
+                const group = await prisma.group.findFirst({
+                    where: { sessionId: dbSessionId, jid },
+                    select: { participants: true }
+                });
+                groupParticipants = (group?.participants as Array<{ id: string; phoneNumber?: string }>) || [];
+                for (const p of groupParticipants) {
+                    if (p.id) candidateIds.add(p.id);
+                    if (p.phoneNumber) candidateIds.add(p.phoneNumber);
+                }
+            } catch (e) {
+                console.error("Error fetching group participants:", e);
+            }
+        }
+
+        // Add senderJids and scan mentions from messages & quoted
+        for (const m of messages) {
+            if (m.senderJid) candidateIds.add(m.senderJid);
+            if (m.content) {
+                const mentionRegex = /@(\d{8,25})/g;
+                let match;
+                while ((match = mentionRegex.exec(m.content)) !== null) {
+                    candidateIds.add(match[1]);
+                    candidateIds.add(`${match[1]}@lid`);
+                    candidateIds.add(`${match[1]}@s.whatsapp.net`);
+                }
+            }
+        }
+        for (const q of quotedMsgs) {
+            if (q.senderJid) candidateIds.add(q.senderJid);
+            if (q.content) {
+                const mentionRegex = /@(\d{8,25})/g;
+                let match;
+                while ((match = mentionRegex.exec(q.content)) !== null) {
+                    candidateIds.add(match[1]);
+                    candidateIds.add(`${match[1]}@lid`);
+                    candidateIds.add(`${match[1]}@s.whatsapp.net`);
+                }
+            }
+        }
+
+        const idList = Array.from(candidateIds);
+        const bareDigits = idList.map(id => id.split('@')[0]).filter(d => /^\d+$/.test(d));
+
+        if (idList.length > 0 || bareDigits.length > 0) {
+            try {
+                const contacts = await prisma.contact.findMany({
+                    where: {
+                        sessionId: dbSessionId,
+                        OR: [
+                            { jid: { in: idList } },
+                            { lid: { in: idList } },
+                            { remoteJidAlt: { in: idList } },
+                            ...(bareDigits.length > 0 ? [
+                                { jid: { in: bareDigits.map(d => `${d}@s.whatsapp.net`) } },
+                                { lid: { in: bareDigits.map(d => `${d}@lid`) } }
+                            ] : [])
+                        ]
+                    },
+                    select: { jid: true, lid: true, name: true, notify: true, verifiedName: true, remoteJidAlt: true }
+                });
+
+                for (const c of contacts) {
+                    const displayName = c.name || c.notify || c.verifiedName;
+                    if (!displayName) continue;
+                    if (c.jid) {
+                        contactMap[c.jid] = displayName;
+                        contactMap[c.jid.split('@')[0]] = displayName;
+                    }
+                    if (c.lid) {
+                        contactMap[c.lid] = displayName;
+                        contactMap[c.lid.split('@')[0]] = displayName;
+                    }
+                    if (c.remoteJidAlt) {
+                        contactMap[c.remoteJidAlt] = displayName;
+                        contactMap[c.remoteJidAlt.split('@')[0]] = displayName;
+                    }
+                }
+            } catch (e) {
+                console.error("Error batch loading contacts for contactMap:", e);
+            }
+        }
+
+        // Link group participant LIDs to phone numbers if resolved
+        if (isGroup && groupParticipants.length > 0) {
+            for (const p of groupParticipants) {
+                const lidNum = p.id ? p.id.split('@')[0] : null;
+                const phoneNum = p.phoneNumber ? p.phoneNumber.split('@')[0] : null;
+                const name = (phoneNum && contactMap[phoneNum]) ||
+                             (lidNum && contactMap[lidNum]) ||
+                             (p.phoneNumber && contactMap[p.phoneNumber]) ||
+                             (p.id && contactMap[p.id]);
+
+                if (name) {
+                    if (lidNum) contactMap[lidNum] = name;
+                    if (p.id) contactMap[p.id] = name;
+                    if (phoneNum) contactMap[phoneNum] = name;
+                    if (p.phoneNumber) contactMap[p.phoneNumber] = name;
+                    participantNamesSet.add(name);
+                } else if (phoneNum) {
+                    participantNamesSet.add(`+${phoneNum}`);
+                }
+            }
+        }
+
+        const participantNames = Array.from(participantNamesSet).sort((a, b) => a.localeCompare(b));
+
         // Return chronological order (oldest first)
         return {
             messages: messagesWithQuote.reverse(),
-            hasMore
+            hasMore,
+            contactMap,
+            participantNames
         };
     }
 

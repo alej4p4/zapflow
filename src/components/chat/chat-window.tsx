@@ -9,6 +9,7 @@ import {
     ArrowLeft,
     FileText,
     Image as ImageIcon,
+    Camera,
     Music,
     Video,
     Download,
@@ -88,10 +89,73 @@ function MessageStatusCheck({ status }: { status: string }) {
 }
 
 // ─── Lazy media ────────
+// ─── Helper for rendering text with links and @mentions ───
+function renderMessageContent(content: string | null | undefined, contactMap?: Record<string, string>) {
+    if (!content) return null;
+
+    // Matches URLs or @(8 to 25 digits)
+    const tokenRegex = /(https?:\/\/[^\s]+)|@(\d{8,25})/g;
+    const parts: (string | React.ReactNode)[] = [];
+    let lastIndex = 0;
+    let match: RegExpExecArray | null;
+
+    while ((match = tokenRegex.exec(content)) !== null) {
+        const matchIndex = match.index;
+        if (matchIndex > lastIndex) {
+            parts.push(content.substring(lastIndex, matchIndex));
+        }
+
+        if (match[1]) {
+            const url = match[1];
+            parts.push(
+                <a
+                    key={`url-${matchIndex}`}
+                    href={url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-[#027eb5] dark:text-[#53bdeb] underline hover:opacity-80 break-all"
+                    onClick={(e) => e.stopPropagation()}
+                >
+                    {url}
+                </a>
+            );
+        } else if (match[2]) {
+            const id = match[2];
+            const resolvedName = contactMap ? (
+                contactMap[id] ||
+                contactMap[`${id}@lid`] ||
+                contactMap[`${id}@s.whatsapp.net`]
+            ) : null;
+            const displayText = resolvedName ? `@${resolvedName}` : `@${id}`;
+
+            parts.push(
+                <span
+                    key={`mention-${matchIndex}-${id}`}
+                    className="font-medium text-[#00a884] dark:text-[#25d366] inline"
+                    title={resolvedName ? `ID: ${id}` : undefined}
+                >
+                    {displayText}
+                </span>
+            );
+        }
+
+        lastIndex = matchIndex + match[0].length;
+    }
+
+    if (lastIndex < content.length) {
+        parts.push(content.substring(lastIndex));
+    }
+
+    return parts;
+}
+
+// ─── Lazy media with fallback ──────────────────
 function LazyMedia({ src, alt }: { src: string; alt: string }) {
     const ref = useRef<HTMLDivElement>(null);
     const [visible, setVisible] = useState(false);
     const [loaded, setLoaded] = useState(false);
+    const [hasError, setHasError] = useState(false);
+
     useEffect(() => {
         const el = ref.current;
         if (!el) return;
@@ -99,10 +163,38 @@ function LazyMedia({ src, alt }: { src: string; alt: string }) {
         obs.observe(el);
         return () => obs.disconnect();
     }, []);
+
+    if (hasError) {
+        return (
+            <div ref={ref} className="mb-1.5 flex items-center gap-3 p-3 rounded-xl bg-black/5 dark:bg-white/5 border border-dashed border-border/50 text-xs text-muted-foreground select-none">
+                <div className="h-9 w-9 rounded-lg bg-muted flex items-center justify-center shrink-0">
+                    <ImageIcon className="h-5 w-5 opacity-60 text-[#00a884]" />
+                </div>
+                <div className="flex-1 min-w-0">
+                    <p className="font-medium text-foreground text-xs">Imagem</p>
+                    <p className="text-[11px] opacity-70 truncate">Mídia original não disponível no servidor</p>
+                </div>
+            </div>
+        );
+    }
+
     return (
-        <div ref={ref} className="mb-1.5 overflow-hidden rounded-xl">
-            {visible ? <img src={src} alt={alt} className={`max-w-full max-h-64 object-cover rounded-xl transition-opacity ${loaded ? 'opacity-100' : 'opacity-0'}`} onLoad={() => setLoaded(true)} loading="lazy" />
-                : <div className="h-40 bg-muted/30 rounded-xl animate-pulse" />}
+        <div ref={ref} className="mb-1.5 overflow-hidden rounded-xl relative min-h-[120px] bg-muted/20 flex items-center justify-center">
+            {visible ? (
+                <>
+                    {!loaded && <div className="absolute inset-0 bg-muted/30 rounded-xl animate-pulse" />}
+                    <img
+                        src={src}
+                        alt={alt}
+                        className={`max-w-full max-h-80 object-contain rounded-xl transition-opacity duration-300 ${loaded ? 'opacity-100' : 'opacity-0'}`}
+                        onLoad={() => setLoaded(true)}
+                        onError={() => setHasError(true)}
+                        loading="lazy"
+                    />
+                </>
+            ) : (
+                <div className="h-36 w-full bg-muted/30 rounded-xl animate-pulse" />
+            )}
         </div>
     );
 }
@@ -385,6 +477,8 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
     const [loading, setLoading] = useState(true);
     const [hasMore, setHasMore] = useState(false);
     const [loadingMore, setLoadingMore] = useState(false);
+    const [contactMap, setContactMap] = useState<Record<string, string>>({});
+    const [participantNames, setParticipantNames] = useState<string[]>([]);
     const [oldestTimestamp, setOldestTimestamp] = useState<string | null>(null);
     const [autoScroll, setAutoScroll] = useState(true);
     const [newMsgBadge, setNewMsgBadge] = useState(false);
@@ -412,6 +506,12 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
             else if (before) setLoadingMore(true);
 
             const data = await fetchOrGetChatMessages(sessionId, jid, PAGE_LIMIT, before);
+            if (data.contactMap && Object.keys(data.contactMap).length > 0) {
+                setContactMap(prev => ({ ...prev, ...data.contactMap }));
+            }
+            if (data.participantNames && data.participantNames.length > 0) {
+                setParticipantNames(data.participantNames);
+            }
             if (!before) {
                 setMessages(data.messages || []);
                 setAutoScroll(true);
@@ -440,12 +540,16 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
             setMessages(cached.messages);
             setHasMore(cached.hasMore);
             setOldestTimestamp(cached.oldestTimestamp);
+            if (cached.contactMap) setContactMap(cached.contactMap);
+            if (cached.participantNames) setParticipantNames(cached.participantNames);
             setLoading(false);
             setAutoScroll(true);
             // Silently check for fresh messages in background without wiping screen
             fetchMessages(undefined, true);
         } else {
             setMessages([]);
+            setContactMap({});
+            setParticipantNames([]);
             setOldestTimestamp(null);
             setHasMore(false);
             setLoading(true);
@@ -734,7 +838,9 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
                         </h3>
                         <p className="text-[11.5px] text-muted-foreground truncate flex items-center gap-1.5">
                             {isGroup ? (
-                                <span>Grupo • {jid}</span>
+                                <span className="truncate">
+                                    {participantNames.length > 0 ? participantNames.join(", ") : `Grupo • ${jid}`}
+                                </span>
                             ) : (
                                 <span className="flex items-center gap-1 text-[#00a884] font-medium">
                                     <span className="h-1.5 w-1.5 rounded-full bg-[#00a884]" />
@@ -822,21 +928,30 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
                                         )}
                                         onContextMenu={(e) => handleContextMenu(e, msg)}
                                     >
-                                        {/* Group sender pushName with WhatsApp participant color */}
-                                        {!msg.fromMe && isGroup && msg.pushName && (
-                                            <span
-                                                className="text-[12.5px] font-semibold block mb-0.5 leading-tight select-none"
-                                                style={{ color: getParticipantColor(msg.pushName) }}
-                                            >
-                                                {msg.pushName}
-                                            </span>
-                                        )}
+                                        {/* Group sender resolved name with WhatsApp participant color */}
+                                        {!msg.fromMe && isGroup && (() => {
+                                            const sJid = msg.senderJid || "";
+                                            const bare = sJid.split('@')[0];
+                                            const resolved = (sJid && contactMap[sJid]) ||
+                                                             (bare && contactMap[bare]) ||
+                                                             msg.pushName ||
+                                                             bare ||
+                                                             "Membro";
+                                            return (
+                                                <span
+                                                    className="text-[12.5px] font-semibold block mb-0.5 leading-tight select-none truncate"
+                                                    style={{ color: getParticipantColor(resolved) }}
+                                                >
+                                                    {resolved}
+                                                </span>
+                                            );
+                                        })()}
 
-                                        {/* Quoted Message Box inside bubble */}
+                                        {/* Quoted Message Box inside bubble with mentions and preview */}
                                         {msg.quoted && (
                                             <div
                                                 className={cn(
-                                                    "mb-1 px-2.5 py-1.5 rounded-lg border-l-4 text-xs select-none cursor-pointer text-left transition-opacity hover:opacity-90",
+                                                    "mb-1 px-2.5 py-1.5 rounded-lg border-l-4 text-xs select-none cursor-pointer text-left transition-opacity hover:opacity-90 flex items-center justify-between gap-2",
                                                     msg.fromMe
                                                         ? "border-[#00a884] bg-black/5 dark:bg-black/20 text-[#111b21] dark:text-[#e9edef]"
                                                         : "border-[#00a884] bg-black/5 dark:bg-white/5 text-[#111b21] dark:text-[#e9edef]"
@@ -855,28 +970,52 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
                                                     }
                                                 }}
                                             >
-                                                <span className="font-semibold block text-[11px] text-[#00a884]">
-                                                    {msg.quoted.fromMe ? "Você" : (msg.quoted.pushName || msg.quoted.senderJid?.split('@')[0] || "Contato")}
-                                                </span>
-                                                <span className="line-clamp-2 block break-all text-xs opacity-80">
-                                                    {msg.quoted.content || "Mídia"}
-                                                </span>
+                                                <div className="flex-1 min-w-0">
+                                                    <span className="font-semibold block text-[11px] text-[#00a884] dark:text-[#25d366] truncate mb-0.5">
+                                                        {(() => {
+                                                            if (msg.quoted.fromMe) return "Você";
+                                                            const qJid = msg.quoted.senderJid || "";
+                                                            const bare = qJid.split('@')[0];
+                                                            return (qJid && contactMap[qJid]) ||
+                                                                   (bare && contactMap[bare]) ||
+                                                                   msg.quoted.pushName ||
+                                                                   bare ||
+                                                                   "Contato";
+                                                        })()}
+                                                    </span>
+                                                    <span className="line-clamp-2 block break-all text-xs opacity-80">
+                                                        {msg.quoted.type === 'IMAGE' && <Camera className="h-3 w-3 inline mr-1 opacity-70" />}
+                                                        {renderMessageContent(msg.quoted.content || (msg.quoted.type === 'IMAGE' ? "Foto" : "Mídia"), contactMap)}
+                                                    </span>
+                                                </div>
+                                                {msg.quoted.type === 'IMAGE' && msg.quoted.mediaUrl && (
+                                                    <div className="h-10 w-10 shrink-0 rounded overflow-hidden bg-muted">
+                                                        <img src={msg.quoted.mediaUrl} alt="Thumbnail" className="h-full w-full object-cover" />
+                                                    </div>
+                                                )}
                                             </div>
                                         )}
 
-                                        {/* IMAGE */}
-                                        {msg.type === 'IMAGE' && msg.mediaUrl && (
-                                            <div className="relative group/media">
-                                                <LazyMedia src={msg.mediaUrl} alt="Imagem" />
-                                                <Button
-                                                    size="icon"
-                                                    variant="secondary"
-                                                    className="absolute top-2 right-2 h-8 w-8 rounded-full opacity-0 group-hover/media:opacity-100 transition-opacity bg-background/80 backdrop-blur-sm"
-                                                    onClick={() => handleDownload(msg.mediaUrl!, `IMAGE-${msg.keyId}.jpg`)}
-                                                >
-                                                    <Download className="h-4 w-4" />
-                                                </Button>
-                                            </div>
+                                        {/* IMAGE (with fallback if mediaUrl is missing) */}
+                                        {msg.type === 'IMAGE' && (
+                                            msg.mediaUrl ? (
+                                                <div className="relative group/media">
+                                                    <LazyMedia src={msg.mediaUrl} alt="Imagem" />
+                                                    <Button
+                                                        size="icon"
+                                                        variant="secondary"
+                                                        className="absolute top-2 right-2 h-8 w-8 rounded-full opacity-0 group-hover/media:opacity-100 transition-opacity bg-background/80 backdrop-blur-sm"
+                                                        onClick={() => handleDownload(msg.mediaUrl!, `IMAGE-${msg.keyId}.jpg`)}
+                                                    >
+                                                        <Download className="h-4 w-4" />
+                                                    </Button>
+                                                </div>
+                                            ) : (
+                                                <div className="flex items-center gap-2.5 p-2 rounded-lg bg-black/5 dark:bg-white/5 mb-1.5 text-xs text-muted-foreground select-none">
+                                                    <ImageIcon className="h-5 w-5 shrink-0 opacity-60 text-[#00a884]" />
+                                                    <span>Foto</span>
+                                                </div>
+                                            )
                                         )}
 
                                         {/* VIDEO */}
@@ -941,10 +1080,10 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
                                             </div>
                                         )}
 
-                                        {/* Text content & Timestamp + status checks */}
+                                        {/* Text content with mentions & Timestamp + status checks */}
                                         <div className="flex flex-wrap items-end justify-end gap-x-2 gap-y-0.5">
                                             <span className="flex-1 break-words whitespace-pre-wrap text-[14.2px]">
-                                                {msg.content}
+                                                {renderMessageContent(msg.content, contactMap)}
                                             </span>
                                             <div className="inline-flex items-center gap-1 shrink-0 ml-auto select-none pt-0.5">
                                                 <span className="text-[11px] leading-none text-[#667781] dark:text-[#8696a0]">

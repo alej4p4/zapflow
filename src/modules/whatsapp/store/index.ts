@@ -1,7 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import type { WASocket, WAMessage, Contact } from "@whiskeysockets/baileys";
 import { normalizeMessageContent } from "@whiskeysockets/baileys";
-import { onMessageReceived, onMessageSent, dispatchWebhook, downloadAndSaveMedia } from "@/lib/webhook";
+import { onMessageReceived, onMessageSent, dispatchWebhook, downloadAndSaveMedia, extractMediaMessage } from "@/lib/webhook";
 import { handleBotCommand, setSessionStartTime } from "../bot/command-handler";
 import { resolveToPhoneJid, isLidJid, normalizeJid } from "@/lib/jid-utils";
 
@@ -417,28 +417,31 @@ async function processAndSaveMessage(
         logger.warn("Store", `[DEBUG] Message ${keyId} has fromMe=${fromMe}. Key:`, msg.key);
     }
 
+    const mediaInfo = extractMediaMessage(msg.message);
     const messageContent = normalizeMessageContent(msg.message);
     let text = "";
     let messageType = "TEXT";
 
-    // Extract content based on message type
-    if (messageContent?.conversation) {
+    // Extract content based on message type (with recursive wrapper unwrapping for media)
+    if (mediaInfo) {
+        if (mediaInfo.type === 'imageMessage') {
+            messageType = "IMAGE";
+            text = mediaInfo.media.caption || "";
+        } else if (mediaInfo.type === 'videoMessage') {
+            messageType = "VIDEO";
+            text = mediaInfo.media.caption || "";
+        } else if (mediaInfo.type === 'audioMessage') {
+            messageType = "AUDIO";
+        } else if (mediaInfo.type === 'documentMessage') {
+            messageType = "DOCUMENT";
+            text = mediaInfo.media.fileName || "";
+        } else if (mediaInfo.type === 'stickerMessage') {
+            messageType = "STICKER";
+        }
+    } else if (messageContent?.conversation) {
         text = messageContent.conversation;
     } else if (messageContent?.extendedTextMessage?.text) {
         text = messageContent.extendedTextMessage.text;
-    } else if (messageContent?.imageMessage) {
-        messageType = "IMAGE";
-        text = messageContent.imageMessage.caption || "";
-    } else if (messageContent?.videoMessage) {
-        messageType = "VIDEO";
-        text = messageContent.videoMessage.caption || "";
-    } else if (messageContent?.audioMessage) {
-        messageType = "AUDIO";
-    } else if (messageContent?.documentMessage) {
-        messageType = "DOCUMENT";
-        text = messageContent.documentMessage.fileName || "";
-    } else if (messageContent?.stickerMessage) {
-        messageType = "STICKER";
     } else if (messageContent?.locationMessage) {
         messageType = "LOCATION";
         text = `${messageContent.locationMessage.degreesLatitude},${messageContent.locationMessage.degreesLongitude}`;

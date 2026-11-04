@@ -5,6 +5,7 @@ export interface Message {
     keyId: string;
     content: string;
     fromMe: boolean;
+    senderJid?: string | null;
     timestamp: string;
     type: string;
     status: string;
@@ -18,6 +19,8 @@ export interface Message {
         fromMe: boolean;
         senderJid: string | null;
         pushName: string | null;
+        type?: string;
+        mediaUrl?: string | null;
     } | null;
 }
 
@@ -26,18 +29,20 @@ export interface CachedChat {
     hasMore: boolean;
     oldestTimestamp: string | null;
     cachedAt: number;
+    contactMap?: Record<string, string>;
+    participantNames?: string[];
 }
 
 // In-memory cache keyed by "sessionId:jid"
 export const chatCache = new Map<string, CachedChat>();
-const inFlightRequests = new Map<string, Promise<{ messages: Message[]; hasMore: boolean }>>();
+const inFlightRequests = new Map<string, Promise<{ messages: Message[]; hasMore: boolean; contactMap?: Record<string, string>; participantNames?: string[] }>>();
 
 export async function fetchOrGetChatMessages(
     sessionId: string,
     jid: string,
     limit = 50,
     before?: string
-): Promise<{ messages: Message[]; hasMore: boolean }> {
+): Promise<{ messages: Message[]; hasMore: boolean; contactMap?: Record<string, string>; participantNames?: string[] }> {
     const cacheKey = `${sessionId}:${jid}`;
 
     if (!before && inFlightRequests.has(cacheKey)) {
@@ -49,16 +54,23 @@ export async function fetchOrGetChatMessages(
             const data: any = await getChatMessages(sessionId, jid, limit, before);
             const messages: Message[] = data.messages || [];
             const hasMore: boolean = Boolean(data.hasMore);
+            const contactMap: Record<string, string> = data.contactMap || {};
+            const participantNames: string[] = data.participantNames || [];
 
             if (!before && messages) {
                 chatCache.set(cacheKey, {
                     messages,
                     hasMore,
                     oldestTimestamp: messages.length > 0 ? messages[0].timestamp : null,
-                    cachedAt: Date.now()
+                    cachedAt: Date.now(),
+                    contactMap,
+                    participantNames
                 });
+            } else if (before && chatCache.has(cacheKey)) {
+                const existing = chatCache.get(cacheKey)!;
+                existing.contactMap = { ...(existing.contactMap || {}), ...contactMap };
             }
-            return { messages, hasMore };
+            return { messages, hasMore, contactMap, participantNames };
         } finally {
             inFlightRequests.delete(cacheKey);
         }

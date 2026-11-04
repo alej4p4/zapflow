@@ -371,25 +371,57 @@ export async function testWebhook(webhookId: string, url: string, secret?: strin
 /**
  * Helper to download and save media
  */
+/**
+ * Recursively unwraps wrappers (ephemeralMessage, viewOnceMessage, etc.)
+ * and finds the media payload if present.
+ */
+export function extractMediaMessage(messageProto: any): { type: string; media: any } | null {
+    if (!messageProto) return null;
+    let content: any = normalizeMessageContent(messageProto);
+    if (!content) return null;
+
+    let depth = 0;
+    while (content && depth < 5) {
+        depth++;
+        if (content.ephemeralMessage?.message) {
+            content = normalizeMessageContent(content.ephemeralMessage.message);
+        } else if (content.viewOnceMessage?.message) {
+            content = normalizeMessageContent(content.viewOnceMessage.message);
+        } else if (content.viewOnceMessageV2?.message) {
+            content = normalizeMessageContent(content.viewOnceMessageV2.message);
+        } else if (content.viewOnceMessageV2Extension?.message) {
+            content = normalizeMessageContent(content.viewOnceMessageV2Extension.message);
+        } else if (content.documentWithCaptionMessage?.message) {
+            content = normalizeMessageContent(content.documentWithCaptionMessage.message);
+        } else {
+            break;
+        }
+    }
+
+    const types = ['imageMessage', 'videoMessage', 'audioMessage', 'documentMessage', 'stickerMessage'];
+    for (const t of types) {
+        if (content && content[t]) {
+            return { type: t, media: content[t] };
+        }
+    }
+    return null;
+}
+
+/**
+ * Helper to download and save media
+ */
 export async function downloadAndSaveMedia(message: WAMessage, sessionId: string): Promise<string | null> {
     try {
-        const messageContent = normalizeMessageContent(message.message);
-        if (!messageContent) {
-            logger.debug("Media", "No content normalized");
+        const mediaInfo = extractMediaMessage(message.message);
+        if (!mediaInfo) {
             return null;
         }
 
-        const messageType = Object.keys(messageContent)[0];
-
-        if (!['imageMessage', 'videoMessage', 'audioMessage', 'documentMessage', 'stickerMessage'].includes(messageType)) {
-            logger.debug("Media", `Message type ${messageType} is not a downloadable media.`);
-            return null;
-        }
+        const { type: messageType, media: mediaObj } = mediaInfo;
 
         logger.info("Media", `Attempting to download ${messageType}...`);
 
         let buffer: Buffer | null = null;
-        const mediaObj = (messageContent as any)[messageType];
 
         // Newsletter media is NOT encrypted — no mediaKey present
         const isNewsletterMedia = !mediaObj.mediaKey && (mediaObj.directPath || mediaObj.thumbnailDirectPath);
@@ -420,8 +452,12 @@ export async function downloadAndSaveMedia(message: WAMessage, sessionId: string
         } else {
             // Regular encrypted media — use Baileys downloadMediaMessage
             try {
+                const unwrappedMsg = {
+                    key: message.key,
+                    message: { [messageType]: mediaObj }
+                } as any;
                 buffer = await downloadMediaMessage(
-                    message,
+                    unwrappedMsg,
                     "buffer",
                     {}
                 ) as Buffer;
@@ -450,7 +486,7 @@ export async function downloadAndSaveMedia(message: WAMessage, sessionId: string
         let ext = extMap[messageType] || 'bin';
 
         // Try to get extension from mimetype if available
-        const mime = (messageContent as any)[messageType]?.mimetype;
+        const mime = mediaObj?.mimetype;
         if (mime) {
             const mimeExt = mime.split('/')[1]?.split(';')[0];
             if (mimeExt) ext = mimeExt;
@@ -705,6 +741,28 @@ export function onConnectionUpdate(sessionId: string, status: string, qr?: strin
  * Extract content and type from Baileys message
  */
 function extractMessageContent(msg: any): { type: string, content: string, caption?: string } {
+    const mediaInfo = extractMediaMessage(msg.message);
+    if (mediaInfo) {
+        if (mediaInfo.type === 'imageMessage') {
+            const cap = mediaInfo.media.caption || "";
+            return { type: "IMAGE", content: cap, caption: cap };
+        }
+        if (mediaInfo.type === 'videoMessage') {
+            const cap = mediaInfo.media.caption || "";
+            return { type: "VIDEO", content: cap, caption: cap };
+        }
+        if (mediaInfo.type === 'audioMessage') {
+            return { type: "AUDIO", content: "" };
+        }
+        if (mediaInfo.type === 'documentMessage') {
+            const cap = mediaInfo.media.caption || "";
+            return { type: "DOCUMENT", content: mediaInfo.media.fileName || "", caption: cap };
+        }
+        if (mediaInfo.type === 'stickerMessage') {
+            return { type: "STICKER", content: "" };
+        }
+    }
+
     const messageContent = normalizeMessageContent(msg.message);
     let text = "";
     let caption = undefined;
@@ -716,22 +774,6 @@ function extractMessageContent(msg: any): { type: string, content: string, capti
         text = messageContent.conversation;
     } else if (messageContent.extendedTextMessage?.text) {
         text = messageContent.extendedTextMessage.text;
-    } else if (messageContent.imageMessage) {
-        messageType = "IMAGE";
-        caption = messageContent.imageMessage.caption || "";
-        text = caption; // Content often used as text display
-    } else if (messageContent.videoMessage) {
-        messageType = "VIDEO";
-        caption = messageContent.videoMessage.caption || "";
-        text = caption;
-    } else if (messageContent.audioMessage) {
-        messageType = "AUDIO";
-    } else if (messageContent.documentMessage) {
-        messageType = "DOCUMENT";
-        text = messageContent.documentMessage.fileName || "";
-        caption = messageContent.documentMessage.caption || "";
-    } else if (messageContent.stickerMessage) {
-        messageType = "STICKER";
     } else if (messageContent.locationMessage) {
         messageType = "LOCATION";
         text = `${messageContent.locationMessage.degreesLatitude},${messageContent.locationMessage.degreesLongitude}`;

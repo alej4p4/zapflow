@@ -98,7 +98,7 @@ export async function getChatMessages(
 
     if (!session) throw new Error("Session not found");
 
-    const { messages, hasMore } = await ChatService.getMessages(session.id, jid, limit, before);
+    const { messages, hasMore, contactMap, participantNames } = await ChatService.getMessages(session.id, jid, limit, before);
 
     return {
         messages: messages.map((msg: any) => ({
@@ -107,7 +107,9 @@ export async function getChatMessages(
                 ? msg.timestamp.toISOString()
                 : String(msg.timestamp)
         })),
-        hasMore
+        hasMore,
+        contactMap: contactMap || {},
+        participantNames: participantNames || []
     };
 }
 
