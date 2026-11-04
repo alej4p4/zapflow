@@ -1,0 +1,33 @@
+{
+  "manifest_version": 3,
+  "name": "ZapFlow AI (WA Web Plus)",
+  "version": "1.5.0",
+  "description": "Ferramentas profissionais de produtividade, privacidade, automações, CRM e disparos para WhatsApp Web.",
+  "permissions": [
+    "storage",
+    "tabs",
+    "activeTab",
+    "scripting"
+  ],
+  "host_permissions": [
+    "https://web.whatsapp.com/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "ZapFlow AI (WA Web Plus)"
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://web.whatsapp.com/*"],
+      "js": ["src/graph/graphify.js", "content.js", "whatsapp-panel.js"]
+    }
+  ]
+}

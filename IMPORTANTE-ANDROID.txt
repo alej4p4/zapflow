@@ -1,0 +1,19 @@
+AVISO: ARQUITETURA ANDROID / CAPACITOR
+=====================================
+
+O ZapFlow AI é uma EXTENSÃO CHROME (Manifest V3), não um app Android com Capacitor.
+
+Por isso os itens abaixo da arquitetura CineBG NÃO se aplicam neste projeto:
+
+- android/app/build.gradle (não existe)
+- src/utils/tv.ts ou src/config.ts (criado como equivalente de versão)
+- public/update.json (criado para atualização da extensão)
+- keystore.properties / assinatura de APK (extensões Chrome não usam keystore Android)
+- assembleMobileRelease / assembleTvRelease (não existem)
+- npx cap sync android (Capacitor não está instalado)
+
+O workflow `.github/workflows/release.yml` foi adaptado para empacotar a extensão
+em ZIP e publicar no GitHub Release quando uma tag `v*` é enviada.
+
+Se desejar converter o ZapFlow AI para app móvel (Android/iOS) com Capacitor,
+avise que crio a estrutura android/, ios/, build.gradle e keystore do zero.

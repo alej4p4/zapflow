@@ -1,0 +1,59 @@
+name: Release ZapFlow AI
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout do código
+        uses: actions/checkout@v4
+
+      - name: Configurar Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Instalar dependências
+        run: npm install
+
+      - name: Executar build
+        run: npm run build
+
+      - name: Empacotar extensão Chrome (ZIP)
+        run: |
+          zip -r ZapFlow-Extensao.zip . -x "*.git*" "*.github*" "*node_modules*" "*.zip*"
+
+      - name: Extrair nome da tag
+        id: tag
+        run: echo "TAG_NAME=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+
+      - name: Publicar release no GitHub
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag.outputs.TAG_NAME }}
+          name: ZapFlow AI ${{ steps.tag.outputs.TAG_NAME }}
+          body: |
+            ## ZapFlow AI ${{ steps.tag.outputs.TAG_NAME }}
+
+            Arquivo disponível:
+            - `ZapFlow-Extensao.zip` — Extensão Chrome pronta para instalação no modo desenvolvedor.
+
+            Para instalar:
+            1. Baixe o ZIP e extraia em uma pasta.
+            2. No Chrome, acesse `chrome://extensions`.
+            3. Ative o **Modo do desenvolvedor**.
+            4. Clique em **Carregar sem compactação** e selecione a pasta extraída.
+          files: ZapFlow-Extensao.zip
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

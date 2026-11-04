@@ -1,0 +1,57 @@
+============================================================
+COMO PUBLICAR O ZAPFLOW AI NA CHROME WEB STORE
+============================================================
+
+IMPORTANTE: A publicacao na Chrome Web Store e paga.
+Custo: taxa unica de US$ 5,00 (cerca de R$ 30) para ativar
+a conta de desenvolvedor do Google.
+
+PASSO 1 — Crie/conta de desenvolvedor Google
+- Acesse: https://chrome.google.com/webstore/devconsole/
+- Faça login com sua conta do Google
+- Pague a taxa de ativacao (US$ 5,00 unica)
+
+PASSO 2 — Empacote a extensao
+- No Chrome, acesse: chrome://extensions
+- Ative o "Modo do desenvolvedor"
+- Clique em "Empacotar extensao"
+- Selecione a pasta raiz do ZapFlow (a que contem o manifest.json)
+- Clique em "Empacotar extensao"
+- Isso gera dois arquivos:
+    * zapflow-ai.crx (a extensao)
+    * zapflow-ai.pem (sua chave privada - NAO PERCA ESTE ARQUIVO!)
+
+PASSO 3 — Envie para a Chrome Web Store
+- No painel do desenvolvedor, clique em "Novo item"
+- Selecione o arquivo .zip ou .crx da extensao
+- Preencha:
+    * Nome: ZapFlow AI
+    * Descricao curta
+    * Descricao completa (use o README.md como base)
+    * Capturas de tela (tire prints do painel dentro do WhatsApp Web)
+    * Icone (recomendado 128x128 px)
+    * Categoria: Produtividade / Comunicacao
+    * Idioma: Portuguese
+
+PASSO 4 — Revise as permissoes
+O manifest ja contem:
+    * storage, tabs, scripting
+    * host_permissions: https://web.whatsapp.com/*
+Certifique-se de que isso esta correto.
+
+PASSO 5 — Envie para revisao
+- Clique em "Enviar para revisao"
+- O Google revisa a extensao (pode levar alguns dias)
+- Se aprovada, ela fica publicada na Chrome Web Store
+
+PASSO 6 — Divulgue
+- Link da sua extensao: https://chrome.google.com/webstore/detail/zapflow-ai/SEU_ID
+- Compartilhe com quem quiser instalar sem modo desenvolvedor
+
+============================================================
+OBSERVACOES
+- Enquanto nao publicar na Chrome Web Store, a extensao so
+  funciona no modo desenvolvedor (carregar sem compactacao).
+- O arquivo .pem e sua chave privada. Guarde-o em local seguro.
+  Precisara dele para atualizar a extensao futuramente.
+============================================================

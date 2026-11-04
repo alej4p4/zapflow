@@ -1,0 +1,55 @@
+============================================================
+COMO PUBLICAR O ZAPFLOW AI NO GITHUB
+============================================================
+
+PASSO 1 — Crie uma conta no GitHub
+- Acesse: https://github.com/signup
+- Crie sua conta (e-mail, senha, nome de usuário)
+
+PASSO 2 — Instale o Git (se ainda não tiver)
+- Baixe em: https://git-scm.com/download/win
+- Instale com as configurações padrão
+
+PASSO 3 — Abra o terminal no Windows
+- Pressione Win + R, digite: cmd
+- Ou abra o PowerShell
+
+PASSO 4 — Configure o Git com seus dados
+  git config --global user.name "SEU NOME"
+  git config --global user.email "SEU EMAIL"
+
+PASSO 5 — Navegue até a pasta do projeto
+  cd E:\ZapFlow
+
+PASSO 6 — Inicialize o repositório local
+  git init
+  git add .
+  git commit -m "feat: primeira versao do ZapFlow AI"
+
+PASSO 7 — Crie o repositório no GitHub
+- Acesse: https://github.com/new
+- Nome do repositorio: zapflow-ai
+- Deixe como Público (Public)
+- NAO marque "Add a README file" (ja temos um)
+- NAO marque .gitignore (ja temos um)
+- Clique em "Create repository"
+
+PASSO 8 — Conecte o repositorio local ao GitHub
+No GitHub, após criar o repositorio, copie a URL que aparece (ex:
+https://github.com/SEU-USUARIO/zapflow-ai.git)
+
+No terminal, execute:
+  git remote add origin https://github.com/SEU-USUARIO/zapflow-ai.git
+  git branch -M main
+  git push -u origin main
+
+PASSO 9 — Pronto!
+Seu projeto esta no GitHub: https://github.com/SEU-USUARIO/zapflow-ai
+
+============================================================
+DICA: Se quiser usar GitHub Desktop (mais facil)
+- Baixe em: https://desktop.github.com/
+- Faça login, clique em "Add" -> "Create new repository"
+- Selecione a pasta E:\ZapFlow
+- Publique o repositorio
+============================================================

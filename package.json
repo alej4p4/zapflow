@@ -1,0 +1,11 @@
+{
+  "name": "zapflow-ai",
+  "version": "1.4.8",
+  "description": "ZapFlow AI - Extensão Chrome para WhatsApp Web CRM",
+  "private": true,
+  "scripts": {
+    "build": "node -e \"const fs=require('fs'); try{ JSON.parse(fs.readFileSync('manifest.json','utf8')); console.log('✓ manifest.json válido'); }catch(e){ console.error('✗ manifest.json inválido:', e.message); process.exit(1); }\"",
+    "package": "node -e \"console.log('Use: powershell Compress-Archive -Path * -DestinationPath ZapFlow-Extensao.zip')\""
+  },
+  "devDependencies": {}
+}
