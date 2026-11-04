@@ -1,9 +1,32 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
-import { Send, Paperclip, ArrowLeft, FileText, Image as ImageIcon, Music, Video, Download, ArrowDown, CornerUpLeft, Copy, Trash2, Info, X } from "lucide-react";
+import {
+    Send,
+    Paperclip,
+    ArrowLeft,
+    FileText,
+    Image as ImageIcon,
+    Music,
+    Video,
+    Download,
+    ArrowDown,
+    CornerUpLeft,
+    Copy,
+    Trash2,
+    Info,
+    X,
+    Smile,
+    Mic,
+    MoreVertical,
+    Search,
+    Check,
+    CheckCheck,
+    Clock,
+    Users
+} from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import {
     AlertDialog,
@@ -50,7 +73,40 @@ interface ChatWindowProps {
 
 const PAGE_LIMIT = 50;
 
-// ─── Lazy media (unchanged) ────────
+function getParticipantColor(name: string): string {
+    const colors = [
+        "#00a884",
+        "#1f7a8c",
+        "#e542a3",
+        "#e06d53",
+        "#8338ec",
+        "#3a86ff",
+        "#028090",
+        "#d97706",
+        "#16a34a",
+    ];
+    let hash = 0;
+    for (let i = 0; i < name.length; i++) {
+        hash = name.charCodeAt(i) + ((hash << 5) - hash);
+    }
+    return colors[Math.abs(hash) % colors.length];
+}
+
+function MessageStatusCheck({ status }: { status: string }) {
+    switch (status) {
+        case "READ":
+            return <CheckCheck className="h-3.5 w-3.5 text-[#53bdeb] inline-block shrink-0" />;
+        case "DELIVERED":
+            return <CheckCheck className="h-3.5 w-3.5 text-[#667781] dark:text-[#8696a0] inline-block shrink-0" />;
+        case "SENT":
+            return <Check className="h-3.5 w-3.5 text-[#667781] dark:text-[#8696a0] inline-block shrink-0" />;
+        case "PENDING":
+        default:
+            return <Clock className="h-3 w-3 text-[#667781] dark:text-[#8696a0] inline-block shrink-0" />;
+    }
+}
+
+// ─── Lazy media ────────
 function LazyMedia({ src, alt }: { src: string; alt: string }) {
     const ref = useRef<HTMLDivElement>(null);
     const [visible, setVisible] = useState(false);
@@ -64,11 +120,12 @@ function LazyMedia({ src, alt }: { src: string; alt: string }) {
     }, []);
     return (
         <div ref={ref} className="mb-1.5 overflow-hidden rounded-xl">
-            {visible ? <img src={src} alt={alt} className={`max-w-full max-h-60 object-cover rounded-xl transition-opacity ${loaded ? 'opacity-100' : 'opacity-0'}`} onLoad={() => setLoaded(true)} loading="lazy" />
+            {visible ? <img src={src} alt={alt} className={`max-w-full max-h-64 object-cover rounded-xl transition-opacity ${loaded ? 'opacity-100' : 'opacity-0'}`} onLoad={() => setLoaded(true)} loading="lazy" />
                 : <div className="h-40 bg-muted/30 rounded-xl animate-pulse" />}
         </div>
     );
 }
+
 function LazyVideo({ src }: { src: string }) {
     const ref = useRef<HTMLDivElement>(null);
     const [visible, setVisible] = useState(false);
@@ -81,7 +138,7 @@ function LazyVideo({ src }: { src: string }) {
     }, []);
     return (
         <div ref={ref} className="mb-1.5 overflow-hidden rounded-xl">
-            {visible ? <video src={src} controls className="max-w-full max-h-60 rounded-xl" preload="none" />
+            {visible ? <video src={src} controls className="max-w-full max-h-64 rounded-xl" preload="none" />
                 : <div className="h-32 bg-muted/30 rounded-xl animate-pulse flex items-center justify-center"><Video className="h-6 w-6 text-muted-foreground/50" /></div>}
         </div>
     );
@@ -122,7 +179,18 @@ interface ContextMenuState {
     y: number;
     msg: Message;
 }
-function ContextMenu({ state, onClose, onReply, onDelete }: { state: ContextMenuState; onClose: () => void; onReply: (msg: Message) => void; onDelete: (msg: Message) => void }) {
+
+function ContextMenu({
+    state,
+    onClose,
+    onReply,
+    onDelete
+}: {
+    state: ContextMenuState;
+    onClose: () => void;
+    onReply: (msg: Message) => void;
+    onDelete: (msg: Message) => void;
+}) {
     const ref = useRef<HTMLDivElement>(null);
     useEffect(() => {
         const handler = (e: MouseEvent) => {
@@ -134,24 +202,29 @@ function ContextMenu({ state, onClose, onReply, onDelete }: { state: ContextMenu
 
     const items = [
         { label: "Responder", icon: CornerUpLeft, action: () => { onReply(state.msg); onClose(); } },
-        { label: "Copiar", icon: Copy, action: () => { navigator.clipboard.writeText(state.msg.content || "").then(() => toast.success("Copiado")).catch(() => {}); onClose(); } },
+        { label: "Copiar texto", icon: Copy, action: () => { navigator.clipboard.writeText(state.msg.content || "").then(() => toast.success("Copiado")).catch(() => {}); onClose(); } },
         { label: "Excluir", icon: Trash2, action: () => { onDelete(state.msg); onClose(); }, dangerous: true },
-        { label: "Informações", icon: Info, action: () => { toast.info(`ID: ${state.msg.keyId}\nStatus: ${state.msg.status}\nHorário: ${new Date(state.msg.timestamp).toLocaleString("pt-BR")}`); onClose(); } },
+        { label: "Informações", icon: Info, action: () => { toast.info(`Status: ${state.msg.status}\nHorário: ${new Date(state.msg.timestamp).toLocaleString("pt-BR")}`); onClose(); } },
     ];
 
-    // Adjust position to not overflow viewport
     const style: React.CSSProperties = { position: "fixed", top: state.y, left: state.x, zIndex: 9999 };
-    if (state.x > window.innerWidth - 180) style.left = state.x - 180;
-    if (state.y > window.innerHeight - 200) style.top = state.y - 180;
+    if (typeof window !== "undefined") {
+        if (state.x > window.innerWidth - 180) style.left = state.x - 180;
+        if (state.y > window.innerHeight - 200) style.top = state.y - 180;
+    }
 
     return (
-        <div ref={ref} style={style} className="w-44 rounded-xl bg-popover border shadow-xl py-1 animate-in fade-in zoom-in-95 origin-top-left">
+        <div ref={ref} style={style} className="w-48 rounded-xl bg-popover/95 backdrop-blur-md border border-border/60 shadow-2xl py-1 animate-in fade-in zoom-in-95 origin-top-left">
             {items.map((item, i) => (
-                <button key={i} onClick={item.action} className={cn(
-                    "w-full flex items-center gap-2.5 px-3 py-2 text-sm transition-colors cursor-pointer",
-                    item.dangerous ? "text-red-500 hover:bg-red-500/10" : "text-foreground hover:bg-muted"
-                )}>
-                    <item.icon className="h-3.5 w-3.5 shrink-0" />
+                <button
+                    key={i}
+                    onClick={item.action}
+                    className={cn(
+                        "w-full flex items-center gap-2.5 px-3 py-2 text-sm transition-colors cursor-pointer",
+                        item.dangerous ? "text-red-500 hover:bg-red-500/10" : "text-foreground hover:bg-muted"
+                    )}
+                >
+                    <item.icon className="h-4 w-4 shrink-0 text-muted-foreground" />
                     {item.label}
                 </button>
             ))}
@@ -187,6 +260,7 @@ export function ChatWindow({ sessionId, jid, name, onBack }: ChatWindowProps) {
 
     const { getSocket, joinSession } = useSocket();
     const getDateLabel = useDateLabel();
+    const isGroup = jid.endsWith("@g.us");
 
     const scrollToBottom = useCallback((smooth = true) => {
         bottomRef.current?.scrollIntoView({ behavior: smooth ? "smooth" : "auto", block: "end" });
@@ -197,20 +271,34 @@ export function ChatWindow({ sessionId, jid, name, onBack }: ChatWindowProps) {
             if (!before) setLoading(true);
             else setLoadingMore(true);
             const data: any = await getChatMessages(sessionId, jid, PAGE_LIMIT, before);
-            if (!before) { setMessages(data.messages || []); setAutoScroll(true); }
-            else if (data.messages?.length > 0) setMessages(prev => [...(data.messages || []), ...prev]);
+            if (!before) {
+                setMessages(data.messages || []);
+                setAutoScroll(true);
+            } else if (data.messages?.length > 0) {
+                setMessages(prev => [...(data.messages || []), ...prev]);
+            }
             setHasMore(data.hasMore);
-            if (data.messages?.length > 0) setOldestTimestamp(data.messages[0].timestamp);
-        } catch (e) { console.error("Falha ao carregar mensagens", e); }
-        finally { setLoading(false); setLoadingMore(false); }
+            if (data.messages?.length > 0) {
+                setOldestTimestamp(data.messages[0].timestamp);
+            }
+        } catch (e) {
+            console.error("Falha ao carregar mensagens", e);
+        } finally {
+            setLoading(false);
+            setLoadingMore(false);
+        }
     }, [sessionId, jid]);
 
-    useEffect(() => { setMessages([]); setOldestTimestamp(null); setHasMore(false); fetchMessages(); }, [fetchMessages]);
+    useEffect(() => {
+        setMessages([]);
+        setOldestTimestamp(null);
+        setHasMore(false);
+        fetchMessages();
+    }, [fetchMessages]);
 
-    // Auto focus input when chat changes and finished loading
+    // Auto focus input
     useEffect(() => {
         if (!loading && inputRef.current) {
-            // A tiny delay ensures React has fully flushed the DOM for the new chat
             setTimeout(() => {
                 inputRef.current?.focus();
             }, 10);
@@ -235,10 +323,15 @@ export function ChatWindow({ sessionId, jid, name, onBack }: ChatWindowProps) {
             });
         };
         socket.on("message.update", handler);
-        return () => { socket.off("connect", onConnect); socket.off("message.update", handler); };
+        return () => {
+            socket.off("connect", onConnect);
+            socket.off("message.update", handler);
+        };
     }, [sessionId, jid, getSocket, joinSession]);
 
-    useEffect(() => { if (autoScroll) scrollToBottom(false); }, [messages, autoScroll, scrollToBottom]);
+    useEffect(() => {
+        if (autoScroll) scrollToBottom(false);
+    }, [messages, autoScroll, scrollToBottom]);
 
     const handleScroll = useCallback(() => {
         const el = scrollRef.current;
@@ -249,46 +342,50 @@ export function ChatWindow({ sessionId, jid, name, onBack }: ChatWindowProps) {
         if (el.scrollTop < 100 && hasMore && !loadingMore && oldestTimestamp) {
             const prevHeight = el.scrollHeight;
             fetchMessages(oldestTimestamp).then(() => {
-                requestAnimationFrame(() => { if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight - prevHeight; });
+                requestAnimationFrame(() => {
+                    if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight - prevHeight;
+                });
             });
         }
     }, [hasMore, loadingMore, oldestTimestamp, fetchMessages]);
 
     const handleSend = async () => {
         if (!input.trim()) return;
+        const messageToSend = input;
+        const replyKeyId = replyingTo?.keyId;
+        setInput("");
+        setReplyingTo(null);
+        if (inputRef.current) {
+            inputRef.current.style.height = "auto";
+        }
         try {
-            await sendChatMessage(sessionId, jid, input, replyingTo?.keyId);
-            setInput("");
-            setReplyingTo(null);
-            setTimeout(() => fetchMessages(), 800);
-        } catch (e: any) { toast.error(e.message || "Falha ao enviar a mensagem"); }
+            await sendChatMessage(sessionId, jid, messageToSend, replyKeyId);
+            setTimeout(() => fetchMessages(), 600);
+        } catch (e: any) {
+            toast.error(e.message || "Falha ao enviar a mensagem");
+            setInput(messageToSend);
+        }
     };
 
     const handleKeyDown = (e: React.KeyboardEvent) => {
-        if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSend(); }
+        if (e.key === "Enter" && !e.shiftKey) {
+            e.preventDefault();
+            handleSend();
+        }
     };
 
-    // Focus input when replying
     useEffect(() => {
         if (replyingTo && inputRef.current) {
             inputRef.current.focus();
         }
     }, [replyingTo]);
 
-    // Global keyboard shortcuts
+    // Keyboard shortcuts
     useEffect(() => {
         const handler = (e: KeyboardEvent) => {
-            // Escape: cancel reply
             if (e.key === "Escape" && replyingTo) {
                 e.preventDefault();
                 setReplyingTo(null);
-                return;
-            }
-            // ? : show shortcuts
-            if (e.key === "?" && !e.ctrlKey && !e.metaKey && !e.shiftKey && !(e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement)) {
-                toast.success("Atalhos", {
-                    description: "Enter: Enviar\nShift+Enter: Nova linha\nEsc: Cancelar resposta\n?: Mostrar esta ajuda"
-                });
             }
         };
         window.addEventListener("keydown", handler);
@@ -311,9 +408,11 @@ export function ChatWindow({ sessionId, jid, name, onBack }: ChatWindowProps) {
         try {
             toast.info(`Enviando ${file.name}...`);
             await sendMediaMessage(formData);
-            toast.success("Enviado!");
+            toast.success("Mídia enviada!");
             setTimeout(() => fetchMessages(), 800);
-        } catch (error: any) { toast.error(error.message || "Falha ao enviar a mídia"); }
+        } catch (error: any) {
+            toast.error(error.message || "Falha ao enviar a mídia");
+        }
     };
 
     const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -331,7 +430,6 @@ export function ChatWindow({ sessionId, jid, name, onBack }: ChatWindowProps) {
         }
     };
 
-    // Right-click handler
     const handleContextMenu = useCallback((e: React.MouseEvent, msg: Message) => {
         e.preventDefault();
         setContextMenu({ x: e.clientX, y: e.clientY, msg });
@@ -339,15 +437,14 @@ export function ChatWindow({ sessionId, jid, name, onBack }: ChatWindowProps) {
 
     const displayName = name || jid.split('@')[0];
 
-    // Loading is now handled gracefully inside the message list to prevent unmounting the layout
-
     return (
         <div
-            className="flex-1 flex flex-col bg-muted/20 min-w-0 min-h-0 relative"
+            className="flex-1 flex flex-col min-w-0 min-h-0 relative select-text"
             onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }}
             onDragLeave={() => setIsDragging(false)}
             onDrop={(e) => {
-                e.preventDefault(); setIsDragging(false);
+                e.preventDefault();
+                setIsDragging(false);
                 const f = e.dataTransfer.files?.[0];
                 if (f) processFileUpload(f);
             }}
@@ -358,17 +455,15 @@ export function ChatWindow({ sessionId, jid, name, onBack }: ChatWindowProps) {
                     state={contextMenu}
                     onClose={() => setContextMenu(null)}
                     onReply={(msg) => { setReplyingTo(msg); scrollToBottom(true); }}
-                    onDelete={(msg) => {
-                        setDeleteConfirmMsg(msg);
-                    }}
+                    onDelete={(msg) => setDeleteConfirmMsg(msg)}
                 />
             )}
 
             {/* Drag overlay */}
             {isDragging && (
-                <div className="absolute inset-0 z-50 bg-background/80 backdrop-blur-sm border-2 border-dashed border-primary flex items-center justify-center flex-col gap-3 rounded-lg m-2">
-                    <Paperclip className="h-8 w-8 text-primary" />
-                    <p className="text-lg font-semibold text-primary">Solte os arquivos aqui</p>
+                <div className="absolute inset-0 z-50 bg-[#00a884]/90 backdrop-blur-sm border-2 border-dashed border-white flex items-center justify-center flex-col gap-3 rounded-lg m-2 text-white">
+                    <Paperclip className="h-10 w-10 animate-bounce" />
+                    <p className="text-lg font-semibold">Solte o arquivo para enviar</p>
                 </div>
             )}
 
@@ -378,180 +473,292 @@ export function ChatWindow({ sessionId, jid, name, onBack }: ChatWindowProps) {
                     <AlertDialogHeader>
                         <AlertDialogTitle>Excluir mensagem?</AlertDialogTitle>
                         <AlertDialogDescription>
-                            This will delete the message for everyone. This action cannot be undone.
+                            Isso removerá a mensagem selecionada. Esta ação não pode ser desfeita.
                         </AlertDialogDescription>
                     </AlertDialogHeader>
                     <AlertDialogFooter>
                         <AlertDialogCancel>Cancelar</AlertDialogCancel>
-                        <AlertDialogAction className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                        <AlertDialogAction
+                            className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
                             onClick={() => {
                                 const msg = deleteConfirmMsg;
                                 if (!msg) return;
                                 fetch(`/api/messages/${sessionId}/${jid}/${msg.keyId}`, { method: "DELETE" })
-                                    .then(() => { setMessages(p => p.filter(m => m.keyId !== msg.keyId)); toast.success("Mensagem excluída"); })
+                                    .then(() => {
+                                        setMessages(p => p.filter(m => m.keyId !== msg.keyId));
+                                        toast.success("Mensagem excluída");
+                                    })
                                     .catch(() => toast.error("Falha ao excluir a mensagem"));
                                 setDeleteConfirmMsg(null);
                             }}
-                        >Excluir</AlertDialogAction>
+                        >
+                            Excluir
+                        </AlertDialogAction>
                     </AlertDialogFooter>
                 </AlertDialogContent>
             </AlertDialog>
 
             {/* Loading older indicator */}
             {loadingMore && (
-                <div className="absolute top-2 left-1/2 -translate-x-1/2 z-40 bg-background/80 backdrop-blur-sm px-3 py-1 rounded-full shadow-sm border text-xs flex items-center gap-2">
-                    <div className="h-3 w-3 border-2 border-primary/30 border-t-primary rounded-full animate-spin" />
+                <div className="absolute top-16 left-1/2 -translate-x-1/2 z-40 bg-white/95 dark:bg-[#202c33]/95 backdrop-blur-sm px-4 py-1.5 rounded-full shadow-md border text-xs font-medium flex items-center gap-2">
+                    <div className="h-3.5 w-3.5 border-2 border-[#00a884]/30 border-t-[#00a884] rounded-full animate-spin" />
                     Carregando mensagens anteriores...
                 </div>
             )}
 
-            {/* Header */}
-            <div className="shrink-0 px-3 py-2.5 border-b bg-background/80 backdrop-blur-sm flex items-center gap-3 z-10">
-                {onBack && (
-                    <Button variant="ghost" size="icon" className="h-8 w-8 md:hidden shrink-0 text-muted-foreground hover:text-foreground" onClick={onBack}>
-                        <ArrowLeft className="h-4 w-4" />
+            {/* WhatsApp Header */}
+            <div className="shrink-0 px-4 py-2.5 border-b border-border/15 bg-[#f0f2f5] dark:bg-[#202c33] flex items-center justify-between z-10 select-none">
+                <div className="flex items-center gap-3 min-w-0">
+                    {onBack && (
+                        <Button variant="ghost" size="icon" className="h-8 w-8 md:hidden shrink-0 text-muted-foreground hover:text-foreground" onClick={onBack}>
+                            <ArrowLeft className="h-5 w-5" />
+                        </Button>
+                    )}
+                    <Avatar className="h-10 w-10 shrink-0 cursor-pointer">
+                        <AvatarImage src="" />
+                        <AvatarFallback className={cn(
+                            "text-xs font-bold flex items-center justify-center",
+                            isGroup
+                                ? "bg-[#00a884]/20 text-[#00a884] dark:bg-[#00a884]/30"
+                                : "bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-200"
+                        )}>
+                            {isGroup ? <Users className="h-5 w-5" /> : displayName.slice(0, 2).toUpperCase()}
+                        </AvatarFallback>
+                    </Avatar>
+                    <div className="flex-1 min-w-0 cursor-pointer">
+                        <h3 className="text-[15px] font-semibold text-foreground truncate leading-snug">
+                            {displayName}
+                        </h3>
+                        <p className="text-[11.5px] text-muted-foreground truncate flex items-center gap-1.5">
+                            {isGroup ? (
+                                <span>Grupo • {jid}</span>
+                            ) : (
+                                <span className="flex items-center gap-1 text-[#00a884] font-medium">
+                                    <span className="h-1.5 w-1.5 rounded-full bg-[#00a884]" />
+                                    online
+                                </span>
+                            )}
+                        </p>
+                    </div>
+                </div>
+
+                {/* Header right icons */}
+                <div className="flex items-center gap-1 text-[#54656f] dark:text-[#aebac1]">
+                    <Button variant="ghost" size="icon" className="h-9 w-9 rounded-full hover:bg-black/5 dark:hover:bg-white/10" title="Pesquisar">
+                        <Search className="h-4.5 w-4.5" />
                     </Button>
-                )}
-                <Avatar className="h-9 w-9 shrink-0">
-                    <AvatarFallback className="text-xs font-medium bg-gradient-to-br from-primary/20 to-blue-500/20 text-primary">
-                        {displayName.slice(0, 2).toUpperCase()}
-                    </AvatarFallback>
-                </Avatar>
-                <div className="flex-1 min-w-0">
-                    <h3 className="text-sm font-semibold text-foreground truncate">{displayName}</h3>
-                    <p className="text-[10px] text-muted-foreground truncate">{jid}</p>
+                    <Button variant="ghost" size="icon" className="h-9 w-9 rounded-full hover:bg-black/5 dark:hover:bg-white/10" title="Mais opções">
+                        <MoreVertical className="h-4.5 w-4.5" />
+                    </Button>
                 </div>
             </div>
 
-            {/* Messages */}
-            <div ref={scrollRef} className="flex-1 overflow-y-auto px-3 sm:px-4 py-3 min-h-0 styled-scrollbar" onScroll={handleScroll}
-                style={{ backgroundImage: `radial-gradient(circle at 1px 1px, hsl(var(--muted-foreground) / 0.04) 1px, transparent 0)`, backgroundSize: '24px 24px' }}
+            {/* WhatsApp Chat Wallpaper & Message Stream */}
+            <div
+                ref={scrollRef}
+                className="flex-1 overflow-y-auto px-3 sm:px-6 py-3 min-h-0 styled-scrollbar"
+                onScroll={handleScroll}
+                style={{
+                    backgroundColor: "var(--wa-bg, #efeae2)",
+                    backgroundImage: `url("data:image/svg+xml,%3Csvg width='120' height='120' viewBox='0 0 120 120' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M20 20c-3 0-5 2-5 5v12c0 3 2 5 5 5h2v4l5-4h8c3 0 5-2 5-5V25c0-3-2-5-5-5H20zm50 20a5 5 0 1 0 0-10 5 5 0 0 0 0 10zm30 15c-4 0-7 3-7 7v10h14V62c0-4-3-7-7-7zm-70 25c-3 0-5 2-5 5s2 5 5 5 5-2 5-5-2-5-5-5zm65 10c-3 0-6 2-6 5v6c0 3 3 5 6 5h10c3 0 6-2 6-5v-6c0-3-3-5-6-5h-10z' fill='%23687782' fill-opacity='0.06' fill-rule='evenodd'/%3E%3C/svg%3E")`,
+                    backgroundSize: "220px 220px"
+                }}
             >
-                <div className="flex flex-col gap-3 max-w-3xl mx-auto">
+                <div className="flex flex-col gap-2 max-w-4xl mx-auto">
                     {loading && messages.length === 0 && (
                         <div className="flex-1 flex items-center justify-center py-32">
-                            <div className="h-6 w-6 border-2 border-primary/30 border-t-primary rounded-full animate-spin" />
+                            <div className="h-7 w-7 border-3 border-[#00a884]/30 border-t-[#00a884] rounded-full animate-spin" />
                         </div>
                     )}
                     {!hasMore && messages.length > 0 && (
-                        <div className="text-center py-4">
-                            <span className="text-[10px] font-medium text-muted-foreground bg-background/80 px-3 py-1 rounded-full border border-border/30">Início da conversa</span>
+                        <div className="text-center py-3">
+                            <span className="text-[11px] font-medium text-[#54656f] dark:text-[#8696a0] bg-white/90 dark:bg-[#182229]/90 px-3.5 py-1 rounded-lg shadow-sm border border-border/20 uppercase tracking-wide">
+                                Início da conversa
+                            </span>
                         </div>
                     )}
                     {messages.length === 0 && !loading && (
-                        <div className="flex-1 flex items-center justify-center py-16"><p className="text-sm text-muted-foreground">Nenhuma mensagem ainda</p></div>
+                        <div className="flex-1 flex items-center justify-center py-20">
+                            <div className="bg-white/85 dark:bg-[#182229]/85 px-4 py-2 rounded-xl shadow-sm text-center">
+                                <p className="text-xs text-[#54656f] dark:text-[#8696a0]">
+                                    Nenhuma mensagem trocada ainda nesta conversa
+                                </p>
+                            </div>
+                        </div>
                     )}
                     {messages.map((msg, idx) => {
                         const showDate = idx === 0 || getDateLabel(msg.timestamp) !== getDateLabel(messages[idx - 1].timestamp);
                         return (
                             <div key={msg.keyId} id={`msg-${msg.keyId}`}>
                                 {showDate && (
-                                    <div className="flex justify-center my-3">
-                                        <span className="text-[10px] font-medium text-muted-foreground bg-background/80 backdrop-blur-sm px-3 py-1 rounded-full shadow-sm border border-border/30">
+                                    <div className="flex justify-center my-2.5">
+                                        <span className="text-[11.5px] font-medium text-[#54656f] dark:text-[#8696a0] bg-white/95 dark:bg-[#182229]/95 px-3 py-1 rounded-lg shadow-[0_1px_0.5px_rgba(11,20,26,0.13)] select-none">
                                             {getDateLabel(msg.timestamp)}
                                         </span>
                                     </div>
                                 )}
                                 <div className={cn("flex gap-1 group", msg.fromMe ? "justify-end" : "justify-start")}>
-                                    {/* Reply button: my msg on left */}
+                                    {/* Reply button for my messages (on left) */}
                                     {msg.fromMe && (
-                                        <button onClick={() => { setReplyingTo(msg); scrollToBottom(true); }}
-                                            className="self-center p-1.5 text-muted-foreground/40 hover:text-amber-500 hover:bg-amber-500/10 rounded-lg transition-all opacity-0 group-hover:opacity-100 cursor-pointer shrink-0 order-first"
-                                             title="Responder">
+                                        <button
+                                            onClick={() => { setReplyingTo(msg); scrollToBottom(true); }}
+                                            className="self-center p-1.5 text-muted-foreground/50 hover:text-[#00a884] hover:bg-black/5 dark:hover:bg-white/10 rounded-full transition-all opacity-0 group-hover:opacity-100 cursor-pointer shrink-0 order-first"
+                                            title="Responder"
+                                        >
                                             <CornerUpLeft className="h-3.5 w-3.5" />
                                         </button>
                                     )}
-                                    <div className={cn(
-                                        "flex flex-col max-w-[85%] sm:max-w-[70%] rounded-2xl px-3 py-2 shadow-sm overflow-hidden cursor-context-menu",
-                                        msg.fromMe ? "bg-primary text-primary-foreground rounded-br-sm" : "bg-background border border-border/40 rounded-bl-sm"
-                                    )} onContextMenu={(e) => handleContextMenu(e, msg)}>
-                                        {!msg.fromMe && jid.endsWith("@g.us") && msg.pushName && (
-                                            <span className="text-[10px] font-semibold text-primary block mb-0.5">{msg.pushName}</span>
+
+                                    {/* Authentic WhatsApp Bubble */}
+                                    <div
+                                        className={cn(
+                                            "flex flex-col max-w-[85%] sm:max-w-[70%] px-3 py-1.5 shadow-[0_1px_0.5px_rgba(11,20,26,0.13)] cursor-context-menu relative text-[14.2px] leading-[19px]",
+                                            msg.fromMe
+                                                ? "bg-[#d9fdd3] dark:bg-[#005c4b] text-[#111b21] dark:text-[#e9edef] rounded-xl rounded-tr-xs ml-auto"
+                                                : "bg-white dark:bg-[#202c33] text-[#111b21] dark:text-[#e9edef] rounded-xl rounded-tl-xs mr-auto"
                                         )}
+                                        onContextMenu={(e) => handleContextMenu(e, msg)}
+                                    >
+                                        {/* Group sender pushName with WhatsApp participant color */}
+                                        {!msg.fromMe && isGroup && msg.pushName && (
+                                            <span
+                                                className="text-[12.5px] font-semibold block mb-0.5 leading-tight select-none"
+                                                style={{ color: getParticipantColor(msg.pushName) }}
+                                            >
+                                                {msg.pushName}
+                                            </span>
+                                        )}
+
+                                        {/* Quoted Message Box inside bubble */}
                                         {msg.quoted && (
-                                            <div 
+                                            <div
                                                 className={cn(
-                                                    "mb-1.5 px-2 py-1 rounded-lg border-l-4 text-xs select-none cursor-pointer text-left bg-muted/40",
-                                                    msg.fromMe 
-                                                        ? "border-primary-foreground/30 bg-primary-foreground/10 text-primary-foreground/90 hover:bg-primary-foreground/15" 
-                                                        : "border-primary bg-muted text-muted-foreground hover:bg-muted/60"
+                                                    "mb-1 px-2.5 py-1.5 rounded-lg border-l-4 text-xs select-none cursor-pointer text-left transition-opacity hover:opacity-90",
+                                                    msg.fromMe
+                                                        ? "border-[#00a884] bg-black/5 dark:bg-black/20 text-[#111b21] dark:text-[#e9edef]"
+                                                        : "border-[#00a884] bg-black/5 dark:bg-white/5 text-[#111b21] dark:text-[#e9edef]"
                                                 )}
                                                 onClick={(e) => {
                                                     e.stopPropagation();
                                                     const target = document.getElementById(`msg-${msg.quoted?.keyId}`);
                                                     if (target) {
                                                         target.scrollIntoView({ behavior: "smooth", block: "center" });
-                                                        target.classList.add("bg-primary/10", "transition-colors", "duration-500");
+                                                        target.classList.add("bg-[#00a884]/20", "transition-colors", "duration-500");
                                                         setTimeout(() => {
-                                                            target.classList.remove("bg-primary/10");
+                                                            target.classList.remove("bg-[#00a884]/20");
                                                         }, 1500);
                                                     } else {
-                                                    toast.info("A mensagem original não está carregada na conversa");
+                                                        toast.info("A mensagem original não está carregada na conversa");
                                                     }
                                                 }}
                                             >
-                                                <span className="font-semibold block text-[10px]">
+                                                <span className="font-semibold block text-[11px] text-[#00a884]">
                                                     {msg.quoted.fromMe ? "Você" : (msg.quoted.pushName || msg.quoted.senderJid?.split('@')[0] || "Contato")}
                                                 </span>
-                                                <span className="line-clamp-2 block break-all text-xs">
+                                                <span className="line-clamp-2 block break-all text-xs opacity-80">
                                                     {msg.quoted.content || "Mídia"}
                                                 </span>
                                             </div>
                                         )}
+
                                         {/* IMAGE */}
                                         {msg.type === 'IMAGE' && msg.mediaUrl && (
                                             <div className="relative group/media">
                                                 <LazyMedia src={msg.mediaUrl} alt="Imagem" />
-                                                <Button size="icon" variant="secondary" className="absolute top-2 right-2 h-8 w-8 rounded-full opacity-0 group-hover/media:opacity-100 transition-opacity bg-background/80 backdrop-blur-sm"
-                                                    onClick={() => handleDownload(msg.mediaUrl!, `IMAGE-${msg.keyId}.jpg`)}><Download className="h-4 w-4" /></Button>
+                                                <Button
+                                                    size="icon"
+                                                    variant="secondary"
+                                                    className="absolute top-2 right-2 h-8 w-8 rounded-full opacity-0 group-hover/media:opacity-100 transition-opacity bg-background/80 backdrop-blur-sm"
+                                                    onClick={() => handleDownload(msg.mediaUrl!, `IMAGE-${msg.keyId}.jpg`)}
+                                                >
+                                                    <Download className="h-4 w-4" />
+                                                </Button>
                                             </div>
                                         )}
+
                                         {/* VIDEO */}
                                         {msg.type === 'VIDEO' && msg.mediaUrl && (
                                             <div className="relative group/media">
                                                 <LazyVideo src={msg.mediaUrl} />
-                                                <Button size="icon" variant="secondary" className="absolute top-2 right-2 h-8 w-8 rounded-full opacity-0 group-hover/media:opacity-100 transition-opacity bg-background/80 backdrop-blur-sm z-10"
-                                                    onClick={() => handleDownload(msg.mediaUrl!, `VIDEO-${msg.keyId}.mp4`)}><Download className="h-4 w-4" /></Button>
+                                                <Button
+                                                    size="icon"
+                                                    variant="secondary"
+                                                    className="absolute top-2 right-2 h-8 w-8 rounded-full opacity-0 group-hover/media:opacity-100 transition-opacity bg-background/80 backdrop-blur-sm z-10"
+                                                    onClick={() => handleDownload(msg.mediaUrl!, `VIDEO-${msg.keyId}.mp4`)}
+                                                >
+                                                    <Download className="h-4 w-4" />
+                                                </Button>
                                             </div>
                                         )}
+
                                         {/* AUDIO */}
                                         {msg.type === 'AUDIO' && msg.mediaUrl && (
-                                            <div className="flex items-center gap-2 mb-1.5">
-                                                <audio src={msg.mediaUrl} controls className="h-8 max-w-[200px]" preload="none" />
-                                                <Button size="icon" variant="ghost" className="h-8 w-8 rounded-full" onClick={() => handleDownload(msg.mediaUrl!, `AUDIO-${msg.keyId}.mp3`)}><Download className="h-3.5 w-3.5" /></Button>
+                                            <div className="flex items-center gap-2 mb-1.5 py-1">
+                                                <audio src={msg.mediaUrl} controls className="h-8 max-w-[220px]" preload="none" />
+                                                <Button
+                                                    size="icon"
+                                                    variant="ghost"
+                                                    className="h-8 w-8 rounded-full"
+                                                    onClick={() => handleDownload(msg.mediaUrl!, `AUDIO-${msg.keyId}.mp3`)}
+                                                >
+                                                    <Download className="h-3.5 w-3.5" />
+                                                </Button>
                                             </div>
                                         )}
+
                                         {/* STICKER */}
                                         {msg.type === 'STICKER' && msg.mediaUrl && (
                                             <div className="relative group/media mb-1">
-                                                <img src={msg.mediaUrl} alt="Figurinha" className="max-h-32 object-contain rounded-lg" loading="lazy" />
-                                                <Button size="icon" variant="secondary" className="absolute -top-1 -right-1 h-6 w-6 rounded-full opacity-0 group-hover/media:opacity-100 transition-opacity bg-background/80 backdrop-blur-sm"
-                                                    onClick={() => handleDownload(msg.mediaUrl!, `STICKER-${msg.keyId}.webp`)}><Download className="h-3 w-3" /></Button>
+                                                <img src={msg.mediaUrl} alt="Figurinha" className="max-h-36 object-contain rounded-lg" loading="lazy" />
+                                                <Button
+                                                    size="icon"
+                                                    variant="secondary"
+                                                    className="absolute -top-1 -right-1 h-6 w-6 rounded-full opacity-0 group-hover/media:opacity-100 transition-opacity bg-background/80 backdrop-blur-sm"
+                                                    onClick={() => handleDownload(msg.mediaUrl!, `STICKER-${msg.keyId}.webp`)}
+                                                >
+                                                    <Download className="h-3 w-3" />
+                                                </Button>
                                             </div>
                                         )}
+
                                         {/* DOCUMENT */}
                                         {msg.type !== 'TEXT' && msg.type !== 'IMAGE' && msg.type !== 'STICKER' && msg.type !== 'VIDEO' && msg.type !== 'AUDIO' && (
-                                            <div className={cn("flex items-center justify-between gap-2 py-1.5 px-2 rounded-lg mb-1", msg.fromMe ? "bg-white/15" : "bg-muted/50")}>
-                                                <div className="flex items-center gap-2 truncate min-w-0">
-                                                    <FileText className="h-3.5 w-3.5 shrink-0" />
-                                                     <span className="text-xs font-medium truncate">{({ TEXT: "Mensagem", IMAGE: "Imagem", VIDEO: "Vídeo", AUDIO: "Áudio", DOCUMENT: "Documento", STICKER: "Figurinha", LOCATION: "Localização", CONTACT: "Contato" }[msg.type] || "Mensagem")}</span>
+                                            <div className={cn("flex items-center justify-between gap-2 py-2 px-3 rounded-lg mb-1", msg.fromMe ? "bg-black/5 dark:bg-black/20" : "bg-black/5 dark:bg-white/5")}>
+                                                <div className="flex items-center gap-2.5 truncate min-w-0">
+                                                    <FileText className="h-4 w-4 shrink-0 text-[#00a884]" />
+                                                    <span className="text-xs font-medium truncate">
+                                                        {({ TEXT: "Mensagem", IMAGE: "Imagem", VIDEO: "Vídeo", AUDIO: "Áudio", DOCUMENT: "Documento", STICKER: "Figurinha", LOCATION: "Localização", CONTACT: "Contato" }[msg.type] || "Documento")}
+                                                    </span>
                                                 </div>
-                                                {msg.mediaUrl && <Button size="icon" variant="ghost" className="h-7 w-7 rounded-full shrink-0" onClick={() => handleDownload(msg.mediaUrl!, `${msg.type}-${msg.keyId}`)}><Download className="h-3.5 w-3.5" /></Button>}
+                                                {msg.mediaUrl && (
+                                                    <Button size="icon" variant="ghost" className="h-7 w-7 rounded-full shrink-0" onClick={() => handleDownload(msg.mediaUrl!, `${msg.type}-${msg.keyId}`)}>
+                                                        <Download className="h-3.5 w-3.5" />
+                                                    </Button>
+                                                )}
                                             </div>
                                         )}
-                                        {/* Text */}
-                                        <div className="flex items-end gap-2">
-                                            <span className="flex-1 text-sm break-all whitespace-pre-wrap">{msg.content}</span>
-                                            <span className={cn("text-[9px] shrink-0 leading-none", msg.fromMe ? "text-primary-foreground/60" : "text-muted-foreground")}>
-                                                {new Date(msg.timestamp).toLocaleTimeString("pt-BR", { hour: '2-digit', minute: '2-digit' })}
+
+                                        {/* Text content & Timestamp + status checks */}
+                                        <div className="flex flex-wrap items-end justify-end gap-x-2 gap-y-0.5">
+                                            <span className="flex-1 break-words whitespace-pre-wrap text-[14.2px]">
+                                                {msg.content}
                                             </span>
+                                            <div className="inline-flex items-center gap-1 shrink-0 ml-auto select-none pt-0.5">
+                                                <span className="text-[11px] leading-none text-[#667781] dark:text-[#8696a0]">
+                                                    {new Date(msg.timestamp).toLocaleTimeString("pt-BR", { hour: '2-digit', minute: '2-digit' })}
+                                                </span>
+                                                {msg.fromMe && <MessageStatusCheck status={msg.status} />}
+                                            </div>
                                         </div>
                                     </div>
-                                    {/* Reply button: other msg on right */}
+
+                                    {/* Reply button for incoming messages (on right) */}
                                     {!msg.fromMe && (
-                                        <button onClick={() => { setReplyingTo(msg); scrollToBottom(true); }}
-                                            className="self-center p-1.5 text-muted-foreground/40 hover:text-amber-500 hover:bg-amber-500/10 rounded-lg transition-all opacity-0 group-hover:opacity-100 cursor-pointer shrink-0"
-                                             title="Responder">
+                                        <button
+                                            onClick={() => { setReplyingTo(msg); scrollToBottom(true); }}
+                                            className="self-center p-1.5 text-muted-foreground/50 hover:text-[#00a884] hover:bg-black/5 dark:hover:bg-white/10 rounded-full transition-all opacity-0 group-hover:opacity-100 cursor-pointer shrink-0"
+                                            title="Responder"
+                                        >
                                             <CornerUpLeft className="h-3.5 w-3.5" />
                                         </button>
                                     )}
@@ -563,51 +770,127 @@ export function ChatWindow({ sessionId, jid, name, onBack }: ChatWindowProps) {
                 </div>
             </div>
 
-            {/* New message badge */}
+            {/* Floating New message badge */}
             {newMsgBadge && (
-                <button onClick={() => { scrollToBottom(true); setNewMsgBadge(false); }}
-                    className="absolute bottom-[90px] right-6 z-20 flex items-center gap-2 rounded-full bg-primary px-3 py-2 text-xs font-semibold text-primary-foreground shadow-lg hover:bg-primary/90 transition-all animate-bounce">
+                <button
+                    onClick={() => { scrollToBottom(true); setNewMsgBadge(false); }}
+                    className="absolute bottom-20 right-6 z-20 flex items-center gap-2 rounded-full bg-[#00a884] px-3.5 py-2 text-xs font-semibold text-white shadow-lg hover:bg-[#00a884]/90 transition-all animate-bounce"
+                >
                     <ArrowDown className="h-4 w-4" /> Novas mensagens
                 </button>
             )}
 
-            {/* Input */}
-            <div className="shrink-0 px-3 py-2.5 bg-background/80 backdrop-blur-sm border-t">
-                <div className="flex items-center gap-2 max-w-3xl mx-auto">
+            {/* WhatsApp Styled Bottom Input Bar */}
+            <div className="shrink-0 px-3.5 py-2.5 bg-[#f0f2f5] dark:bg-[#202c33] border-t border-border/15">
+                {/* Reply preview bar */}
+                {replyingTo && (
+                    <div className="max-w-4xl mx-auto mb-2 flex items-start justify-between gap-2 px-3.5 py-2 rounded-lg bg-white dark:bg-[#2a3942] border-l-4 border-[#00a884] shadow-sm animate-in slide-in-from-bottom-2">
+                        <div className="flex-1 min-w-0">
+                            <span className="font-semibold text-[#00a884] block text-xs">
+                                Respondendo a {replyingTo.fromMe ? "Você" : (replyingTo.pushName || jid.split('@')[0])}
+                            </span>
+                            <span className="text-xs text-muted-foreground truncate block">
+                                {replyingTo.content || `[${replyingTo.type}]`}
+                            </span>
+                        </div>
+                        <button
+                            onClick={() => setReplyingTo(null)}
+                            className="p-1 text-muted-foreground hover:text-foreground rounded-full"
+                        >
+                            <X className="h-4 w-4" />
+                        </button>
+                    </div>
+                )}
+
+                <div className="flex items-end gap-2 max-w-4xl mx-auto">
                     <input type="file" ref={fileInputRef} className="hidden" onChange={handleFileUpload} />
+
+                    {/* Emoji Button */}
+                    <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-10 w-10 rounded-full shrink-0 text-[#54656f] dark:text-[#8696a0] hover:text-foreground hover:bg-black/5 dark:hover:bg-white/10"
+                        title="Emojis"
+                    >
+                        <Smile className="h-5 w-5" />
+                    </Button>
+
+                    {/* Attachment Popover */}
                     <Popover>
                         <PopoverTrigger asChild>
-                            <Button variant="ghost" size="icon" className="h-9 w-9 rounded-full shrink-0 text-muted-foreground hover:text-foreground"><Paperclip className="h-4.5 w-4.5" /></Button>
+                            <Button
+                                variant="ghost"
+                                size="icon"
+                                className="h-10 w-10 rounded-full shrink-0 text-[#54656f] dark:text-[#8696a0] hover:text-foreground hover:bg-black/5 dark:hover:bg-white/10"
+                                title="Anexar arquivo"
+                            >
+                                <Paperclip className="h-5 w-5" />
+                            </Button>
                         </PopoverTrigger>
-                        <PopoverContent className="w-44 p-1.5" side="top" align="start">
-                            <div className="flex flex-col gap-0.5">
-                                <Button variant="ghost" size="sm" className="justify-start gap-2 h-8 text-xs" onClick={() => triggerUpload('image')}><ImageIcon className="h-3.5 w-3.5 text-blue-500" /> Imagem</Button>
-                                <Button variant="ghost" size="sm" className="justify-start gap-2 h-8 text-xs" onClick={() => triggerUpload('video')}><Video className="h-3.5 w-3.5 text-purple-500" /> Vídeo</Button>
-                                <Button variant="ghost" size="sm" className="justify-start gap-2 h-8 text-xs" onClick={() => triggerUpload('audio')}><Music className="h-3.5 w-3.5 text-orange-500" /> Áudio</Button>
-                                <Button variant="ghost" size="sm" className="justify-start gap-2 h-8 text-xs" onClick={() => triggerUpload('document')}><FileText className="h-3.5 w-3.5 text-emerald-500" /> Documento</Button>
+                        <PopoverContent className="w-52 p-2 rounded-2xl bg-white dark:bg-[#233138] border border-border/40 shadow-xl" side="top" align="start">
+                            <div className="flex flex-col gap-1">
+                                <Button variant="ghost" size="sm" className="justify-start gap-3 h-9 text-xs rounded-xl" onClick={() => triggerUpload('image')}>
+                                    <span className="h-7 w-7 rounded-full bg-blue-500/15 text-blue-500 flex items-center justify-center">
+                                        <ImageIcon className="h-4 w-4" />
+                                    </span>
+                                    Fotos e vídeos
+                                </Button>
+                                <Button variant="ghost" size="sm" className="justify-start gap-3 h-9 text-xs rounded-xl" onClick={() => triggerUpload('document')}>
+                                    <span className="h-7 w-7 rounded-full bg-purple-500/15 text-purple-500 flex items-center justify-center">
+                                        <FileText className="h-4 w-4" />
+                                    </span>
+                                    Documento
+                                </Button>
+                                <Button variant="ghost" size="sm" className="justify-start gap-3 h-9 text-xs rounded-xl" onClick={() => triggerUpload('audio')}>
+                                    <span className="h-7 w-7 rounded-full bg-orange-500/15 text-orange-500 flex items-center justify-center">
+                                        <Music className="h-4 w-4" />
+                                    </span>
+                                    Áudio
+                                </Button>
                             </div>
                         </PopoverContent>
                     </Popover>
 
-                    <div className="flex-1">
-                        {/* Reply preview bar */}
-                        {replyingTo && (
-                            <div className="mb-2 flex items-start gap-2 px-2 py-1.5 rounded-lg bg-muted/50 border-l-2 border-amber-500 text-xs animate-in slide-in-from-bottom-1 overflow-hidden">
-                                <div className="flex-1 min-w-0 overflow-hidden">
-                                    <span className="font-semibold text-amber-500 block text-[10px]">Replying to {replyingTo.fromMe ? "you" : (replyingTo.pushName || jid.split('@')[0])}</span>
-                                    <span className="text-muted-foreground truncate block w-full">{replyingTo.content || `[${replyingTo.type}]`}</span>
-                                </div>
-                                <button onClick={() => setReplyingTo(null)} className="p-0.5 text-muted-foreground hover:text-foreground shrink-0"><X className="h-3 w-3" /></button>
-                            </div>
-                        )}
-                        <div className="flex items-end gap-2 p-1 rounded-2xl border border-border/30 bg-background">
-                            <textarea ref={inputRef} value={input} onChange={(e) => { setInput(e.target.value); const el = e.target; el.style.height = "auto"; el.style.height = Math.min(el.scrollHeight, 120) + "px"; }}
-                                onKeyDown={handleKeyDown} placeholder="Digite uma mensagem..." rows={1} style={{ minHeight: "36px", maxHeight: "120px" }}
-                                className="flex-1 resize-none bg-transparent px-2 py-1.5 text-sm text-foreground placeholder-muted-foreground focus:outline-none leading-normal" />
-                        </div>
+                    {/* Input Textarea capsule */}
+                    <div className="flex-1 min-w-0 bg-white dark:bg-[#2a3942] rounded-xl px-3.5 py-1.5 shadow-[0_1px_0.5px_rgba(11,20,26,0.1)] flex items-center">
+                        <textarea
+                            ref={inputRef}
+                            value={input}
+                            onChange={(e) => {
+                                setInput(e.target.value);
+                                const el = e.target;
+                                el.style.height = "auto";
+                                el.style.height = Math.min(el.scrollHeight, 120) + "px";
+                            }}
+                            onKeyDown={handleKeyDown}
+                            placeholder="Digite uma mensagem..."
+                            rows={1}
+                            style={{ minHeight: "26px", maxHeight: "120px" }}
+                            className="w-full resize-none bg-transparent text-[15px] text-[#111b21] dark:text-[#e9edef] placeholder-[#8696a0] focus:outline-none leading-relaxed py-1"
+                        />
                     </div>
 
-                    <Button onClick={handleSend} disabled={!input.trim()} size="icon" className="h-9 w-9 rounded-full shrink-0"><Send className="h-4 w-4" /></Button>
+                    {/* WhatsApp Send Button */}
+                    {input.trim() ? (
+                        <Button
+                            onClick={handleSend}
+                            size="icon"
+                            className="h-10 w-10 rounded-full shrink-0 bg-[#00a884] hover:bg-[#00a884]/90 text-white shadow-sm transition-transform active:scale-95"
+                            title="Enviar mensagem"
+                        >
+                            <Send className="h-4.5 w-4.5 translate-x-0.5" />
+                        </Button>
+                    ) : (
+                        <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-10 w-10 rounded-full shrink-0 text-[#54656f] dark:text-[#8696a0] hover:text-foreground hover:bg-black/5 dark:hover:bg-white/10"
+                            onClick={() => inputRef.current?.focus()}
+                            title="Mensagem de voz"
+                        >
+                            <Mic className="h-5 w-5" />
+                        </Button>
+                    )}
                 </div>
             </div>
         </div>

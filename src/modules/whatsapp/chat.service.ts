@@ -23,13 +23,14 @@ export class ChatService {
             content: string | null;
             timestamp: Date;
             type: string;
+            fromMe: boolean;
         }> = [];
 
         if (isPostgres) {
             const sql = `
-                SELECT "remoteJid", "content", "timestamp", "type"
+                SELECT "remoteJid", "content", "timestamp", "type", "fromMe"
                 FROM (
-                    SELECT DISTINCT ON ("remoteJid") "remoteJid", "content", "timestamp", "type"
+                    SELECT DISTINCT ON ("remoteJid") "remoteJid", "content", "timestamp", "type", "fromMe"
                     FROM "Message"
                     WHERE "sessionId" = $1
                     ${before ? 'AND "timestamp" < $2' : ''}
@@ -52,8 +53,9 @@ export class ChatService {
                 content: string | null;
                 timestamp: Date;
                 type: string;
+                fromMe: boolean;
             }>>(`
-                SELECT m1.remoteJid, m1.content, m1.timestamp, m1.type
+                SELECT m1.remoteJid, m1.content, m1.timestamp, m1.type, m1.fromMe
                 FROM Message m1
                 INNER JOIN (
                     SELECT remoteJid, MAX(timestamp) as max_ts
@@ -107,7 +109,8 @@ export class ChatService {
                     timestamp: msg.timestamp instanceof Date
                         ? msg.timestamp.toISOString()
                         : String(msg.timestamp),
-                    type: msg.type
+                    type: msg.type,
+                    fromMe: Boolean(msg.fromMe)
                 }
             });
         }

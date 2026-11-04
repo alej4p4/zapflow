@@ -3,7 +3,7 @@
 import { useState, useEffect } from "react";
 import { ChatList } from "./chat-list";
 import { ChatWindow } from "./chat-window";
-import { MessageCircle } from "lucide-react";
+import { MessageCircle, Lock, ShieldCheck } from "lucide-react";
 
 interface ChatLayoutClientProps {
     sessionId: string;
@@ -69,7 +69,7 @@ export function ChatLayoutClient({ sessionId, initialJid }: ChatLayoutClientProp
         // Outer: flex row, full height, overflow hidden — containment chain root
         <div className="flex h-full bg-background rounded-xl border border-border/40 shadow-sm overflow-hidden min-h-0">
             {/* Chat List Panel */}
-            <div className={`w-full md:w-80 lg:w-[340px] border-r border-border/30 overflow-hidden shrink-0 flex flex-col
+            <div className={`w-full md:w-[380px] lg:w-[410px] border-r border-border/30 overflow-hidden shrink-0 flex flex-col
                 ${selectedChat ? "hidden md:flex" : "flex"}`}
             >
                 {/* Inner flex-col: header fixed + virtuoso fills rest */}
@@ -92,14 +92,21 @@ export function ChatLayoutClient({ sessionId, initialJid }: ChatLayoutClientProp
                         onBack={handleBack}
                     />
                 ) : (
-                    <div className="flex-1 flex items-center justify-center min-w-0 min-h-0">
-                        <div className="text-center p-6">
-                            <div className="h-16 w-16 rounded-2xl bg-muted/50 flex items-center justify-center mx-auto mb-4">
-                                <MessageCircle className="h-8 w-8 text-muted-foreground/40" />
+                    <div className="flex-1 flex flex-col items-center justify-center min-w-0 min-h-0 bg-[#f0f2f5] dark:bg-[#222e35] p-6 text-center select-none border-b-6 border-[#00a884]">
+                        <div className="max-w-md space-y-4">
+                            <div className="h-20 w-20 rounded-full bg-[#00a884]/15 flex items-center justify-center mx-auto text-[#00a884]">
+                                <MessageCircle className="h-10 w-10" />
                             </div>
-                            <p className="text-sm text-muted-foreground">
-                                Selecione uma conversa para começar a enviar mensagens
+                            <h2 className="text-2xl font-light text-[#41525d] dark:text-[#e9edef]">
+                                ZapFlow WhatsApp Web
+                            </h2>
+                            <p className="text-sm text-[#667781] dark:text-[#8696a0] leading-relaxed">
+                                Envie e receba mensagens com velocidade em tempo real. Selecione uma conversa ou grupo na lista à esquerda para começar.
                             </p>
+                            <div className="pt-6 flex items-center justify-center gap-1.5 text-xs text-[#8696a0]">
+                                <Lock className="h-3.5 w-3.5" />
+                                <span>Mensagens protegidas e sincronizadas diretamente no seu dispositivo</span>
+                            </div>
                         </div>
                     </div>
                 )}
