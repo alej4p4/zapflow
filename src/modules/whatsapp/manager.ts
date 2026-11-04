@@ -92,7 +92,13 @@ export class WhatsAppManager {
     }
 
     public getInstance(sessionId: string) {
-        return this.sessions.get(sessionId);
+        if (!sessionId) return undefined;
+        const direct = this.sessions.get(sessionId);
+        if (direct) return direct;
+        for (const [, inst] of this.sessions) {
+            if (inst.sessionId === sessionId) return inst;
+        }
+        return undefined;
     }
 
     /** Remove instance from memory manager (cleanup after stop/logout) */

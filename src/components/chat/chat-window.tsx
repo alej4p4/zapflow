@@ -48,6 +48,7 @@ interface ChatWindowProps {
     sessionId: string;
     jid: string;
     name?: string;
+    profilePic?: string | null;
     onBack?: () => void;
 }
 
@@ -213,7 +214,7 @@ function ContextMenu({
 }
 
 // ─── Main Component ─────────────────
-export function ChatWindow({ sessionId, jid, name, onBack }: ChatWindowProps) {
+export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWindowProps) {
     const [messages, setMessages] = useState<Message[]>([]);
     const [input, setInput] = useState("");
     const scrollRef = useRef<HTMLDivElement>(null);
@@ -524,7 +525,7 @@ export function ChatWindow({ sessionId, jid, name, onBack }: ChatWindowProps) {
                         </Button>
                     )}
                     <Avatar className="h-10 w-10 shrink-0 cursor-pointer">
-                        <AvatarImage src="" />
+                        <AvatarImage src={profilePic && profilePic.startsWith("http") ? profilePic : `/api/avatar/${sessionId}/${encodeURIComponent(jid)}`} referrerPolicy="no-referrer" />
                         <AvatarFallback className={cn(
                             "text-xs font-bold flex items-center justify-center",
                             isGroup

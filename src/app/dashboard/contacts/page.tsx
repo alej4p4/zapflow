@@ -174,7 +174,7 @@ export default function ContactListPage() {
                                             <TableRow key={contact.id}>
                                                 <TableCell>
                                                     <Avatar>
-                                                        <AvatarImage src={contact.profilePic || ""} />
+                                                        <AvatarImage src={contact.profilePic && contact.profilePic.startsWith("http") ? contact.profilePic : (sessionId ? `/api/avatar/${sessionId}/${encodeURIComponent(contact.jid)}` : "")} referrerPolicy="no-referrer" />
                                                         <AvatarFallback><User className="h-4 w-4" /></AvatarFallback>
                                                     </Avatar>
                                                 </TableCell>

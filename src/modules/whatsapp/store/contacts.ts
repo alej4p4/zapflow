@@ -44,12 +44,12 @@ export function bindContactSync(sock: WASocket, sessionId: string) {
                         jid: update.id,
                         name: update.name || update.notify,
                         notify: update.notify,
-                        profilePic: update.imgUrl
+                        profilePic: (update.imgUrl && update.imgUrl.startsWith("http")) ? update.imgUrl : undefined
                     },
                     update: {
                         name: update.name || undefined,
                         notify: update.notify || undefined,
-                        profilePic: update.imgUrl || undefined
+                        profilePic: (update.imgUrl && update.imgUrl.startsWith("http")) ? update.imgUrl : undefined
                     }
                 });
             } catch (e) {

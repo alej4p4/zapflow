@@ -13,6 +13,7 @@ interface ChatLayoutClientProps {
 interface SelectedChat {
     jid: string;
     name?: string;
+    profilePic?: string | null;
 }
 
 export function ChatLayoutClient({ sessionId, initialJid }: ChatLayoutClientProps) {
@@ -54,8 +55,8 @@ export function ChatLayoutClient({ sessionId, initialJid }: ChatLayoutClientProp
         return () => window.removeEventListener("popstate", handlePopState);
     }, []);
 
-    const handleSelectChat = (jid: string, name?: string) => {
-        setSelectedChat({ jid, name });
+    const handleSelectChat = (jid: string, name?: string, profilePic?: string | null) => {
+        setSelectedChat({ jid, name, profilePic });
     };
 
     const handleBack = () => {
@@ -89,6 +90,7 @@ export function ChatLayoutClient({ sessionId, initialJid }: ChatLayoutClientProp
                         sessionId={sessionId}
                         jid={selectedChat.jid}
                         name={selectedChat.name}
+                        profilePic={selectedChat.profilePic}
                         onBack={handleBack}
                     />
                 ) : (

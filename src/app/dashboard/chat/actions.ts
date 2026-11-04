@@ -20,8 +20,8 @@ export async function getChatsStatus(
     const canAccess = await canAccessSession(user.id, user.role, sessionId);
     if (!canAccess) throw new Error("Forbidden");
 
-    const session = await prisma.session.findUnique({
-        where: { sessionId },
+    const session = await prisma.session.findFirst({
+        where: { OR: [{ sessionId }, { id: sessionId }] },
         select: { id: true }
     });
 
@@ -38,8 +38,8 @@ export async function searchWhatsAppContacts(sessionId: string, query: string) {
     const canAccess = await canAccessSession(user.id, user.role, sessionId);
     if (!canAccess) throw new Error("Forbidden");
 
-    const session = await prisma.session.findUnique({
-        where: { sessionId },
+    const session = await prisma.session.findFirst({
+        where: { OR: [{ sessionId }, { id: sessionId }] },
         select: { id: true }
     });
     if (!session) return [];
@@ -73,7 +73,7 @@ export async function searchWhatsAppContacts(sessionId: string, query: string) {
         jid: c.jid,
         name: c.name || c.notify || c.jid.split("@")[0],
         notify: c.notify,
-        profilePic: c.profilePic,
+        profilePic: (c.profilePic && c.profilePic.startsWith("http")) ? c.profilePic : null,
         isContact: true
     }));
 }
@@ -91,8 +91,8 @@ export async function getChatMessages(
     const canAccess = await canAccessSession(user.id, user.role, sessionId);
     if (!canAccess) throw new Error("Forbidden");
 
-    const session = await prisma.session.findUnique({
-        where: { sessionId },
+    const session = await prisma.session.findFirst({
+        where: { OR: [{ sessionId }, { id: sessionId }] },
         select: { id: true }
     });
 

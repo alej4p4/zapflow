@@ -194,6 +194,7 @@ interface CtxMenuState {
     y: number;
     jid: string;
     name: string;
+    profilePic?: string | null;
     isPinned: boolean;
 }
 
@@ -205,7 +206,7 @@ function ChatContextMenu({
 }: {
     state: CtxMenuState;
     onClose: () => void;
-    onSelect: (jid: string, name?: string) => void;
+    onSelect: (jid: string, name?: string, profilePic?: string | null) => void;
     onTogglePin: (jid: string) => void;
 }) {
     const ref = useRef<HTMLDivElement>(null);
@@ -219,7 +220,7 @@ function ChatContextMenu({
         {
             label: "Abrir conversa",
             icon: MessageCircle,
-            action: () => { onSelect(state.jid, state.name); onClose(); }
+            action: () => { onSelect(state.jid, state.name, state.profilePic); onClose(); }
         },
         {
             label: state.isPinned ? "Desafixar conversa" : "Fixar conversa no topo",
@@ -267,7 +268,7 @@ function ChatRow({
     chat: ChatContact;
     isSelected: boolean;
     isPinned: boolean;
-    onSelect: (jid: string, name?: string) => void;
+    onSelect: (jid: string, name?: string, profilePic?: string | null) => void;
     onTogglePin: (jid: string, e?: React.MouseEvent) => void;
     sessionId: string;
     labelDots: { colorHex: string }[];
@@ -294,16 +295,16 @@ function ChatRow({
                         ? "bg-[#f0f2f5] dark:bg-[#2a3942] border-l-4 border-l-[#00a884]"
                         : "hover:bg-[#f5f6f6] dark:hover:bg-[#202c33]/70 border-l-4 border-l-transparent"
                 )}
-                onClick={() => onSelect(chat.jid, displayName)}
+                onClick={() => onSelect(chat.jid, displayName, chat.profilePic)}
                 onMouseEnter={() => prefetchChatMessages(sessionId, chat.jid)}
                 onContextMenu={(e) => {
                     e.preventDefault();
-                    setCtxMenu({ x: e.clientX, y: e.clientY, jid: chat.jid, name: displayName, isPinned });
+                    setCtxMenu({ x: e.clientX, y: e.clientY, jid: chat.jid, name: displayName, profilePic: chat.profilePic, isPinned });
                 }}
             >
                 {/* Avatar with WhatsApp group/user style */}
                 <Avatar className="h-11 w-11 flex-shrink-0">
-                    <AvatarImage src={chat.profilePic || ""} />
+                    <AvatarImage src={chat.profilePic && chat.profilePic.startsWith("http") ? chat.profilePic : `/api/avatar/${sessionId}/${encodeURIComponent(chat.jid)}`} referrerPolicy="no-referrer" />
                     <AvatarFallback className={cn(
                         "text-xs font-semibold flex items-center justify-center",
                         isGroup

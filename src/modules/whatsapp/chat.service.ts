@@ -88,7 +88,7 @@ export class ChatService {
 
         // Build lookup map
         const infoMap = new Map<string, { name: string | null; notify: string | null; profilePic: string | null }>();
-        contacts.forEach(c => infoMap.set(c.jid, { name: c.name, notify: c.notify, profilePic: c.profilePic }));
+        contacts.forEach(c => infoMap.set(c.jid, { name: c.name, notify: c.notify, profilePic: (c.profilePic && c.profilePic.startsWith("http")) ? c.profilePic : null }));
         groups.forEach(g => infoMap.set(g.jid, { name: g.subject, notify: g.subject, profilePic: null }));
 
         // 3. Build result array (already sorted by SQL DESC)

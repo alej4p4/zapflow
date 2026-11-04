@@ -143,7 +143,7 @@ export const bindSessionStore = (sock: WASocket, sessionId: string, io: Server |
                         notify: c.notify,
                         // @ts-ignore
                         verifiedName: c.verifiedName,
-                        profilePic: c.imgUrl || undefined,
+                        profilePic: (c.imgUrl && typeof c.imgUrl === "string" && c.imgUrl.startsWith("http")) ? c.imgUrl : undefined,
                         data: c as any
                     },
                     update: {
@@ -153,7 +153,7 @@ export const bindSessionStore = (sock: WASocket, sessionId: string, io: Server |
                         notify: c.notify || undefined,
                         // @ts-ignore
                         verifiedName: c.verifiedName || undefined,
-                        profilePic: c.imgUrl || undefined,
+                        profilePic: (c.imgUrl && typeof c.imgUrl === "string" && c.imgUrl.startsWith("http")) ? c.imgUrl : undefined,
                         data: c as any
                     }
                 });
