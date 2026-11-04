@@ -610,6 +610,31 @@ export function ChatList({ sessionId, onSelectChat, selectedJid }: ChatListProps
         };
     }, [sessionId, getSocket, joinSession, fetchChats]);
 
+    // Instantly update sidebar when a message is sent locally (0ms optimistic)
+    useEffect(() => {
+        const handleLocalSent = (e: Event) => {
+            const { jid: sentJid, content, timestamp } = (e as CustomEvent).detail;
+            setChats(prev => {
+                const idx = prev.findIndex(c => c.jid === sentJid);
+                if (idx === -1) return prev;
+                const updated = [...prev];
+                updated[idx] = {
+                    ...updated[idx],
+                    lastMessage: {
+                        content,
+                        timestamp,
+                        type: "TEXT",
+                        fromMe: true
+                    }
+                };
+                const [chatItem] = updated.splice(idx, 1);
+                return [chatItem, ...updated];
+            });
+        };
+        window.addEventListener("zapflow:local-message-sent", handleLocalSent);
+        return () => window.removeEventListener("zapflow:local-message-sent", handleLocalSent);
+    }, []);
+
     // Fetch label assignments
     useEffect(() => {
         if (!sessionId) return;

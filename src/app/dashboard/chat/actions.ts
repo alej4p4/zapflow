@@ -120,8 +120,14 @@ export async function sendChatMessage(sessionId: string, jid: string, text: stri
     if (!canAccess) throw new Error("Forbidden");
 
     try {
-        await ChatService.sendTextMessage(sessionId, jid, { text }, undefined, quotedMessageId);
-        return { success: true };
+        const result = await ChatService.sendTextMessage(sessionId, jid, { text }, undefined, quotedMessageId);
+        return {
+            success: true,
+            keyId: result?.key?.id,
+            timestamp: result?.messageTimestamp
+                ? (typeof result.messageTimestamp === "number" ? result.messageTimestamp * 1000 : Number(result.messageTimestamp) * 1000)
+                : Date.now()
+        };
     } catch (error: any) {
         throw new Error(`Failed to send message: ${error.message}`);
     }

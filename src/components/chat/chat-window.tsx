@@ -213,14 +213,173 @@ function ContextMenu({
     );
 }
 
+
+// ─── Isolated Chat Input Bar (Local state = 120 FPS typing with zero message re-renders) ───
+function ChatInputBar({
+    onSend,
+    onUpload,
+    replyingTo,
+    onCancelReply,
+    jid
+}: {
+    onSend: (text: string) => void;
+    onUpload: (type: string) => void;
+    replyingTo: Message | null;
+    onCancelReply: () => void;
+    jid: string;
+}) {
+    const [input, setInput] = useState("");
+    const inputRef = useRef<HTMLTextAreaElement>(null);
+
+    // Auto-focus when replying
+    useEffect(() => {
+        if (replyingTo && inputRef.current) {
+            inputRef.current.focus();
+        }
+    }, [replyingTo]);
+
+    // Focus on jid change
+    useEffect(() => {
+        inputRef.current?.focus();
+    }, [jid]);
+
+    const handleSend = () => {
+        const text = input.trim();
+        if (!text) return;
+        setInput("");
+        if (inputRef.current) {
+            inputRef.current.style.height = "auto";
+        }
+        onSend(text);
+    };
+
+    const handleKeyDown = (e: React.KeyboardEvent) => {
+        if (e.key === "Enter" && !e.shiftKey) {
+            e.preventDefault();
+            handleSend();
+        }
+    };
+
+    return (
+        <div className="shrink-0 px-3.5 py-2.5 bg-[#f0f2f5] dark:bg-[#202c33] border-t border-border/15">
+            {/* Reply preview bar */}
+            {replyingTo && (
+                <div className="mb-2 p-2 rounded-xl bg-white/80 dark:bg-[#111b21]/80 backdrop-blur-sm border-l-4 border-[#00a884] flex items-center justify-between text-xs animate-in slide-in-from-bottom-2 duration-150">
+                    <div className="flex-1 truncate pr-2">
+                        <span className="font-semibold text-[#00a884] block truncate">
+                            Respondendo a {replyingTo.fromMe ? "Você" : (replyingTo.pushName || jid.split('@')[0])}
+                        </span>
+                        <span className="text-xs text-muted-foreground truncate block">
+                            {replyingTo.content || `[${replyingTo.type}]`}
+                        </span>
+                    </div>
+                    <button
+                        onClick={onCancelReply}
+                        className="p-1 text-muted-foreground hover:text-foreground rounded-full"
+                    >
+                        <X className="h-4 w-4" />
+                    </button>
+                </div>
+            )}
+
+            <div className="flex items-end gap-2 max-w-4xl mx-auto">
+                {/* Emoji Button */}
+                <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-10 w-10 rounded-full shrink-0 text-[#54656f] dark:text-[#8696a0] hover:text-foreground hover:bg-black/5 dark:hover:bg-white/10"
+                    title="Emojis"
+                >
+                    <Smile className="h-5 w-5" />
+                </Button>
+
+                {/* Attachment Popover */}
+                <Popover>
+                    <PopoverTrigger asChild>
+                        <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-10 w-10 rounded-full shrink-0 text-[#54656f] dark:text-[#8696a0] hover:text-foreground hover:bg-black/5 dark:hover:bg-white/10"
+                            title="Anexar arquivo"
+                        >
+                            <Paperclip className="h-5 w-5" />
+                        </Button>
+                    </PopoverTrigger>
+                    <PopoverContent className="w-52 p-2 rounded-2xl bg-white dark:bg-[#233138] border border-border/40 shadow-xl" side="top" align="start">
+                        <div className="flex flex-col gap-1">
+                            <Button variant="ghost" size="sm" className="justify-start gap-3 h-9 text-xs rounded-xl" onClick={() => onUpload('image')}>
+                                <span className="h-7 w-7 rounded-full bg-blue-500/15 text-blue-500 flex items-center justify-center">
+                                    <ImageIcon className="h-4 w-4" />
+                                </span>
+                                Fotos e vídeos
+                            </Button>
+                            <Button variant="ghost" size="sm" className="justify-start gap-3 h-9 text-xs rounded-xl" onClick={() => onUpload('document')}>
+                                <span className="h-7 w-7 rounded-full bg-purple-500/15 text-purple-500 flex items-center justify-center">
+                                    <FileText className="h-4 w-4" />
+                                </span>
+                                Documento
+                            </Button>
+                            <Button variant="ghost" size="sm" className="justify-start gap-3 h-9 text-xs rounded-xl" onClick={() => onUpload('audio')}>
+                                <span className="h-7 w-7 rounded-full bg-orange-500/15 text-orange-500 flex items-center justify-center">
+                                    <Music className="h-4 w-4" />
+                                </span>
+                                Áudio
+                            </Button>
+                        </div>
+                    </PopoverContent>
+                </Popover>
+
+                {/* Input Textarea capsule */}
+                <div className="flex-1 min-w-0 bg-white dark:bg-[#2a3942] rounded-xl px-3.5 py-1.5 shadow-[0_1px_0.5px_rgba(11,20,26,0.1)] flex items-center">
+                    <textarea
+                        ref={inputRef}
+                        value={input}
+                        onChange={(e) => {
+                            setInput(e.target.value);
+                            const el = e.target;
+                            el.style.height = "auto";
+                            el.style.height = Math.min(el.scrollHeight, 120) + "px";
+                        }}
+                        onKeyDown={handleKeyDown}
+                        placeholder="Digite uma mensagem..."
+                        rows={1}
+                        style={{ minHeight: "26px", maxHeight: "120px" }}
+                        className="w-full resize-none bg-transparent text-[15px] text-[#111b21] dark:text-[#e9edef] placeholder-[#8696a0] focus:outline-none leading-relaxed py-1"
+                    />
+                </div>
+
+                {/* WhatsApp Send Button */}
+                {input.trim() ? (
+                    <Button
+                        onClick={handleSend}
+                        size="icon"
+                        className="h-10 w-10 rounded-full shrink-0 bg-[#00a884] hover:bg-[#00a884]/90 text-white shadow-sm transition-transform active:scale-95"
+                        title="Enviar mensagem"
+                    >
+                        <Send className="h-4.5 w-4.5 translate-x-0.5" />
+                    </Button>
+                ) : (
+                    <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-10 w-10 rounded-full shrink-0 text-[#54656f] dark:text-[#8696a0] hover:text-foreground hover:bg-black/5 dark:hover:bg-white/10"
+                        onClick={() => inputRef.current?.focus()}
+                        title="Mensagem de voz"
+                    >
+                        <Mic className="h-5 w-5" />
+                    </Button>
+                )}
+            </div>
+        </div>
+    );
+}
+
 // ─── Main Component ─────────────────
 export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWindowProps) {
     const [messages, setMessages] = useState<Message[]>([]);
-    const [input, setInput] = useState("");
     const scrollRef = useRef<HTMLDivElement>(null);
     const bottomRef = useRef<HTMLDivElement>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
-    const inputRef = useRef<HTMLTextAreaElement>(null);
     const [uploadType, setUploadType] = useState<string>("image");
     const [isDragging, setIsDragging] = useState(false);
     const [loading, setLoading] = useState(true);
@@ -294,14 +453,7 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
         }
     }, [sessionId, jid, fetchMessages]);
 
-    // Auto focus input
-    useEffect(() => {
-        if (!loading && inputRef.current) {
-            setTimeout(() => {
-                inputRef.current?.focus();
-            }, 10);
-        }
-    }, [jid, loading]);
+
 
     // Socket real-time
     useEffect(() => {
@@ -315,7 +467,16 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
             setMessages(prev => {
                 const relevant = newMessages.filter(m => m.remoteJid === normalizedJid || prev.some(p => p.remoteJid === m.remoteJid));
                 if (relevant.length === 0) return prev;
-                const combined = [...prev, ...relevant];
+
+                // Remove optimistic temp- messages that match incoming messages fromMe
+                let filtered = prev;
+                for (const nm of relevant) {
+                    if (nm.fromMe) {
+                        filtered = filtered.filter(p => !(p.keyId.startsWith("temp-") && p.content === nm.content));
+                    }
+                }
+
+                const combined = [...filtered, ...relevant];
                 const unique = Array.from(new Map(combined.map(m => [m.keyId, m])).values());
                 const sorted = unique.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
 
@@ -359,36 +520,68 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
         }
     }, [hasMore, loadingMore, oldestTimestamp, fetchMessages]);
 
-    const handleSend = async () => {
-        if (!input.trim()) return;
-        const messageToSend = input;
+    // 0ms Optimistic Send: message appears instantly on screen with WhatsApp Clock icon
+    const handleSend = (text: string) => {
         const replyKeyId = replyingTo?.keyId;
-        setInput("");
         setReplyingTo(null);
-        if (inputRef.current) {
-            inputRef.current.style.height = "auto";
-        }
-        try {
-            await sendChatMessage(sessionId, jid, messageToSend, replyKeyId);
-            setTimeout(() => fetchMessages(undefined, true), 500);
-        } catch (e: any) {
-            toast.error(e.message || "Falha ao enviar a mensagem");
-            setInput(messageToSend);
-        }
-    };
 
-    const handleKeyDown = (e: React.KeyboardEvent) => {
-        if (e.key === "Enter" && !e.shiftKey) {
-            e.preventDefault();
-            handleSend();
-        }
-    };
+        // 1. Optimistic message creation
+        const tempKeyId = `temp-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+        const nowIso = new Date().toISOString();
 
-    useEffect(() => {
-        if (replyingTo && inputRef.current) {
-            inputRef.current.focus();
+        const optimisticMsg: Message = {
+            id: tempKeyId,
+            keyId: tempKeyId,
+            remoteJid: jid,
+            fromMe: true,
+            pushName: undefined,
+            type: "TEXT",
+            content: text,
+            mediaUrl: undefined,
+            status: "PENDING", // Renders WhatsApp Clock icon immediately
+            timestamp: nowIso,
+            quoteId: replyKeyId || null,
+        };
+
+        // 2. Immediately render on screen & scroll (0ms)
+        setMessages(prev => [...prev, optimisticMsg]);
+        requestAnimationFrame(() => scrollToBottom(true));
+
+        // 3. Update memory cache immediately
+        const cacheKey = `${sessionId}:${jid}`;
+        const cached = chatCache.get(cacheKey);
+        if (cached) {
+            chatCache.set(cacheKey, {
+                ...cached,
+                messages: [...cached.messages, optimisticMsg],
+                cachedAt: Date.now()
+            });
         }
-    }, [replyingTo]);
+
+        // 4. Instantly notify sidebar to update lastMessage and move to top (0ms)
+        if (typeof window !== "undefined") {
+            window.dispatchEvent(new CustomEvent("zapflow:local-message-sent", {
+                detail: { jid, content: text, timestamp: nowIso }
+            }));
+        }
+
+        // 5. Send in background — non-blocking, zero perceived delay
+        sendChatMessage(sessionId, jid, text, replyKeyId)
+            .then(res => {
+                if (res?.keyId) {
+                    setMessages(prev => prev.map(m => m.keyId === tempKeyId ? { ...m, keyId: res.keyId!, status: "SENT" } : m));
+                    const currentCached = chatCache.get(cacheKey);
+                    if (currentCached) {
+                        currentCached.messages = currentCached.messages.map(m => m.keyId === tempKeyId ? { ...m, keyId: res.keyId!, status: "SENT" } : m);
+                    }
+                }
+            })
+            .catch(err => {
+                console.error("Erro ao enviar mensagem:", err);
+                toast.error(err?.message || "Falha ao enviar a mensagem");
+                setMessages(prev => prev.map(m => m.keyId === tempKeyId ? { ...m, status: "FAILED" } : m));
+            });
+    };
 
     // Keyboard shortcuts
     useEffect(() => {
@@ -791,118 +984,14 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
             )}
 
             {/* WhatsApp Styled Bottom Input Bar */}
-            <div className="shrink-0 px-3.5 py-2.5 bg-[#f0f2f5] dark:bg-[#202c33] border-t border-border/15">
-                {/* Reply preview bar */}
-                {replyingTo && (
-                    <div className="max-w-4xl mx-auto mb-2 flex items-start justify-between gap-2 px-3.5 py-2 rounded-lg bg-white dark:bg-[#2a3942] border-l-4 border-[#00a884] shadow-sm animate-in slide-in-from-bottom-2">
-                        <div className="flex-1 min-w-0">
-                            <span className="font-semibold text-[#00a884] block text-xs">
-                                Respondendo a {replyingTo.fromMe ? "Você" : (replyingTo.pushName || jid.split('@')[0])}
-                            </span>
-                            <span className="text-xs text-muted-foreground truncate block">
-                                {replyingTo.content || `[${replyingTo.type}]`}
-                            </span>
-                        </div>
-                        <button
-                            onClick={() => setReplyingTo(null)}
-                            className="p-1 text-muted-foreground hover:text-foreground rounded-full"
-                        >
-                            <X className="h-4 w-4" />
-                        </button>
-                    </div>
-                )}
-
-                <div className="flex items-end gap-2 max-w-4xl mx-auto">
-                    <input type="file" ref={fileInputRef} className="hidden" onChange={handleFileUpload} />
-
-                    {/* Emoji Button */}
-                    <Button
-                        variant="ghost"
-                        size="icon"
-                        className="h-10 w-10 rounded-full shrink-0 text-[#54656f] dark:text-[#8696a0] hover:text-foreground hover:bg-black/5 dark:hover:bg-white/10"
-                        title="Emojis"
-                    >
-                        <Smile className="h-5 w-5" />
-                    </Button>
-
-                    {/* Attachment Popover */}
-                    <Popover>
-                        <PopoverTrigger asChild>
-                            <Button
-                                variant="ghost"
-                                size="icon"
-                                className="h-10 w-10 rounded-full shrink-0 text-[#54656f] dark:text-[#8696a0] hover:text-foreground hover:bg-black/5 dark:hover:bg-white/10"
-                                title="Anexar arquivo"
-                            >
-                                <Paperclip className="h-5 w-5" />
-                            </Button>
-                        </PopoverTrigger>
-                        <PopoverContent className="w-52 p-2 rounded-2xl bg-white dark:bg-[#233138] border border-border/40 shadow-xl" side="top" align="start">
-                            <div className="flex flex-col gap-1">
-                                <Button variant="ghost" size="sm" className="justify-start gap-3 h-9 text-xs rounded-xl" onClick={() => triggerUpload('image')}>
-                                    <span className="h-7 w-7 rounded-full bg-blue-500/15 text-blue-500 flex items-center justify-center">
-                                        <ImageIcon className="h-4 w-4" />
-                                    </span>
-                                    Fotos e vídeos
-                                </Button>
-                                <Button variant="ghost" size="sm" className="justify-start gap-3 h-9 text-xs rounded-xl" onClick={() => triggerUpload('document')}>
-                                    <span className="h-7 w-7 rounded-full bg-purple-500/15 text-purple-500 flex items-center justify-center">
-                                        <FileText className="h-4 w-4" />
-                                    </span>
-                                    Documento
-                                </Button>
-                                <Button variant="ghost" size="sm" className="justify-start gap-3 h-9 text-xs rounded-xl" onClick={() => triggerUpload('audio')}>
-                                    <span className="h-7 w-7 rounded-full bg-orange-500/15 text-orange-500 flex items-center justify-center">
-                                        <Music className="h-4 w-4" />
-                                    </span>
-                                    Áudio
-                                </Button>
-                            </div>
-                        </PopoverContent>
-                    </Popover>
-
-                    {/* Input Textarea capsule */}
-                    <div className="flex-1 min-w-0 bg-white dark:bg-[#2a3942] rounded-xl px-3.5 py-1.5 shadow-[0_1px_0.5px_rgba(11,20,26,0.1)] flex items-center">
-                        <textarea
-                            ref={inputRef}
-                            value={input}
-                            onChange={(e) => {
-                                setInput(e.target.value);
-                                const el = e.target;
-                                el.style.height = "auto";
-                                el.style.height = Math.min(el.scrollHeight, 120) + "px";
-                            }}
-                            onKeyDown={handleKeyDown}
-                            placeholder="Digite uma mensagem..."
-                            rows={1}
-                            style={{ minHeight: "26px", maxHeight: "120px" }}
-                            className="w-full resize-none bg-transparent text-[15px] text-[#111b21] dark:text-[#e9edef] placeholder-[#8696a0] focus:outline-none leading-relaxed py-1"
-                        />
-                    </div>
-
-                    {/* WhatsApp Send Button */}
-                    {input.trim() ? (
-                        <Button
-                            onClick={handleSend}
-                            size="icon"
-                            className="h-10 w-10 rounded-full shrink-0 bg-[#00a884] hover:bg-[#00a884]/90 text-white shadow-sm transition-transform active:scale-95"
-                            title="Enviar mensagem"
-                        >
-                            <Send className="h-4.5 w-4.5 translate-x-0.5" />
-                        </Button>
-                    ) : (
-                        <Button
-                            variant="ghost"
-                            size="icon"
-                            className="h-10 w-10 rounded-full shrink-0 text-[#54656f] dark:text-[#8696a0] hover:text-foreground hover:bg-black/5 dark:hover:bg-white/10"
-                            onClick={() => inputRef.current?.focus()}
-                            title="Mensagem de voz"
-                        >
-                            <Mic className="h-5 w-5" />
-                        </Button>
-                    )}
-                </div>
-            </div>
+            <input type="file" ref={fileInputRef} className="hidden" onChange={handleFileUpload} />
+            <ChatInputBar
+                onSend={handleSend}
+                onUpload={triggerUpload}
+                replyingTo={replyingTo}
+                onCancelReply={() => setReplyingTo(null)}
+                jid={jid}
+            />
         </div>
     );
 }

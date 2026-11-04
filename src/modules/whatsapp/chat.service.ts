@@ -247,7 +247,7 @@ export class ChatService {
         let quotedOption: any = undefined;
         if (quotedMessageId) {
             try {
-                const dbSession = await prisma.session.findUnique({ where: { sessionId }, select: { id: true } });
+                const dbSession = await prisma.session.findFirst({ where: { OR: [{ sessionId }, { id: sessionId }] }, select: { id: true } });
                 if (dbSession) {
                     const quotedMsg = await prisma.message.findFirst({
                         where: { sessionId: dbSession.id, keyId: quotedMessageId },
