@@ -1,0 +1,371 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ZapFlow AI</title>
+<link rel="stylesheet" href="popup.css">
+</head>
+<body>
+<div class="erp">
+  <aside class="sidebar">
+    <div class="brand">
+      <div class="logo">ZF</div>
+      <div class="nome">ZapFlow AI</div>
+      <button id="btn-fullscreen-sidebar" class="btn-expand-full" title="Abrir em Tela Cheia no Monitor">⛶ Tela Cheia</button>
+    </div>
+
+    <nav class="menu">
+      <button class="menu-item active" data-module="dashboard">📊 Dashboard</button>
+      <button class="menu-item" data-module="conexao">🔗 WhatsApp</button>
+      <button class="menu-item" data-module="crm">👥 CRM</button>
+      <button class="menu-item" data-module="disparos">📢 Disparos</button>
+      <button class="menu-item" data-module="captador">🎣 Captador</button>
+      <button class="menu-item" data-module="funil">📈 Funil</button>
+      <button class="menu-item" data-module="catalogo">📦 Catálogo</button>
+      <button class="menu-item" data-module="respostas">⚡ Respostas</button>
+      <button class="menu-item" data-module="ia">🤖 IA</button>
+      <button class="menu-item" data-module="grafo">🕸️ Grafo</button>
+      <button class="menu-item" data-module="relatorios">📄 Relatórios</button>
+      <button class="menu-item" data-module="equipe">👤 Equipe</button>
+      <button class="menu-item" data-module="config">⚙️ Configurações</button>
+      <button class="menu-item" data-module="verificador">✅ Verificador</button>
+    </nav>
+
+    <div class="user-box">
+      <div id="user-nome" class="user-nome">Não logado</div>
+      <button id="btn-login-sidebar" class="btn-sidebar">Entrar</button>
+    </div>
+  </aside>
+
+  <main class="content">
+    <header class="content-header">
+      <h2 id="titulo-pagina">Dashboard</h2>
+      <div class="header-actions">
+        <button id="btn-fullscreen-header" class="btn-header" title="Alternar Modo Tela Cheia / Nova Aba">⛶ Tela Cheia</button>
+      </div>
+    </header>
+
+    <div style="background: linear-gradient(135deg, #122635 0%, #0e1a24 100%); border: 1px solid #25d366; border-radius: 10px; padding: 12px 18px; margin: 14px 24px 0; display: flex; align-items: center; justify-content: space-between; gap: 14px; flex-shrink: 0;">
+      <div style="display:flex;align-items:center;gap:10px;">
+        <span style="font-size:1.6rem;">⚡</span>
+        <div>
+          <strong style="color:#25d366;font-size:0.92rem;">Modo WA Web Plus™ Ativo</strong>
+          <p style="color:#9fb3c8;font-size:0.75rem;margin:2px 0 0;">Ferramentas de privacidade (borrão de mensagens/nomes/fotos), automações e CRM integrados ao WhatsApp Web.</p>
+        </div>
+      </div>
+      <div style="display:flex;gap:8px;flex-shrink:0;">
+        <button id="btn-banner-abrir-wa" class="btn-header" style="background:#25d366;color:#0b141a;font-weight:700;">👉 ABRIR WHATSAPP WEB</button>
+      </div>
+    </div>
+
+    <div style="padding: 24px 28px; flex: 1; overflow-y: auto;">
+      <section id="dashboard" class="module" data-module="dashboard">
+        <div class="grid">
+          <div class="card"><div class="valor" id="d-total-clientes">0</div><div class="rotulo">Clientes</div></div>
+          <div class="card"><div class="valor" id="d-total-leads">0</div><div class="rotulo">Leads no funil</div></div>
+          <div class="card"><div class="valor" id="d-total-disparos">0</div><div class="rotulo">Disparos registrados</div></div>
+          <div class="card" id="card-leads-sem-resposta">
+            <div class="valor" id="d-leads-sem-resposta" style="color:#ffc107">0</div>
+            <div class="rotulo">Leads sem resposta</div>
+            <div style="margin-top:6px;font-size:.72rem;color:#9fb3c8">Requerem atenção</div>
+          </div>
+          <div class="card"><div class="valor" id="d-conexao">Desconectado</div><div class="rotulo">WhatsApp</div></div>
+        </div>
+        <div class="aviso" style="margin-top:16px">Selecione um módulo no menu à esquerda ou utilize os atalhos de teclado (Ctrl + 1..9).</div>
+      </section>
+
+      <section id="conexao" class="module" data-module="conexao">
+        <h2>Conectar WhatsApp</h2>
+        <p class="dica">Escaneie o QR code abaixo com o WhatsApp do seu celular (Configurações > Aparelhos conectados) para sincronizar.</p>
+        <div class="qr-card">
+          <img id="qr-img" src="" alt="QR Code ZapFlow">
+          <p id="qr-status" class="qr-status">Clique em "Gerar QR Code"</p>
+          <div class="qr-actions">
+            <button id="btn-gerar-qr" class="btn-gerar">Gerar QR Code</button>
+            <button id="btn-abrir-whatsapp" class="btn-abrir">Abrir WhatsApp Web</button>
+          </div>
+        </div>
+        <p id="msg-conexao" class="aviso" style="text-align:center"></p>
+      </section>
+
+      <section id="crm" class="module" data-module="crm">
+        <h2>CRM — Clientes</h2>
+        <form id="form-crm">
+          <input type="text" name="nome" placeholder="Nome completo" required>
+          <input type="tel" name="telefone" placeholder="Telefone (ex: 5511999999999)" required>
+          <input type="text" name="empresa" placeholder="Empresa">
+          <input type="text" name="cidade" placeholder="Cidade">
+          <div class="zf-label">Etiquetas</div>
+          <input type="text" name="etiquetas" placeholder="Cliente, Fornecedor, VIP (separadas por vírgula)">
+          <textarea name="observacoes" rows="2" placeholder="Observações"></textarea>
+          <button type="submit">Salvar Cliente</button>
+        </form>
+        <div style="margin-top:18px;margin-bottom:8px;">
+          <input type="text" id="filtro-clientes" class="zf-input" placeholder="Buscar clientes..." style="max-width:320px;">
+        </div>
+        <div class="table-responsive">
+          <table id="tabela-clientes">
+            <thead><tr><th>Nome</th><th>Telefone</th><th>Empresa</th><th>Cidade</th><th>Etiquetas</th><th>Última Interação</th><th>Ação</th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section id="disparos" class="module" data-module="disparos">
+        <h2>Disparo de Mensagens</h2>
+        <form id="form-disparo">
+          <label>Contato Cadastrado</label>
+          <select name="contato">
+            <option value="">Escolha um cliente...</option>
+          </select>
+          <label>Número (somente números com DDI + DDD)</label>
+          <input type="tel" name="numero" placeholder="5511999999999" required>
+          <label>Mensagem (use {nome}, {empresa}, {cidade} ou atalhos como /preco)</label>
+          <textarea name="mensagem" rows="4" placeholder="Olá {nome}, tudo bem? Segue nossa tabela." required></textarea>
+          <button type="submit">Enviar via WhatsApp Web</button>
+        </form>
+        <p id="msg-disparo" class="aviso"></p>
+      </section>
+
+      <section id="captador" class="module" data-module="captador">
+        <h2>Captador de Leads</h2>
+        <p class="dica">Abra o WhatsApp Web em uma aba do navegador e clique em Extrair para capturar os números visíveis na tela.</p>
+        <button type="button" id="btn-extrair" class="btn-header">🎣 Extrair números da tela</button>
+        <div id="lista-numeros"></div>
+        <button type="button" id="btn-salvar-numeros" class="zf-btn-submit" style="margin-top:8px">Salvar como contatos no CRM</button>
+        <p id="msg-captador" class="aviso"></p>
+      </section>
+
+      <section id="funil" class="module" data-module="funil">
+        <h2>Funil de Vendas</h2>
+        <form id="form-funil">
+          <input type="text" name="nome" placeholder="Nome do lead" required>
+          <input type="tel" name="telefone" placeholder="Telefone (ex: 5511999999999)" required>
+          <select name="etapa" required>
+            <option value="novo">Novo Lead</option>
+            <option value="contato">Contato Realizado</option>
+            <option value="negociacao">Negociação</option>
+            <option value="cliente">Cliente</option>
+            <option value="pos-venda">Pós-venda</option>
+          </select>
+          <select name="temperatura" required>
+            <option value="frio">Frio ❄️</option>
+            <option value="morno">Morno ⛅</option>
+            <option value="quente">Quente 🔥</option>
+          </select>
+          <button type="submit">Adicionar Lead</button>
+        </form>
+        <div style="margin-top:18px;margin-bottom:8px;">
+          <input type="text" id="filtro-funil" class="zf-input" placeholder="Buscar leads..." style="max-width:320px;">
+        </div>
+        <div class="table-responsive">
+          <table id="tabela-funil">
+            <thead><tr><th>Lead</th><th>Telefone</th><th>Etapa</th><th>Temperatura</th><th>Ação</th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+
+        <div style="margin-top:20px;padding:16px;border:1px solid #1e425c;border-radius:8px;background:#0e1a24">
+          <div style="font-weight:700;color:#ffc107;margin-bottom:6px">⚠️ Leads sem Resposta</div>
+          <p style="color:#9fb3c8;font-size:.85rem;margin-bottom:10px">Leads que não receberam resposta nos últimos dias. Recomenda-se follow-up.</p>
+          <div style="display:flex;gap:10px;align-items:center;">
+            <button class="zf-btn-submit" id="zf-btn-seguir-up" style="font-size:.8rem;padding:6px 12px;">Gerar Mensagem de Follow-up</button>
+            <span id="zf-leads-sem-resposta" style="color:#ffc107;font-size:.85rem;font-weight:600">0 leads</span>
+          </div>
+        </div>
+      </section>
+
+      <section id="catalogo" class="module" data-module="catalogo">
+        <h2>Catálogo Inteligente</h2>
+        <form id="form-catalogo">
+          <input type="text" name="produto" placeholder="Nome do produto ou serviço" required>
+          <input type="text" name="preco" placeholder="Preço (ex: R$ 99,00)" required>
+          <input type="text" name="arquivo" placeholder="Link de imagem ou PDF do catálogo">
+          <button type="submit">Cadastrar Produto</button>
+        </form>
+        <div style="margin-top:18px;margin-bottom:8px;">
+          <input type="text" id="filtro-catalogo" class="zf-input" placeholder="Buscar produtos..." style="max-width:320px;">
+        </div>
+        <div class="table-responsive">
+          <table id="tabela-catalogo">
+            <thead><tr><th>Produto</th><th>Preço</th><th>Arquivo</th><th>Ação</th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section id="respostas" class="module" data-module="respostas">
+        <h2>Respostas Rápidas</h2>
+        <form id="form-resposta">
+          <input type="text" name="atalho" placeholder="Atalho (ex: /preco, /pix)" required>
+          <textarea name="texto" rows="3" placeholder="Mensagem completa enviada ao digitar o atalho..." required></textarea>
+          <button type="submit">Salvar Atalho</button>
+        </form>
+        <div style="margin-top:18px;margin-bottom:8px;">
+          <input type="text" id="filtro-respostas" class="zf-input" placeholder="Buscar atalhos..." style="max-width:320px;">
+        </div>
+        <div class="table-responsive">
+          <table id="tabela-respostas">
+            <thead><tr><th>Atalho</th><th>Texto</th><th>Ação</th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+        <p class="dica" style="margin-top:10px">Nos Disparos ou no WhatsApp, digite o atalho (ex: /preco) para preencher a mensagem automaticamente.</p>
+      </section>
+
+      <section id="ia" class="module" data-module="ia">
+        <h2>IA Integrada</h2>
+        <div class="grid-ia">
+          <button type="button" class="btn-ia" data-acao="corrigir">✍️ Corrigir mensagem</button>
+          <button type="button" class="btn-ia" data-acao="reescrever">🔄 Reescrever profissional</button>
+          <button type="button" class="btn-ia" data-acao="traduzir">🌐 Traduzir mensagem</button>
+          <button type="button" class="btn-ia" data-acao="responder">💬 Gerar resposta rápida</button>
+          <button type="button" class="btn-ia" data-acao="resumir">📋 Resumir conversa</button>
+          <button type="button" class="btn-ia" data-acao="followup">⏰ Mensagem de follow-up</button>
+        </div>
+        <textarea id="texto-ia" rows="4" placeholder="Cole o texto ou mensagem aqui..."></textarea>
+        <div class="acao-ia" style="margin-top:10px;display:flex;gap:10px;align-items:center;max-width:600px;">
+          <label style="font-size:0.85rem;color:#9fb3c8;white-space:nowrap;">Contexto (nome do cliente):</label>
+          <input type="text" id="contexto-ia" placeholder="Ex: João">
+        </div>
+        <div id="resultado-ia" style="margin-top:12px;padding:14px;background:#0e1a24;border:1px solid #1e425c;border-radius:8px;min-height:70px;line-height:1.5;"></div>
+        <p class="dica" style="margin-top:6px;">Dê um duplo clique no resultado acima para copiar o texto gerado.</p>
+        <p id="msg-ia" class="aviso"></p>
+      </section>
+
+      <section id="grafo" class="module" data-module="grafo">
+        <h2>Grafo de Clientes e Funil</h2>
+        <p class="dica">Verde = cliente com cidade · Vermelho = lead quente · Amarelo = morno · Cinza = frio</p>
+        <div id="grafo-container" style="width:100%;height:450px;background:#0e1a24;border:1px solid #1e425c;border-radius:10px;position:relative;margin-top:10px;"></div>
+        <div class="aviso" id="msg-grafo"></div>
+      </section>
+
+      <section id="relatorios" class="module" data-module="relatorios">
+        <h2>Relatórios e Exportações</h2>
+        <div style="display:flex;flex-wrap:wrap;gap:10px;margin-top:12px;">
+          <button type="button" id="btn-export-clientes" class="btn-header">📥 Exportar Clientes (CSV)</button>
+          <button type="button" id="btn-export-funil" class="btn-header">📥 Exportar Funil (CSV)</button>
+          <button type="button" id="btn-export-catalogo" class="btn-header">📥 Exportar Catálogo (CSV)</button>
+        </div>
+        <p id="msg-relatorio" class="aviso"></p>
+      </section>
+
+      <section id="verificador" class="module" data-module="verificador">
+        <h2>Verificador de Números</h2>
+        <p class="dica">Verifique se o número possui formato brasileiro válido e confirme a existência no WhatsApp.</p>
+        <div class="grid">
+          <div class="card"><div class="valor" id="v-total">0</div><div class="rotulo">Verificados</div></div>
+          <div class="card"><div class="valor" id="v-validos" style="color:#25d366">0</div><div class="rotulo">Válidos</div></div>
+          <div class="card"><div class="valor" id="v-invalidos" style="color:#dc3545">0</div><div class="rotulo">Inválidos</div></div>
+          <div class="card"><div class="valor" id="v-whatsapp" style="color:#25d366">0</div><div class="rotulo">No WhatsApp</div></div>
+        </div>
+        <form id="form-verificador">
+          <label>Número para verificar</label>
+          <input type="tel" name="numero" class="zf-input" placeholder="5511999999999" required>
+          <button type="submit" class="zf-btn-submit">Verificar Número</button>
+        </form>
+        <div class="aviso" id="msg-verificador"></div>
+      </section>
+
+      <section id="config" class="module" data-module="config">
+        <h2>Configurações do ZapFlow</h2>
+        <form id="form-config">
+          <label style="display:flex;align-items:center;gap:10px;cursor:pointer;padding:12px;background:#0e1a24;border:1px solid #1e425c;border-radius:8px;margin-bottom:6px;">
+            <input type="checkbox" name="abrirEmAbaCheia" id="cfg-abrirEmAbaCheia" style="width:18px;height:18px;accent-color:#25d366;">
+            <div>
+              <strong style="color:#25d366;display:block;">Sempre abrir em Tela Cheia no Monitor</strong>
+              <span style="font-size:0.75rem;color:#9fb3c8">Abre o painel do ZapFlow em uma aba completa ao clicar no ícone da extensão.</span>
+            </div>
+          </label>
+
+          <label>Intervalo entre mensagens nos disparos (segundos)</label>
+          <input type="number" name="intervalo" value="5" min="1">
+
+          <label>Limite de envios por hora</label>
+          <input type="number" name="limite" value="60" min="1">
+
+          <label>Anti-duplicidade (evitar enviar 2x para o mesmo contato)</label>
+          <select name="antiDuplicidade">
+            <option value="sim">Sim</option>
+            <option value="nao">Não</option>
+          </select>
+
+          <label>Chave de API da IA (OpenAI / compatível)</label>
+          <input type="password" name="apiKeyIA" placeholder="sk-...">
+
+          <label>Senha Mestra (opcional - para criptografar a chave da IA)</label>
+          <input type="password" name="senhaMestra" placeholder="Deixe vazio para não criptografar">
+
+          <label>Modelo IA</label>
+          <input type="text" name="modeloIA" value="gpt-3.5-turbo">
+
+          <button type="submit">Salvar Configurações</button>
+        </form>
+        <div id="msg-config" class="aviso"></div>
+
+        <div style="margin-top:24px;padding-top:20px;border-top:1px solid #1e425c;">
+          <h3 style="color:#25d366;margin-bottom:8px">Backup e Restauração</h3>
+          <p class="dica" style="margin-bottom:10px">Exporte todos os seus dados para arquivo JSON ou restaure um backup anterior.</p>
+          <div style="display:flex;gap:10px;">
+            <button type="button" id="btn-export-backup" class="btn-header">📤 Exportar Backup</button>
+            <button type="button" id="btn-import-backup" class="btn-header" style="border-color:#9fb3c8;color:#eaeaea;">📥 Importar Backup</button>
+            <input type="file" id="input-import-backup" accept=".json" style="display:none">
+          </div>
+          <div id="msg-backup" class="aviso" style="margin-top:10px"></div>
+        </div>
+
+        <div style="margin-top:24px;padding-top:20px;border-top:1px solid #1e425c;">
+          <h3 style="color:#dc3545;margin-bottom:8px">🗑️ Limpar Todos os Dados</h3>
+          <p class="dica" style="margin-bottom:10px">Apaga permanentemente clientes, funil, catálogo, disparos, usuários e configurações.</p>
+          <button type="button" id="btn-limpar-tudo" class="zf-btn-submit" style="background:#dc3545">🗑️ Limpar Todos os Dados</button>
+          <div id="msg-limpar" class="aviso" style="margin-top:8px"></div>
+        </div>
+      </section>
+
+      <section id="equipe" class="module" data-module="equipe">
+        <h2>Gestão de Equipe e Atendentes</h2>
+        <div class="grid-eq">
+          <div>
+            <h3>Novo Operador</h3>
+            <form id="form-operador">
+              <input type="text" name="nome" placeholder="Nome do atendente" required>
+              <input type="text" name="login" placeholder="Login" required>
+              <input type="password" name="senha" placeholder="Senha" required>
+              <select name="perfil">
+                <option value="atendente">Atendente</option>
+                <option value="admin">Administrador</option>
+              </select>
+              <button type="submit">Cadastrar Operador</button>
+            </form>
+            <div style="margin-top:14px;margin-bottom:8px;">
+              <input type="text" id="filtro-operadores" class="zf-input" placeholder="Buscar operadores..." style="max-width:300px;">
+            </div>
+            <div class="table-responsive">
+              <table id="tabela-operadores">
+                <thead><tr><th>Nome</th><th>Login</th><th>Perfil</th><th>Ação</th></tr></thead>
+                <tbody></tbody>
+              </table>
+            </div>
+          </div>
+          <div>
+            <h3>Histórico de Ações</h3>
+            <div id="lista-historico" style="max-height:340px;overflow-y:auto;border:1px solid #1e425c;padding:12px;border-radius:8px;background:#0e1a24;font-size:0.82rem;color:#9fb3c8;"></div>
+          </div>
+        </div>
+        <h3 style="margin-top:24px">Relatório por Atendente</h3>
+        <div class="table-responsive">
+          <table id="tabela-relatorio-eq">
+            <thead><tr><th>Atendente</th><th>Disparos</th><th>Última Ação</th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </section>
+    </div>
+  </main>
+</div>
+
+<script src="src/graph/graphify.js"></script>
+<script src="popup.js"></script>
+</body>
+</html>

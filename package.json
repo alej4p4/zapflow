@@ -1,12 +1,12 @@
 {
-  "name": "wa-akg",
+  "name": "zapflow",
   "version": "1.6.18",
   "private": false,
   "license": "MIT",
   "scripts": {
     "dev": "npx tsx src/server/index.ts",
-    "build": "next build",
-    "start": "NODE_ENV=production npx tsx src/server/index.ts",
+    "build": "prisma generate && next build",
+    "start": "npx tsx src/server/index.ts",
     "desktop:prepare": "node scripts/desktop-build.cjs",
     "desktop:dist": "npm run desktop:prepare && electron-builder --win nsis",
     "lint": "eslint",

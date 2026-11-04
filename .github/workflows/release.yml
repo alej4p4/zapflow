@@ -1,0 +1,40 @@
+name: Release ZapFlow
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Empacotar extensão Chrome (ZIP)
+        run: |
+          cd extension && zip -r ../ZapFlow-Extensao.zip .
+
+      - name: Extrair nome da tag
+        id: tag
+        run: echo "TAG_NAME=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+
+      - name: Publicar release no GitHub
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag.outputs.TAG_NAME }}
+          name: ZapFlow ${{ steps.tag.outputs.TAG_NAME }}
+          body: |
+            ## ZapFlow ${{ steps.tag.outputs.TAG_NAME }}
+            Extensão Chrome pronta para uso no WhatsApp Web.
+          files: ZapFlow-Extensao.zip
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
