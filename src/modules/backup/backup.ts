@@ -16,6 +16,12 @@ export const backupDir = path.join(dataDir, "backups");
 let timer: ReturnType<typeof setInterval> | null = null;
 
 export async function backupOnce(): Promise<string | null> {
+    const dbUrl = process.env.DATABASE_URL || "";
+    // VACUUM INTO é exclusivo para SQLite local; na nuvem (Neon/Postgres), o próprio Neon gerencia backups contínuos.
+    if (!dbUrl.startsWith("file:") && !dbUrl.includes("sqlite")) {
+        return null;
+    }
+
     const stamp = new Date().toISOString().slice(0, 10);
     const file = path.join(backupDir, `wa-akg-${stamp}.sqlite`);
 

@@ -217,7 +217,12 @@ export function startBroadcastScheduler(intervalMs = 30 * 1000): void {
  */
 export async function ensureScheduledColumn(): Promise<void> {
     try {
-        await prisma.$executeRawUnsafe(`ALTER TABLE "BroadcastLog" ADD COLUMN "scheduledAt" DATETIME`);
+        const isPostgres = process.env.DATABASE_URL?.startsWith("postgres");
+        if (isPostgres) {
+            await prisma.$executeRawUnsafe(`ALTER TABLE "BroadcastLog" ADD COLUMN IF NOT EXISTS "scheduledAt" TIMESTAMP`);
+        } else {
+            await prisma.$executeRawUnsafe(`ALTER TABLE "BroadcastLog" ADD COLUMN "scheduledAt" DATETIME`);
+        }
     } catch (e: any) {
         const msg = String(e?.message || e);
         if (!/duplicate column|already exists|coluna.*existe/i.test(msg)) {
