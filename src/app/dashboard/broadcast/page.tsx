@@ -86,7 +86,7 @@ export default function BroadcastPage() {
     const { sessionId } = useSession();
     const [contacts, setContacts] = useState("");
     const [message, setMessage] = useState("");
-    const [delay, setDelay] = useState([2000]);
+    const [delay, setDelay] = useState([500]);
     const [pickerSearch, setPickerSearch] = useState("");
     const [pickerContacts, setPickerContacts] = useState<PhoneContact[]>([]);
     const [pickerLoading, setPickerLoading] = useState(false);
@@ -393,7 +393,8 @@ export default function BroadcastPage() {
                                         <Label>Números de destino (ex.: 5511999999999)</Label>
                                         <Textarea
                                             placeholder={"628123456789\n628987654321"}
-                                            className="min-h-[200px] font-mono text-sm"
+                                            className="h-44 max-h-56 [field-sizing:fixed] overflow-y-auto font-mono text-sm resize-y"
+                                            style={{ fieldSizing: "fixed", maxHeight: "220px", height: "180px", overflowY: "auto" }}
                                             value={contacts}
                                             onChange={e => setContacts(e.target.value)}
                                             disabled={loading}
@@ -504,7 +505,8 @@ export default function BroadcastPage() {
                                         <Label>Mensagem</Label>
                                         <Textarea
                                             placeholder="Digite sua mensagem aqui..."
-                                            className="min-h-[150px]"
+                                            className="h-44 max-h-56 [field-sizing:fixed] overflow-y-auto text-sm resize-y"
+                                            style={{ fieldSizing: "fixed", maxHeight: "220px", height: "180px", overflowY: "auto" }}
                                             value={message}
                                             onChange={e => setMessage(e.target.value)}
                                             disabled={loading}
@@ -513,17 +515,63 @@ export default function BroadcastPage() {
 
                                     <div className="space-y-4 pt-4">
                                         <div className="space-y-2">
-                                            <Label>Intervalo: {(delay[0] / 1000).toFixed(1)}s</Label>
+                                            <div className="flex flex-wrap items-center justify-between gap-2">
+                                                <Label className="font-medium">Velocidade: {(delay[0] / 1000).toFixed(1)}s por envio</Label>
+                                                <div className="flex items-center gap-1.5">
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => setDelay([200])}
+                                                        disabled={loading}
+                                                        className={`px-2.5 py-1 text-xs rounded-lg border font-semibold transition-all ${
+                                                            delay[0] <= 300 
+                                                                ? "bg-amber-500 text-white border-amber-600 shadow-sm" 
+                                                                : "bg-muted/80 text-foreground hover:bg-accent border-border"
+                                                        }`}
+                                                    >
+                                                        ⚡ Turbo (0.2s)
+                                                    </button>
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => setDelay([500])}
+                                                        disabled={loading}
+                                                        className={`px-2.5 py-1 text-xs rounded-lg border font-semibold transition-all ${
+                                                            delay[0] > 300 && delay[0] <= 800 
+                                                                ? "bg-primary text-primary-foreground border-primary shadow-sm" 
+                                                                : "bg-muted/80 text-foreground hover:bg-accent border-border"
+                                                        }`}
+                                                    >
+                                                        🚀 Rápido (0.5s)
+                                                    </button>
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => setDelay([1500])}
+                                                        disabled={loading}
+                                                        className={`px-2.5 py-1 text-xs rounded-lg border font-semibold transition-all ${
+                                                            delay[0] > 800 
+                                                                ? "bg-emerald-600 text-white border-emerald-700 shadow-sm" 
+                                                                : "bg-muted/80 text-foreground hover:bg-accent border-border"
+                                                        }`}
+                                                    >
+                                                        🛡️ Seguro (1.5s)
+                                                    </button>
+                                                </div>
+                                            </div>
                                             <Slider
-                                                defaultValue={[2000]}
-                                                min={1000}
-                                                max={15000}
-                                                step={500}
+                                                defaultValue={[500]}
+                                                min={100}
+                                                max={10000}
+                                                step={100}
                                                 value={delay}
                                                 onValueChange={setDelay}
                                                 disabled={loading}
                                             />
-                                            <p className="text-xs text-muted-foreground">Intervalo entre mensagens, com variação aleatória.</p>
+                                            <p className="text-xs text-muted-foreground">
+                                                {delay[0] <= 300 
+                                                    ? "⚡ Modo Turbo: disparos ultra rápidos em sequência (ideal para grupos)." 
+                                                    : delay[0] <= 800 
+                                                        ? "🚀 Modo Rápido: excelente equilíbrio entre velocidade máxima e estabilidade." 
+                                                        : "🛡️ Modo Seguro: espaçamento padrão com variação aleatória suave."}
+                                            </p>
                                         </div>
 
                                         <div className="space-y-2">

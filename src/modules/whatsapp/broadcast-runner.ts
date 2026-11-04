@@ -102,7 +102,8 @@ export async function runBroadcast(logId: string): Promise<void> {
                 sent++;
                 if (wasFailed) failed--;
 
-                await prisma.broadcastRecipient.update({
+                // Atualização assíncrona para não travar a velocidade do envio
+                void prisma.broadcastRecipient.update({
                     where: { id: recipient.id },
                     data: { status: "sent", sentAt: new Date(), jid: target, error: null }
                 }).catch(() => {});
@@ -113,13 +114,13 @@ export async function runBroadcast(logId: string): Promise<void> {
                 errors.push(current);
                 logger.error("Broadcast", `Falha ao enviar para ${recipient.jid}: ${error}`);
 
-                await prisma.broadcastRecipient.update({
+                void prisma.broadcastRecipient.update({
                     where: { id: recipient.id },
                     data: { status: "failed", error }
                 }).catch(() => {});
             }
 
-            await prisma.broadcastLog.update({
+            void prisma.broadcastLog.update({
                 where: { id: logId },
                 data: { sent, failed }
             }).catch(() => {});
@@ -137,8 +138,11 @@ export async function runBroadcast(logId: string): Promise<void> {
 
             if (cancelled.has(logId)) { stopReason = "cancelled"; break; }
 
-            const randomDelay = baseDelay + Math.floor(Math.random() * (baseDelay * 0.5));
-            await new Promise(r => setTimeout(r, randomDelay));
+            if (baseDelay > 0) {
+                const jitter = baseDelay >= 1000 ? Math.floor(Math.random() * (baseDelay * 0.2)) : 0;
+                const actualDelay = Math.max(30, baseDelay + jitter);
+                await new Promise(r => setTimeout(r, actualDelay));
+            }
         }
     } finally {
         active.delete(logId);
