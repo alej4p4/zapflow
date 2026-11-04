@@ -20,7 +20,7 @@ if (!process.env.AUTH_SECRET) {
   process.exit(1);
 }
 
-const app = next({ dev, hostname, port });
+const app = next({ dev, port });
 const handle = app.getRequestHandler();
 
 app.prepare().then(() => {
@@ -76,7 +76,7 @@ app.prepare().then(() => {
   server.keepAliveTimeout = 120 * 1000; // 120 seconds
   server.headersTimeout = 120 * 1000; // 120 seconds
 
-  server.listen(port, hostname, () => {
+  server.listen(port, "0.0.0.0", () => {
     logger.banner(pkg.name.toUpperCase(), pkg.version, port);
   });
 });

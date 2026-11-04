@@ -13,7 +13,9 @@ export const authConfig = {
                 if (isLoggedIn) return true;
                 return false; // Redirect unauthenticated users to login page
             } else if (isLoggedIn && nextUrl.pathname === '/auth/login') {
-                return Response.redirect(new URL('/dashboard', nextUrl));
+                const base = process.env.BASE_URL || process.env.NEXTAUTH_URL;
+                const origin = (base && nextUrl.origin.includes('0.0.0.0')) ? base : nextUrl;
+                return Response.redirect(new URL('/dashboard', origin));
             }
             return true;
         },

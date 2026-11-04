@@ -53,8 +53,19 @@ function LoginForm() {
       if (result?.error) {
          setError("E-mail ou senha inválidos");
       } else {
-        window.location.href = callbackUrl;
-        router.refresh();
+        let dest = callbackUrl;
+        try {
+          if (dest.startsWith('http://') || dest.startsWith('https://')) {
+            const parsed = new URL(dest);
+            dest = parsed.pathname + parsed.search;
+          }
+        } catch {
+          dest = '/dashboard';
+        }
+        if (!dest || dest.startsWith('//') || dest === '/auth/login') {
+          dest = '/dashboard';
+        }
+        window.location.href = dest;
       }
     } catch (err) {
        setError("Ocorreu um erro inesperado");
