@@ -150,7 +150,7 @@ function renderMessageContent(content: string | null | undefined, contactMap?: R
 }
 
 // ─── Lazy media with fallback ──────────────────
-function LazyMedia({ src, alt }: { src: string; alt: string }) {
+function LazyMedia({ src, alt, onClick }: { src: string; alt: string; onClick?: () => void }) {
     const ref = useRef<HTMLDivElement>(null);
     const [visible, setVisible] = useState(false);
     const [loaded, setLoaded] = useState(false);
@@ -166,34 +166,43 @@ function LazyMedia({ src, alt }: { src: string; alt: string }) {
 
     if (hasError) {
         return (
-            <div ref={ref} className="mb-1.5 flex items-center gap-3 p-3 rounded-xl bg-black/5 dark:bg-white/5 border border-dashed border-border/50 text-xs text-muted-foreground select-none">
-                <div className="h-9 w-9 rounded-lg bg-muted flex items-center justify-center shrink-0">
-                    <ImageIcon className="h-5 w-5 opacity-60 text-[#00a884]" />
+            <div
+                ref={ref}
+                onClick={onClick}
+                className="mb-1.5 flex items-center gap-2.5 p-2.5 rounded-lg bg-black/10 dark:bg-white/5 border border-black/5 dark:border-white/5 text-xs text-muted-foreground select-none cursor-pointer hover:bg-black/15 dark:hover:bg-white/10 transition-colors"
+                title="Foto"
+            >
+                <div className="h-8 w-8 rounded bg-[#00a884]/15 flex items-center justify-center shrink-0">
+                    <ImageIcon className="h-4 w-4 text-[#00a884]" />
                 </div>
                 <div className="flex-1 min-w-0">
-                    <p className="font-medium text-foreground text-xs">Imagem</p>
-                    <p className="text-[11px] opacity-70 truncate">Mídia original não disponível no servidor</p>
+                    <p className="font-medium text-foreground text-xs">Foto</p>
+                    <p className="text-[10px] text-muted-foreground">Clique para visualizar</p>
                 </div>
             </div>
         );
     }
 
     return (
-        <div ref={ref} className="mb-1.5 overflow-hidden rounded-xl relative min-h-[120px] bg-muted/20 flex items-center justify-center">
+        <div
+            ref={ref}
+            className="mb-1.5 overflow-hidden rounded-lg relative min-h-[140px] max-w-[340px] bg-black/5 dark:bg-black/30 flex items-center justify-center cursor-pointer group/img select-none"
+            onClick={onClick}
+        >
             {visible ? (
                 <>
-                    {!loaded && <div className="absolute inset-0 bg-muted/30 rounded-xl animate-pulse" />}
+                    {!loaded && <div className="absolute inset-0 bg-muted/30 rounded-lg animate-pulse" />}
                     <img
                         src={src}
                         alt={alt}
-                        className={`max-w-full max-h-80 object-contain rounded-xl transition-opacity duration-300 ${loaded ? 'opacity-100' : 'opacity-0'}`}
+                        className={`max-w-full max-h-80 object-cover rounded-lg transition-all duration-200 group-hover/img:brightness-95 ${loaded ? 'opacity-100' : 'opacity-0'}`}
                         onLoad={() => setLoaded(true)}
                         onError={() => setHasError(true)}
                         loading="lazy"
                     />
                 </>
             ) : (
-                <div className="h-36 w-full bg-muted/30 rounded-xl animate-pulse" />
+                <div className="h-36 w-full bg-muted/20 rounded-lg animate-pulse" />
             )}
         </div>
     );
@@ -478,6 +487,7 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
     const [hasMore, setHasMore] = useState(false);
     const [loadingMore, setLoadingMore] = useState(false);
     const [contactMap, setContactMap] = useState<Record<string, string>>({});
+    const [lightboxMedia, setLightboxMedia] = useState<{ src: string; caption?: string | null } | null>(null);
     const [participantNames, setParticipantNames] = useState<string[]>([]);
     const [oldestTimestamp, setOldestTimestamp] = useState<string | null>(null);
     const [autoScroll, setAutoScroll] = useState(true);
@@ -491,6 +501,17 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
 
     // Context menu state
     const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
+
+    // Close Lightbox on ESC
+    useEffect(() => {
+        const handleKeyDown = (e: KeyboardEvent) => {
+            if (e.key === "Escape" && lightboxMedia) {
+                setLightboxMedia(null);
+            }
+        };
+        window.addEventListener("keydown", handleKeyDown);
+        return () => window.removeEventListener("keydown", handleKeyDown);
+    }, [lightboxMedia]);
 
     const { getSocket, joinSession } = useSocket();
     const getDateLabel = useDateLabel();
@@ -1000,7 +1021,7 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
                                         {msg.type === 'IMAGE' && (
                                             msg.mediaUrl ? (
                                                 <div className="relative group/media">
-                                                    <LazyMedia src={msg.mediaUrl} alt="Imagem" />
+                                                    <LazyMedia src={msg.mediaUrl} alt="Imagem" onClick={() => setLightboxMedia({ src: msg.mediaUrl!, caption: msg.content })} />
                                                     <Button
                                                         size="icon"
                                                         variant="secondary"
@@ -1131,6 +1152,57 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
                 onCancelReply={() => setReplyingTo(null)}
                 jid={jid}
             />
+
+            {/* Lightbox Modal (WhatsApp Web Style) */}
+            {lightboxMedia && (
+                <div
+                    className="fixed inset-0 z-[99999] bg-black/95 backdrop-blur-md flex flex-col items-center justify-between p-4 select-none animate-in fade-in duration-150"
+                    onClick={() => setLightboxMedia(null)}
+                >
+                    {/* Top Action Bar */}
+                    <div className="w-full flex items-center justify-between px-2 pt-1 pb-3 z-10" onClick={(e) => e.stopPropagation()}>
+                        <div className="text-white/80 text-xs font-medium">
+                            {name || "Visualizador de Imagem"}
+                        </div>
+                        <div className="flex items-center gap-2">
+                            <Button
+                                size="icon"
+                                variant="ghost"
+                                className="h-10 w-10 text-white/80 hover:text-white hover:bg-white/10 rounded-full"
+                                onClick={() => handleDownload(lightboxMedia.src, 'imagem-whatsapp.jpg')}
+                                title="Baixar imagem"
+                            >
+                                <Download className="h-5 w-5" />
+                            </Button>
+                            <Button
+                                size="icon"
+                                variant="ghost"
+                                className="h-10 w-10 text-white/80 hover:text-white hover:bg-white/10 rounded-full"
+                                onClick={() => setLightboxMedia(null)}
+                                title="Fechar (ESC)"
+                            >
+                                <X className="h-5 w-5" />
+                            </Button>
+                        </div>
+                    </div>
+
+                    {/* Image View */}
+                    <div className="flex-1 flex items-center justify-center max-w-5xl max-h-[80vh] overflow-hidden" onClick={(e) => e.stopPropagation()}>
+                        <img
+                            src={lightboxMedia.src}
+                            alt="Visualização"
+                            className="max-w-full max-h-[80vh] object-contain rounded-lg shadow-2xl transition-transform duration-200"
+                        />
+                    </div>
+
+                    {/* Bottom Caption */}
+                    {lightboxMedia.caption ? (
+                        <div className="mt-2 max-w-3xl text-center text-sm text-white/95 whitespace-pre-wrap px-4 py-2.5 bg-black/70 backdrop-blur-sm rounded-lg max-h-32 overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+                            {renderMessageContent(lightboxMedia.caption, contactMap)}
+                        </div>
+                    ) : <div className="h-6" />}
+                </div>
+            )}
         </div>
     );
 }

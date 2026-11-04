@@ -463,7 +463,15 @@ export async function downloadAndSaveMedia(message: WAMessage, sessionId: string
                 ) as Buffer;
             } catch (e) {
                 logger.error("Media", "Failed to download encrypted media:", e);
-                return null;
+                if (mediaObj?.jpegThumbnail) {
+                    logger.info("Media", "Using embedded jpegThumbnail as fallback from catch...");
+                    buffer = Buffer.isBuffer(mediaObj.jpegThumbnail) ? mediaObj.jpegThumbnail : Buffer.from(mediaObj.jpegThumbnail);
+                }
+            }
+
+            if (!buffer && mediaObj?.jpegThumbnail) {
+                logger.info("Media", "Falling back to embedded jpegThumbnail...");
+                buffer = Buffer.isBuffer(mediaObj.jpegThumbnail) ? mediaObj.jpegThumbnail : Buffer.from(mediaObj.jpegThumbnail);
             }
         }
 

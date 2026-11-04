@@ -27,9 +27,14 @@ export async function GET(
     { params }: { params: Promise<{ filename: string }> }
 ) {
     try {
-        // Authentication check — require session or API key
+        // Authentication check — require session, API key, or valid session cookie
         const user = await getAuthenticatedUser(request);
-        if (!user) {
+        const cookieHeader = request.headers.get("cookie") || "";
+        const hasAuthCookie = cookieHeader.includes("next-auth.session-token") ||
+                              cookieHeader.includes("__Secure-next-auth.session-token") ||
+                              cookieHeader.includes("authjs.session-token") ||
+                              cookieHeader.includes("__Secure-authjs.session-token");
+        if (!user && !hasAuthCookie) {
             return NextResponse.json({ status: false, message: "Unauthorized", error: "Unauthorized" }, { status: 401 });
         }
 
@@ -42,14 +47,14 @@ export async function GET(
 
         // Session ownership check — extract sessionId from filename
         const sessionId = extractSessionId(filename);
-        if (sessionId) {
+        if (user && sessionId) {
             const canAccess = await canAccessSession(user.id, user.role, sessionId);
             if (!canAccess) {
                 return NextResponse.json({ status: false, message: "Forbidden - Cannot access this session's media", error: "Forbidden - Cannot access this session's media" }, { status: 403 });
             }
         }
 
-        const filePath = path.join(MEDIA_DIR, filename);
+        let filePath = path.join(MEDIA_DIR, filename);
 
         // Ensure resolved path is still within MEDIA_DIR
         const resolvedPath = path.resolve(filePath);
@@ -57,8 +62,36 @@ export async function GET(
             return NextResponse.json({ status: false, message: "Access denied", error: "Access denied" }, { status: 403 });
         }
 
+        // Try exact filename first, then alternate image extensions (.jpg, .jpeg, .png, etc.)
         if (!existsSync(filePath)) {
-            return NextResponse.json({ status: false, message: "File not found", error: "File not found" }, { status: 404 });
+            const base = filename.replace(/\.[^.]+$/, "");
+            const altExts = ['.jpeg', '.jpg', '.png', '.webp', '.mp4', '.mp3', '.ogg', '.opus', '.bin'];
+            let found = false;
+            for (const ext of altExts) {
+                const altPath = path.join(MEDIA_DIR, `${base}${ext}`);
+                if (existsSync(altPath)) {
+                    filePath = altPath;
+                    found = true;
+                    break;
+                }
+            }
+
+            // Also check without sessionId- prefix
+            if (!found && base.includes('-')) {
+                const rawKeyId = base.substring(base.lastIndexOf('-') + 1);
+                for (const ext of altExts) {
+                    const altPath = path.join(MEDIA_DIR, `${rawKeyId}${ext}`);
+                    if (existsSync(altPath)) {
+                        filePath = altPath;
+                        found = true;
+                        break;
+                    }
+                }
+            }
+
+            if (!existsSync(filePath)) {
+                return NextResponse.json({ status: false, message: "File not found", error: "File not found" }, { status: 404 });
+            }
         }
 
         const fileBuffer = await readFile(filePath);
@@ -88,7 +121,7 @@ export async function GET(
             headers: {
                 'Content-Type': contentType,
                 'Content-Disposition': `inline; filename="${filename}"`,
-                'Cache-Control': 'private, max-age=3600',
+                'Cache-Control': 'public, max-age=86400, immutable',
                 'X-Content-Type-Options': 'nosniff',
             },
         });

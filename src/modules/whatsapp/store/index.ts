@@ -397,10 +397,27 @@ async function processAndSaveMessage(
     // Baileys 'notify' event can sometimes trigger multiple times or for history
     const existingMessage = await prisma.message.findUnique({
         where: { sessionId_keyId: { sessionId: dbSessionId, keyId: keyId! } },
-        select: { id: true, status: true }
+        select: { id: true, status: true, mediaUrl: true, type: true }
     });
 
     if (existingMessage) {
+        // If existing message is media and mediaUrl is missing, attempt recovery
+        const isMedia = ['IMAGE', 'VIDEO', 'AUDIO', 'DOCUMENT', 'STICKER'].includes(existingMessage.type);
+        if (isMedia && !existingMessage.mediaUrl) {
+            try {
+                const recoveredUrl = await downloadAndSaveMedia(msg, sessionId);
+                if (recoveredUrl) {
+                    await prisma.message.update({
+                        where: { id: existingMessage.id },
+                        data: { mediaUrl: recoveredUrl }
+                    });
+                    logger.success("Store", `Recovered missing mediaUrl for message ${keyId}: ${recoveredUrl}`);
+                }
+            } catch (e) {
+                // Ignore recovery failure
+            }
+        }
+
         // Message exists! Update status if changed, but DO NOT re-trigger webhooks/bot
         if (fromMe && existingMessage.status !== 'SENT') {
             await prisma.message.update({
