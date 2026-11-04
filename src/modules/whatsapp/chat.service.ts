@@ -139,27 +139,32 @@ export class ChatService {
         limit = 50,
         before?: string
     ) {
-        const normalizedJid = normalizeJid(jid);
+        const isGroup = jid.endsWith("@g.us");
+        let queryJids: string[] = [jid];
 
-        // Find contact variations (LID, alt JIDs)
-        const contact = await prisma.contact.findFirst({
-            where: {
-                sessionId: dbSessionId,
-                OR: [{ jid }, { lid: jid }, { remoteJidAlt: jid }, { jid: normalizedJid }]
-            },
-            select: { jid: true, lid: true, remoteJidAlt: true }
-        });
+        // Groups only ever have their exact JID - skip Contact lookup completely for groups
+        if (!isGroup) {
+            const normalizedJid = normalizeJid(jid);
+            const contact = await prisma.contact.findFirst({
+                where: {
+                    sessionId: dbSessionId,
+                    OR: [{ jid }, { lid: jid }, { remoteJidAlt: jid }, { jid: normalizedJid }]
+                },
+                select: { jid: true, lid: true, remoteJidAlt: true }
+            });
 
-        const queryJids = new Set([jid, normalizedJid]);
-        if (contact) {
-            if (contact.jid) queryJids.add(contact.jid);
-            if (contact.lid) queryJids.add(contact.lid);
-            if (contact.remoteJidAlt) queryJids.add(contact.remoteJidAlt);
+            const queryJidsSet = new Set([jid, normalizedJid]);
+            if (contact) {
+                if (contact.jid) queryJidsSet.add(contact.jid);
+                if (contact.lid) queryJidsSet.add(contact.lid);
+                if (contact.remoteJidAlt) queryJidsSet.add(contact.remoteJidAlt);
+            }
+            queryJids = Array.from(queryJidsSet);
         }
 
         const where: any = {
             sessionId: dbSessionId,
-            remoteJid: { in: Array.from(queryJids) }
+            remoteJid: { in: queryJids }
         };
 
         // Cursor-based: load older messages before this timestamp
@@ -170,7 +175,20 @@ export class ChatService {
         const messages = await prisma.message.findMany({
             where,
             orderBy: { timestamp: 'desc' },
-            take: limit + 1 // fetch 1 extra to know if there's more
+            take: limit + 1, // fetch 1 extra to know if there's more
+            select: {
+                id: true,
+                keyId: true,
+                content: true,
+                fromMe: true,
+                timestamp: true,
+                type: true,
+                status: true,
+                pushName: true,
+                mediaUrl: true,
+                remoteJid: true,
+                quoteId: true
+            }
         });
 
         const hasMore = messages.length > limit;

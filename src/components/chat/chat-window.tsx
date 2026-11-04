@@ -40,29 +40,9 @@ import {
 } from "@/components/ui/alert-dialog";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
-import { getChatMessages, sendChatMessage, sendMediaMessage } from "@/app/dashboard/chat/actions";
+import { sendChatMessage, sendMediaMessage } from "@/app/dashboard/chat/actions";
 import { useSocket } from "./socket-context";
-
-interface Message {
-    id: string;
-    keyId: string;
-    content: string;
-    fromMe: boolean;
-    timestamp: string;
-    type: string;
-    status: string;
-    pushName?: string;
-    mediaUrl?: string;
-    remoteJid?: string;
-    quoteId?: string | null;
-    quoted?: {
-        keyId: string;
-        content: string | null;
-        fromMe: boolean;
-        senderJid: string | null;
-        pushName: string | null;
-    } | null;
-}
+import { chatCache, fetchOrGetChatMessages, type Message } from "./chat-cache";
 
 interface ChatWindowProps {
     sessionId: string;
@@ -266,11 +246,12 @@ export function ChatWindow({ sessionId, jid, name, onBack }: ChatWindowProps) {
         bottomRef.current?.scrollIntoView({ behavior: smooth ? "smooth" : "auto", block: "end" });
     }, []);
 
-    const fetchMessages = useCallback(async (before?: string) => {
+    const fetchMessages = useCallback(async (before?: string, silent = false) => {
         try {
-            if (!before) setLoading(true);
-            else setLoadingMore(true);
-            const data: any = await getChatMessages(sessionId, jid, PAGE_LIMIT, before);
+            if (!before && !silent) setLoading(true);
+            else if (before) setLoadingMore(true);
+
+            const data = await fetchOrGetChatMessages(sessionId, jid, PAGE_LIMIT, before);
             if (!before) {
                 setMessages(data.messages || []);
                 setAutoScroll(true);
@@ -289,12 +270,28 @@ export function ChatWindow({ sessionId, jid, name, onBack }: ChatWindowProps) {
         }
     }, [sessionId, jid]);
 
+    // Instant switch with Stale-While-Revalidate memory cache
     useEffect(() => {
-        setMessages([]);
-        setOldestTimestamp(null);
-        setHasMore(false);
-        fetchMessages();
-    }, [fetchMessages]);
+        const cacheKey = `${sessionId}:${jid}`;
+        const cached = chatCache.get(cacheKey);
+
+        if (cached && cached.messages.length > 0) {
+            // INSTANT DISPLAY: Immediately show cached conversation in 0ms!
+            setMessages(cached.messages);
+            setHasMore(cached.hasMore);
+            setOldestTimestamp(cached.oldestTimestamp);
+            setLoading(false);
+            setAutoScroll(true);
+            // Silently check for fresh messages in background without wiping screen
+            fetchMessages(undefined, true);
+        } else {
+            setMessages([]);
+            setOldestTimestamp(null);
+            setHasMore(false);
+            setLoading(true);
+            fetchMessages();
+        }
+    }, [sessionId, jid, fetchMessages]);
 
     // Auto focus input
     useEffect(() => {
@@ -319,7 +316,19 @@ export function ChatWindow({ sessionId, jid, name, onBack }: ChatWindowProps) {
                 if (relevant.length === 0) return prev;
                 const combined = [...prev, ...relevant];
                 const unique = Array.from(new Map(combined.map(m => [m.keyId, m])).values());
-                return unique.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+                const sorted = unique.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+
+                // Keep cache in sync
+                const cacheKey = `${sessionId}:${jid}`;
+                const cached = chatCache.get(cacheKey);
+                chatCache.set(cacheKey, {
+                    messages: sorted,
+                    hasMore: cached?.hasMore ?? false,
+                    oldestTimestamp: sorted.length > 0 ? sorted[0].timestamp : null,
+                    cachedAt: Date.now()
+                });
+
+                return sorted;
             });
         };
         socket.on("message.update", handler);
@@ -360,7 +369,7 @@ export function ChatWindow({ sessionId, jid, name, onBack }: ChatWindowProps) {
         }
         try {
             await sendChatMessage(sessionId, jid, messageToSend, replyKeyId);
-            setTimeout(() => fetchMessages(), 600);
+            setTimeout(() => fetchMessages(undefined, true), 500);
         } catch (e: any) {
             toast.error(e.message || "Falha ao enviar a mensagem");
             setInput(messageToSend);

@@ -27,7 +27,9 @@ import {
     FileText,
     Image as ImageIcon,
     Mic,
-    Video
+    Video,
+    Maximize2,
+    Minimize2
 } from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -35,6 +37,7 @@ import { cn } from "@/lib/utils";
 import { getChatsStatus } from "@/app/dashboard/chat/actions";
 import { useSocket } from "./socket-context";
 import { toast } from "sonner";
+import { prefetchChatMessages } from "./chat-cache";
 
 export interface ChatContact {
     jid: string;
@@ -59,6 +62,8 @@ interface ChatListProps {
     sessionId: string;
     onSelectChat: (jid: string, name?: string) => void;
     selectedJid?: string;
+    isWide?: boolean;
+    onToggleWide?: () => void;
 }
 
 const PAGE_SIZE = 300;
@@ -287,6 +292,7 @@ function ChatRow({
                         : "hover:bg-[#f5f6f6] dark:hover:bg-[#202c33]/70 border-l-4 border-l-transparent"
                 )}
                 onClick={() => onSelect(chat.jid, displayName)}
+                onMouseEnter={() => prefetchChatMessages(sessionId, chat.jid)}
                 onContextMenu={(e) => {
                     e.preventDefault();
                     setCtxMenu({ x: e.clientX, y: e.clientY, jid: chat.jid, name: displayName, isPinned });
@@ -310,9 +316,9 @@ function ChatRow({
                     {/* Line 1: Name + Time */}
                     <div className="flex justify-between items-baseline gap-2 overflow-hidden">
                         <h4 className={cn(
-                            "text-[15px] truncate flex items-center gap-1.5 leading-snug",
+                            "text-[15px] truncate flex items-center gap-1.5 leading-snug flex-1 min-w-0",
                             isSelected ? "font-semibold text-foreground" : "font-medium text-foreground"
-                        )}>
+                        )} title={displayName}>
                             <span className="truncate">{displayName}</span>
                             {/* Label dots */}
                             {labelDots.length > 0 && (
@@ -410,7 +416,7 @@ function SkeletonRow() {
 }
 
 // ─── Main ChatList Component ─────────
-export function ChatList({ sessionId, onSelectChat, selectedJid }: ChatListProps) {
+export function ChatList({ sessionId, onSelectChat, selectedJid, isWide, onToggleWide }: ChatListProps) {
     const [chats, setChats] = useState<ChatContact[]>([]);
     const [loading, setLoading] = useState(true);
     const [searchInput, setSearchInput] = useState("");
@@ -429,6 +435,16 @@ export function ChatList({ sessionId, onSelectChat, selectedJid }: ChatListProps
     const chatsRef = useRef<ChatContact[]>(chats);
     chatsRef.current = chats;
     const fetchingRef = useRef(false);
+
+    // Automatically prefetch top chats into cache for instantaneous 0ms opening
+    useEffect(() => {
+        if (!sessionId || chats.length === 0) return;
+        const timer = setTimeout(() => {
+            const topChats = chats.slice(0, 8);
+            topChats.forEach(c => prefetchChatMessages(sessionId, c.jid));
+        }, 300);
+        return () => clearTimeout(timer);
+    }, [sessionId, chats]);
 
     // Load pinned chats from localStorage on mount
     useEffect(() => {
@@ -690,15 +706,28 @@ export function ChatList({ sessionId, onSelectChat, selectedJid }: ChatListProps
                             </span>
                         )}
                     </div>
-                    <Button
-                        variant="ghost"
-                        size="icon"
-                        title="Nova conversa"
-                        className="h-8 w-8 rounded-full text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/10"
-                        onClick={() => setIsNewChatOpen(!isNewChatOpen)}
-                    >
-                        {isNewChatOpen ? <X className="h-4 w-4" /> : <MessageSquarePlus className="h-4 w-4" />}
-                    </Button>
+                    <div className="flex items-center gap-1">
+                        {onToggleWide && (
+                            <Button
+                                variant="ghost"
+                                size="icon"
+                                title={isWide ? "Visualização padrão" : "Alargar lista (mais espaço para nomes de grupos)"}
+                                className="h-8 w-8 rounded-full text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/10"
+                                onClick={onToggleWide}
+                            >
+                                {isWide ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}
+                            </Button>
+                        )}
+                        <Button
+                            variant="ghost"
+                            size="icon"
+                            title="Nova conversa"
+                            className="h-8 w-8 rounded-full text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/10"
+                            onClick={() => setIsNewChatOpen(!isNewChatOpen)}
+                        >
+                            {isNewChatOpen ? <X className="h-4 w-4" /> : <MessageSquarePlus className="h-4 w-4" />}
+                        </Button>
+                    </div>
                 </div>
 
                 {/* Instant Search Bar with Clear Button */}
