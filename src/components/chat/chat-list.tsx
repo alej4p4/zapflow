@@ -34,7 +34,7 @@ import {
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
-import { getChatsStatus } from "@/app/dashboard/chat/actions";
+import { getChatsStatus, searchWhatsAppContacts } from "@/app/dashboard/chat/actions";
 import { useSocket } from "./socket-context";
 import { toast } from "sonner";
 import { prefetchChatMessages } from "./chat-cache";
@@ -62,8 +62,6 @@ interface ChatListProps {
     sessionId: string;
     onSelectChat: (jid: string, name?: string) => void;
     selectedJid?: string;
-    isWide?: boolean;
-    onToggleWide?: () => void;
 }
 
 const PAGE_SIZE = 300;
@@ -73,7 +71,12 @@ function getDisplayName(chat: ChatContact): string {
 }
 
 function getMessagePreview(chat: ChatContact): { text: string; isMedia: boolean; type?: string } {
-    if (!chat.lastMessage?.content) return { text: "Nenhuma mensagem ainda", isMedia: false };
+    if (!chat.lastMessage?.content) {
+        if (chat.jid.endsWith("@s.whatsapp.net")) {
+            return { text: "Contato da agenda", isMedia: false };
+        }
+        return { text: "Nenhuma mensagem ainda", isMedia: false };
+    }
     const content = chat.lastMessage.content;
     if (chat.lastMessage.type !== "TEXT") {
         const types: Record<string, string> = {
@@ -416,17 +419,21 @@ function SkeletonRow() {
 }
 
 // ─── Main ChatList Component ─────────
-export function ChatList({ sessionId, onSelectChat, selectedJid, isWide, onToggleWide }: ChatListProps) {
+export function ChatList({ sessionId, onSelectChat, selectedJid }: ChatListProps) {
     const [chats, setChats] = useState<ChatContact[]>([]);
     const [loading, setLoading] = useState(true);
     const [searchInput, setSearchInput] = useState("");
-    const [filterType, setFilterType] = useState<"all" | "unread" | "groups" | "pinned">("all");
+    const [filterType, setFilterType] = useState<"all" | "contacts" | "groups" | "pinned">("all");
     const [isNewChatOpen, setIsNewChatOpen] = useState(false);
     const [newChatNumber, setNewChatNumber] = useState("");
     const [hasMore, setHasMore] = useState(true);
 
     // Unlimited pinned chats (persisted per sessionId in localStorage)
     const [pinnedJids, setPinnedJids] = useState<string[]>([]);
+
+    // Contacts searched from the 4,613 address book contacts
+    const [extraContacts, setExtraContacts] = useState<ChatContact[]>([]);
+    const contactSearchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
     // Label dots per JID — {colorHex}[]
     const [chatLabelMap, setChatLabelMap] = useState<Map<string, { colorHex: string }[]>>(new Map());
@@ -445,6 +452,39 @@ export function ChatList({ sessionId, onSelectChat, selectedJid, isWide, onToggl
         }, 300);
         return () => clearTimeout(timer);
     }, [sessionId, chats]);
+
+    // Dynamic contact search (e.g. searching "Alexandre" across all 4,613 contacts)
+    useEffect(() => {
+        const q = searchInput.trim();
+        if (q.length < 2) {
+            setExtraContacts([]);
+            return;
+        }
+
+        if (contactSearchTimerRef.current) clearTimeout(contactSearchTimerRef.current);
+        contactSearchTimerRef.current = setTimeout(async () => {
+            try {
+                const results = await searchWhatsAppContacts(sessionId, q);
+                const loadedJids = new Set(chats.map(c => c.jid));
+                const newContacts: ChatContact[] = results
+                    .filter(c => !loadedJids.has(c.jid))
+                    .map(c => ({
+                        jid: c.jid,
+                        name: c.name,
+                        notify: c.notify,
+                        profilePic: c.profilePic,
+                        lastMessage: undefined
+                    }));
+                setExtraContacts(newContacts);
+            } catch (err) {
+                console.error("Error searching contacts:", err);
+            }
+        }, 120);
+
+        return () => {
+            if (contactSearchTimerRef.current) clearTimeout(contactSearchTimerRef.current);
+        };
+    }, [searchInput, sessionId, chats]);
 
     // Load pinned chats from localStorage on mount
     useEffect(() => {
@@ -610,10 +650,19 @@ export function ChatList({ sessionId, onSelectChat, selectedJid, isWide, onToggl
 
                 return matchName || matchJid || matchContent || matchDigits;
             });
+
+            // Append matching contacts from address book (e.g. searching "Alexandre")
+            if (extraContacts.length > 0) {
+                const existingJids = new Set(list.map(c => c.jid));
+                const toAdd = extraContacts.filter(c => !existingJids.has(c.jid));
+                list = [...list, ...toAdd];
+            }
         }
 
-        // 2. Filter buttons
-        if (filterType === "groups") {
+        // 2. Filter buttons: Tudo, Contatos, Grupos, Fixados
+        if (filterType === "contacts") {
+            list = list.filter(c => !c.jid.endsWith("@g.us"));
+        } else if (filterType === "groups") {
             list = list.filter(c => c.jid.endsWith("@g.us"));
         } else if (filterType === "pinned") {
             const pinnedSet = new Set(pinnedJids);
@@ -639,7 +688,7 @@ export function ChatList({ sessionId, onSelectChat, selectedJid, isWide, onToggl
         });
 
         return [...pinnedList, ...unpinnedList];
-    }, [chats, searchInput, filterType, pinnedJids]);
+    }, [chats, searchInput, extraContacts, filterType, pinnedJids]);
 
     const handleEndReached = useCallback(() => {
         if (hasMore && !loading && !searchInput.trim()) {
@@ -706,35 +755,22 @@ export function ChatList({ sessionId, onSelectChat, selectedJid, isWide, onToggl
                             </span>
                         )}
                     </div>
-                    <div className="flex items-center gap-1">
-                        {onToggleWide && (
-                            <Button
-                                variant="ghost"
-                                size="icon"
-                                title={isWide ? "Visualização padrão" : "Alargar lista (mais espaço para nomes de grupos)"}
-                                className="h-8 w-8 rounded-full text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/10"
-                                onClick={onToggleWide}
-                            >
-                                {isWide ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}
-                            </Button>
-                        )}
-                        <Button
-                            variant="ghost"
-                            size="icon"
-                            title="Nova conversa"
-                            className="h-8 w-8 rounded-full text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/10"
-                            onClick={() => setIsNewChatOpen(!isNewChatOpen)}
-                        >
-                            {isNewChatOpen ? <X className="h-4 w-4" /> : <MessageSquarePlus className="h-4 w-4" />}
-                        </Button>
-                    </div>
+                    <Button
+                        variant="ghost"
+                        size="icon"
+                        title="Nova conversa"
+                        className="h-8 w-8 rounded-full text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/10"
+                        onClick={() => setIsNewChatOpen(!isNewChatOpen)}
+                    >
+                        {isNewChatOpen ? <X className="h-4 w-4" /> : <MessageSquarePlus className="h-4 w-4" />}
+                    </Button>
                 </div>
 
                 {/* Instant Search Bar with Clear Button */}
                 <div className="relative">
                     <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-[#667781] dark:text-[#8696a0]" />
                     <Input
-                        placeholder="Pesquisar conversa ou grupo..."
+                        placeholder="Pesquisar conversa ou contato..."
                         value={searchInput}
                         onChange={(e) => setSearchInput(e.target.value)}
                         className="h-9 pl-9 pr-8 text-[13.5px] bg-white dark:bg-[#111b21] border border-border/20 rounded-lg focus-visible:ring-1 focus-visible:ring-[#00a884] placeholder:text-[#667781] dark:placeholder:text-[#8696a0]"
@@ -750,12 +786,12 @@ export function ChatList({ sessionId, onSelectChat, selectedJid, isWide, onToggl
                     )}
                 </div>
 
-                {/* Quick Filters: Tudo, Grupos, Fixados */}
+                {/* Quick Filters: Tudo, Contatos, Grupos, Fixados */}
                 <div className="flex items-center gap-1.5 pt-0.5 overflow-x-auto no-scrollbar">
                     <button
                         onClick={() => setFilterType("all")}
                         className={cn(
-                            "px-3 py-1 rounded-full text-xs font-medium transition-colors shrink-0",
+                            "px-3 py-1 rounded-full text-xs font-medium transition-colors shrink-0 cursor-pointer",
                             filterType === "all"
                                 ? "bg-[#00a884] text-white"
                                 : "bg-muted/70 hover:bg-muted text-muted-foreground"
@@ -764,9 +800,21 @@ export function ChatList({ sessionId, onSelectChat, selectedJid, isWide, onToggl
                         Tudo
                     </button>
                     <button
+                        onClick={() => setFilterType("contacts")}
+                        className={cn(
+                            "px-3 py-1 rounded-full text-xs font-medium transition-colors shrink-0 flex items-center gap-1 cursor-pointer",
+                            filterType === "contacts"
+                                ? "bg-[#00a884] text-white"
+                                : "bg-muted/70 hover:bg-muted text-muted-foreground"
+                        )}
+                    >
+                        <User className="h-3 w-3" />
+                        Contatos
+                    </button>
+                    <button
                         onClick={() => setFilterType("groups")}
                         className={cn(
-                            "px-3 py-1 rounded-full text-xs font-medium transition-colors shrink-0 flex items-center gap-1",
+                            "px-3 py-1 rounded-full text-xs font-medium transition-colors shrink-0 flex items-center gap-1 cursor-pointer",
                             filterType === "groups"
                                 ? "bg-[#00a884] text-white"
                                 : "bg-muted/70 hover:bg-muted text-muted-foreground"
@@ -778,7 +826,7 @@ export function ChatList({ sessionId, onSelectChat, selectedJid, isWide, onToggl
                     <button
                         onClick={() => setFilterType("pinned")}
                         className={cn(
-                            "px-3 py-1 rounded-full text-xs font-medium transition-colors shrink-0 flex items-center gap-1",
+                            "px-3 py-1 rounded-full text-xs font-medium transition-colors shrink-0 flex items-center gap-1 cursor-pointer",
                             filterType === "pinned"
                                 ? "bg-[#00a884] text-white"
                                 : "bg-muted/70 hover:bg-muted text-muted-foreground"

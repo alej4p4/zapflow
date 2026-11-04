@@ -19,23 +19,6 @@ export function ChatLayoutClient({ sessionId, initialJid }: ChatLayoutClientProp
     const [selectedChat, setSelectedChat] = useState<SelectedChat | null>(
         initialJid ? { jid: initialJid } : null
     );
-    const [isWide, setIsWide] = useState<boolean>(() => {
-        if (typeof window !== "undefined") {
-            const saved = localStorage.getItem("zapflow_chat_wide");
-            return saved !== "false"; // Default to wide mode!
-        }
-        return true;
-    });
-
-    const toggleWide = () => {
-        setIsWide(prev => {
-            const next = !prev;
-            if (typeof window !== "undefined") {
-                localStorage.setItem("zapflow_chat_wide", String(next));
-            }
-            return next;
-        });
-    };
 
     // Sync selected chat to URL pathname
     useEffect(() => {
@@ -85,8 +68,8 @@ export function ChatLayoutClient({ sessionId, initialJid }: ChatLayoutClientProp
     return (
         // Outer: flex row, full height, overflow hidden — containment chain root
         <div className="flex h-full bg-background rounded-xl border border-border/40 shadow-sm overflow-hidden min-h-0">
-            {/* Chat List Panel - Extra wide for long group & contact names */}
-            <div className={`w-full ${isWide ? "md:w-[480px] lg:w-[550px] xl:w-[600px]" : "md:w-[380px] lg:w-[420px]"} border-r border-border/30 overflow-hidden shrink-0 flex flex-col transition-[width] duration-200
+            {/* Chat List Panel - Standard WhatsApp Web Width */}
+            <div className={`w-full md:w-[380px] lg:w-[410px] xl:w-[420px] border-r border-border/30 overflow-hidden shrink-0 flex flex-col
                 ${selectedChat ? "hidden md:flex" : "flex"}`}
             >
                 {/* Inner flex-col: header fixed + virtuoso fills rest */}
@@ -94,8 +77,6 @@ export function ChatLayoutClient({ sessionId, initialJid }: ChatLayoutClientProp
                     sessionId={sessionId}
                     onSelectChat={handleSelectChat}
                     selectedJid={selectedChat?.jid}
-                    isWide={isWide}
-                    onToggleWide={toggleWide}
                 />
             </div>
 

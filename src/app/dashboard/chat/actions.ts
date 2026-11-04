@@ -30,6 +30,54 @@ export async function getChatsStatus(
     return await ChatService.getChatsList(session.id, limit, before, search);
 }
 
+// Search contacts from the WhatsApp address book (e.g. searching "Alexandre")
+export async function searchWhatsAppContacts(sessionId: string, query: string) {
+    const user = await getAuthenticatedUserForAction();
+    if (!user) throw new Error("Unauthorized");
+
+    const canAccess = await canAccessSession(user.id, user.role, sessionId);
+    if (!canAccess) throw new Error("Forbidden");
+
+    const session = await prisma.session.findUnique({
+        where: { sessionId },
+        select: { id: true }
+    });
+    if (!session) return [];
+
+    const q = query.trim();
+    if (!q || q.length < 2) return [];
+
+    const digits = q.replace(/\D/g, "");
+
+    const contacts = await prisma.contact.findMany({
+        where: {
+            sessionId: session.id,
+            OR: [
+                { name: { contains: q, mode: "insensitive" } },
+                { notify: { contains: q, mode: "insensitive" } },
+                { verifiedName: { contains: q, mode: "insensitive" } },
+                { jid: { contains: q, mode: "insensitive" } },
+                ...(digits.length >= 4 ? [{ jid: { contains: digits } }] : [])
+            ]
+        },
+        take: 30,
+        select: {
+            jid: true,
+            name: true,
+            notify: true,
+            profilePic: true
+        }
+    });
+
+    return contacts.map(c => ({
+        jid: c.jid,
+        name: c.name || c.notify || c.jid.split("@")[0],
+        notify: c.notify,
+        profilePic: c.profilePic,
+        isContact: true
+    }));
+}
+
 // Fetch messages for a specific chat with cursor pagination
 export async function getChatMessages(
     sessionId: string,
