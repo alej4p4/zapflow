@@ -1,0 +1,36 @@
+version: '3.8'
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: wa-akg-app
+    restart: always
+    ports:
+      - "3000:3000"
+    environment:
+      - DATABASE_URL=${DATABASE_URL}
+      - AUTH_SECRET=${AUTH_SECRET}
+      - BASE_URL=${BASE_URL:-http://localhost:3000}
+      - NEXTAUTH_URL=${NEXTAUTH_URL:-http://localhost:3000}
+      - NODE_ENV=production
+      - PORT=${PORT:-3000}
+      - HOSTNAME=0.0.0.0
+      - NEXT_PUBLIC_APP_URL=${BASE_URL:-http://localhost:3000}
+      - NEXT_PUBLIC_API_URL=${BASE_URL:-http://localhost:3000}/api
+      - BAILEYS_LOG_LEVEL=${BAILEYS_LOG_LEVEL:-error}
+      - NEXT_PUBLIC_SWAGGER_USERNAME=${NEXT_PUBLIC_SWAGGER_USERNAME:-admin}
+      - NEXT_PUBLIC_SWAGGER_PASSWORD=${NEXT_PUBLIC_SWAGGER_PASSWORD}
+      - NEXT_PUBLIC_SWAGGER_ENABLED=${NEXT_PUBLIC_SWAGGER_ENABLED:-true}
+      - TZ=${TZ:-America/Sao_Paulo}
+      - LOCALE=${LOCALE:-pt-BR}
+      - ADMIN_EMAIL=${ADMIN_EMAIL}
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD}
+    volumes:
+      - app_data:/app/data
+      - uploads_data:/app/uploads
+
+volumes:
+  app_data:
+  uploads_data:
