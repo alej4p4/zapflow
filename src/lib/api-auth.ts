@@ -80,6 +80,10 @@ export function isAdmin(userRole: string): boolean {
     return userRole === "SUPERADMIN";
 }
 
+// In-memory cache for session access to eliminate repeated Neon DB queries
+const sessionAccessCache = new Map<string, { hasAccess: boolean; expires: number }>();
+const ACCESS_CACHE_TTL = 60 * 1000; // 60 seconds
+
 /**
  * Check if user can access a session
  * - SUPERADMIN can access all sessions
@@ -88,6 +92,13 @@ export function isAdmin(userRole: string): boolean {
 export async function canAccessSession(userId: string, userRole: string, sessionId: string): Promise<boolean> {
     if (isAdmin(userRole)) {
         return true;
+    }
+
+    const cacheKey = `${userId}:${sessionId}`;
+    const cached = sessionAccessCache.get(cacheKey);
+    const now = Date.now();
+    if (cached && cached.expires > now) {
+        return cached.hasAccess;
     }
 
     // Check if session belongs to user (ownership)
@@ -100,7 +111,10 @@ export async function canAccessSession(userId: string, userRole: string, session
         }
     });
 
-    if (session) return true;
+    if (session) {
+        sessionAccessCache.set(cacheKey, { hasAccess: true, expires: now + ACCESS_CACHE_TTL });
+        return true;
+    }
 
     // Check if user has shared access
     const dbSession = await prisma.session.findFirst({
@@ -113,7 +127,10 @@ export async function canAccessSession(userId: string, userRole: string, session
         select: { id: true }
     });
 
-    if (!dbSession) return false;
+    if (!dbSession) {
+        sessionAccessCache.set(cacheKey, { hasAccess: false, expires: now + ACCESS_CACHE_TTL });
+        return false;
+    }
 
     const sharedAccess = await prisma.sessionAccess.findUnique({
         where: {
@@ -124,7 +141,9 @@ export async function canAccessSession(userId: string, userRole: string, session
         }
     });
 
-    return !!sharedAccess;
+    const hasAccess = !!sharedAccess;
+    sessionAccessCache.set(cacheKey, { hasAccess, expires: now + ACCESS_CACHE_TTL });
+    return hasAccess;
 }
 
 /**

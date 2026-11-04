@@ -3,7 +3,7 @@ import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { Providers } from "@/components/providers";
 import { TopLoader } from "@/components/ui/top-loader";
-import { prisma } from "@/lib/prisma";
+import { getSystemConfigCached } from "@/lib/system-config-cache";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -30,8 +30,7 @@ export const viewport: Viewport = {
 export async function generateMetadata(): Promise<Metadata> {
   let appName = "WA-AKG";
   try {
-    // @ts-ignore
-    const config = await prisma.systemConfig.findUnique({ where: { id: "default" } });
+    const config = await getSystemConfigCached();
     if (config?.appName) appName = config.appName;
   } catch (e) {
     console.error("Failed to fetch system config for metadata:", e);

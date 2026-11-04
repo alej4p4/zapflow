@@ -1,4 +1,3 @@
-
 "use client";
 
 import { useState, useEffect } from "react";
@@ -23,7 +22,7 @@ import {
     PaginationPrevious
 } from "@/components/ui/pagination";
 
-import { Search, Loader2, User, ChevronDown } from "lucide-react";
+import { Search, Loader2, User } from "lucide-react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import {
     Select,
@@ -44,16 +43,23 @@ interface Contact {
     remoteJidAlt?: string;
 }
 
+// In-memory client cache for contacts pagination (WhatsApp Web method)
+const contactsPageCache = new Map<string, { data: Contact[]; meta: any }>();
+
 export default function ContactListPage() {
     const { sessionId } = useSession();
-    const [contacts, setContacts] = useState<Contact[]>([]);
-    const [loading, setLoading] = useState(false);
 
     // Filters
     const [search, setSearch] = useState("");
     const [page, setPage] = useState(1);
     const [limit, setLimit] = useState("10");
-    const [meta, setMeta] = useState({ total: 0, totalPages: 1 });
+
+    const cacheKey = `${sessionId}:${page}:${limit}:${search}`;
+    const initialCached = contactsPageCache.get(cacheKey);
+
+    const [contacts, setContacts] = useState<Contact[]>(initialCached?.data || []);
+    const [loading, setLoading] = useState(!initialCached && !!sessionId);
+    const [meta, setMeta] = useState(initialCached?.meta || { total: 0, totalPages: 1 });
 
     // Debounce Search
     useEffect(() => {
@@ -71,7 +77,8 @@ export default function ContactListPage() {
 
     const fetchContacts = async () => {
         if (!sessionId) return;
-        setLoading(true);
+        const key = `${sessionId}:${page}:${limit}:${search}`;
+        if (!contactsPageCache.has(key)) setLoading(true);
         try {
             const params = new URLSearchParams({
                 page: page.toString(),
@@ -85,6 +92,7 @@ export default function ContactListPage() {
             if (res.ok) {
                 setContacts(data.data);
                 setMeta(data.meta);
+                contactsPageCache.set(key, { data: data.data, meta: data.meta });
             } else {
                 setContacts([]);
             }

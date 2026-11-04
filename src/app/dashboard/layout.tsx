@@ -5,10 +5,9 @@ import { SidebarProvider } from "@/components/dashboard/sidebar-context";
 import { SidebarShell } from "@/components/dashboard/sidebar-shell";
 import { UpdateChecker } from "@/components/dashboard/update-checker";
 import { RegistrationWarning } from "@/components/dashboard/registration-warning";
-import { prisma } from "@/lib/prisma";
+import { getSystemConfigCached } from "@/lib/system-config-cache";
 import { Toaster } from "sonner";
 import pkg from "../../../package.json";
-
 
 export default async function DashboardLayout({
     children,
@@ -16,8 +15,7 @@ export default async function DashboardLayout({
     children: React.ReactNode;
 }) {
     const session = await auth();
-    // @ts-ignore
-    const systemConfig = await prisma.systemConfig.findUnique({ where: { id: "default" } });
+    const systemConfig = await getSystemConfigCached();
     const appName = systemConfig?.appName || "WA-AKG";
     const registrationEnabled = systemConfig?.enableRegistration ?? true;
 

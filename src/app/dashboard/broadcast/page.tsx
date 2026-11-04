@@ -16,6 +16,7 @@ import { useSession } from "@/components/dashboard/session-provider";
 import { SessionGuard } from "@/components/dashboard/session-guard";
 import { useSocket } from "@/components/chat/socket-context";
 import { normalizeSearch } from "@/lib/phone";
+import { fetchCachedPhoneContacts, getCachedPhoneContacts, fetchCachedGroups, getCachedGroups } from "@/lib/whatsapp-client-cache";
 
 interface BroadcastProgress {
     broadcastId: string;
@@ -88,11 +89,13 @@ export default function BroadcastPage() {
     const [message, setMessage] = useState("");
     const [delay, setDelay] = useState([500]);
     const [pickerSearch, setPickerSearch] = useState("");
-    const [pickerContacts, setPickerContacts] = useState<PhoneContact[]>([]);
-    const [pickerLoading, setPickerLoading] = useState(false);
+    const initialCachedContacts = (sessionId ? getCachedPhoneContacts(sessionId) : null) || [];
+    const [pickerContacts, setPickerContacts] = useState<PhoneContact[]>(initialCachedContacts);
+    const [pickerLoading, setPickerLoading] = useState(initialCachedContacts.length === 0);
     const [selectedContacts, setSelectedContacts] = useState<string[]>([]);
     const [groupSearch, setGroupSearch] = useState("");
-    const [groups, setGroups] = useState<PhoneGroup[]>([]);
+    const initialCachedGroups = (sessionId ? getCachedGroups(sessionId) : null) || [];
+    const [groups, setGroups] = useState<PhoneGroup[]>(initialCachedGroups);
     const [selectedGroups, setSelectedGroups] = useState<string[]>([]);
     const [loading, setLoading] = useState(false);
     const [scheduledAt, setScheduledAt] = useState("");
@@ -162,25 +165,22 @@ export default function BroadcastPage() {
         }
     }, [activeTab, sessionId, fetchHistory]);
 
-    // Contatos do celular: carrega uma vez e filtra localmente (busca sem acento)
+    // Contatos do celular: em cache na memória (método WhatsApp Web)
     useEffect(() => {
         if (!sessionId) return;
         (async () => {
-            setPickerLoading(true);
+            const cached = getCachedPhoneContacts(sessionId);
+            if (!cached || cached.length === 0) setPickerLoading(true);
             try {
-                const res = await fetch(`/api/contacts/${sessionId}?limit=all&phones=1`);
-                if (res.ok) {
-                    const data = await res.json();
-                    const list = (data.data || []).filter((c: PhoneContact) => contactNumber(c));
-                    // Nomeados primeiro, depois alfabético sem acento
-                    list.sort((a: PhoneContact, b: PhoneContact) => {
-                        const na = normalizeSearch(contactLabel(a));
-                        const nb = normalizeSearch(contactLabel(b));
-                        if (!na !== !nb) return na ? -1 : 1;
-                        return na.localeCompare(nb);
-                    });
-                    setPickerContacts(list);
-                }
+                const list = await fetchCachedPhoneContacts(sessionId);
+                const filtered = (list || []).filter((c: PhoneContact) => contactNumber(c));
+                filtered.sort((a: PhoneContact, b: PhoneContact) => {
+                    const na = normalizeSearch(contactLabel(a));
+                    const nb = normalizeSearch(contactLabel(b));
+                    if (!na !== !nb) return na ? -1 : 1;
+                    return na.localeCompare(nb);
+                });
+                setPickerContacts(filtered);
             } catch (e) {
                 console.error("Falha ao buscar contatos", e);
             } finally {
@@ -220,16 +220,13 @@ export default function BroadcastPage() {
         toast.success("Contatos adicionados aos destinatários");
     };
 
-    // Grupos da sessão (lista única, filtro local)
+    // Grupos da sessão: em cache na memória (método WhatsApp Web)
     useEffect(() => {
         if (!sessionId) return;
         (async () => {
             try {
-                const res = await fetch(`/api/groups/${sessionId}`);
-                if (res.ok) {
-                    const data = await res.json();
-                    setGroups(data.data || []);
-                }
+                const list = await fetchCachedGroups(sessionId);
+                setGroups(list || []);
             } catch (e) {
                 console.error("Falha ao buscar grupos", e);
             }

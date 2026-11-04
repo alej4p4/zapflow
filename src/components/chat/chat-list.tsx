@@ -419,10 +419,14 @@ function SkeletonRow() {
     );
 }
 
+// Global in-memory cache for chat list per session (WhatsApp Web method)
+export const globalChatListCache = new Map<string, ChatContact[]>();
+
 // ─── Main ChatList Component ─────────
 export function ChatList({ sessionId, onSelectChat, selectedJid }: ChatListProps) {
-    const [chats, setChats] = useState<ChatContact[]>([]);
-    const [loading, setLoading] = useState(true);
+    const initialCached = globalChatListCache.get(sessionId) || [];
+    const [chats, setChats] = useState<ChatContact[]>(initialCached);
+    const [loading, setLoading] = useState(initialCached.length === 0);
     const [searchInput, setSearchInput] = useState("");
     const [filterType, setFilterType] = useState<"all" | "contacts" | "groups" | "pinned">("all");
     const [isNewChatOpen, setIsNewChatOpen] = useState(false);
@@ -530,7 +534,7 @@ export function ChatList({ sessionId, onSelectChat, selectedJid }: ChatListProps
         if (fetchingRef.current) return;
         fetchingRef.current = true;
         try {
-            if (!cursor) setLoading(true);
+            if (!cursor && !globalChatListCache.has(sessionId)) setLoading(true);
             const rawChats: any = await getChatsStatus(sessionId, PAGE_SIZE, cursor || undefined);
 
             const processChats = (newChatsList: ChatContact[], existingChatsList: ChatContact[] = []) => {
@@ -545,9 +549,11 @@ export function ChatList({ sessionId, onSelectChat, selectedJid }: ChatListProps
             };
 
             if (append) {
-                setChats(prev => processChats(rawChats, prev));
+                setChats(prev => { const next = processChats(rawChats, prev); globalChatListCache.set(sessionId, next); return next; });
             } else {
-                setChats(processChats(rawChats));
+                const next = processChats(rawChats);
+                globalChatListCache.set(sessionId, next);
+                setChats(next);
             }
             setHasMore((rawChats || []).length >= PAGE_SIZE);
         } catch (error) {
@@ -559,10 +565,10 @@ export function ChatList({ sessionId, onSelectChat, selectedJid }: ChatListProps
     }, [sessionId]);
 
     useEffect(() => {
-        setChats([]);
+        if (!globalChatListCache.has(sessionId)) { setChats([]); }
         setHasMore(true);
         fetchChats();
-    }, [fetchChats]);
+    }, [fetchChats, sessionId]);
 
     // Real-time socket message update
     useEffect(() => {
@@ -598,6 +604,7 @@ export function ChatList({ sessionId, onSelectChat, selectedJid }: ChatListProps
                     const tB = b.lastMessage?.timestamp ? new Date(b.lastMessage.timestamp).getTime() : 0;
                     return tB - tA;
                 });
+                globalChatListCache.set(sessionId, updated);
                 return updated;
             });
             if (needsReload) fetchChats();
@@ -628,7 +635,9 @@ export function ChatList({ sessionId, onSelectChat, selectedJid }: ChatListProps
                     }
                 };
                 const [chatItem] = updated.splice(idx, 1);
-                return [chatItem, ...updated];
+                const next = [chatItem, ...updated];
+                globalChatListCache.set(sessionId, next);
+                return next;
             });
         };
         window.addEventListener("zapflow:local-message-sent", handleLocalSent);

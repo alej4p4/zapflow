@@ -1,6 +1,7 @@
 import { NextResponse, NextRequest } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getAuthenticatedUser } from "@/lib/api-auth";
+import { invalidateSystemConfigCache } from "@/lib/system-config-cache";
 
 export async function GET(request: NextRequest) {
     try {
@@ -37,6 +38,8 @@ export async function POST(req: Request) {
             update: { appName, logoUrl, faviconUrl, timezone, enableRegistration: enableRegistration ?? true },
             create: { id: "default", appName, logoUrl: logoUrl || "", faviconUrl: faviconUrl || "/favicon.ico", timezone: timezone || "America/Sao_Paulo", enableRegistration: enableRegistration ?? true }
         });
+
+        invalidateSystemConfigCache();
 
         return NextResponse.json({ status: true, message: "System settings updated", data: config });
     } catch (error) {

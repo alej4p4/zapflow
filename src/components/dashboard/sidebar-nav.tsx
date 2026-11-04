@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { useSession } from "next-auth/react";
 import { ChevronDown, PanelLeftClose, PanelLeft } from "lucide-react";
 import {
@@ -107,6 +107,7 @@ const navGroups: NavGroup[] = [
 
 export function SidebarNav() {
     const pathname = usePathname();
+    const router = useRouter();
     const { data: session } = useSession();
     const { isCollapsed, toggleCollapse } = useSidebar();
     // @ts-ignore
@@ -147,6 +148,7 @@ export function SidebarNav() {
                                         item={item}
                                         active={isActive(item.href)}
                                         isCollapsed={isCollapsed}
+                                        router={router}
                                     />
                                 ))}
                             </div>
@@ -182,6 +184,7 @@ export function SidebarNav() {
                                             item={item}
                                             active={isActive(item.href)}
                                             isCollapsed={isCollapsed}
+                                            router={router}
                                         />
                                     ))}
                                 </div>
@@ -211,12 +214,18 @@ export function SidebarNav() {
     );
 }
 
-function NavLink({ item, active, isCollapsed }: { item: NavItem; active: boolean; isCollapsed: boolean }) {
+function NavLink({ item, active, isCollapsed, router }: { item: NavItem; active: boolean; isCollapsed: boolean; router: any }) {
     const Icon = item.icon;
 
     const linkContent = (
         <Link
             href={item.href}
+            prefetch={true}
+            onMouseEnter={() => {
+                if (!item.external && router) {
+                    try { router.prefetch(item.href); } catch (e) {}
+                }
+            }}
             target={item.external ? "_blank" : undefined}
             className={`
                 flex items-center rounded-lg text-sm font-medium

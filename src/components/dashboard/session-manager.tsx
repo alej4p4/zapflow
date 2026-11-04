@@ -32,8 +32,10 @@ type Session = {
     } | null;
 };
 
+let globalSessionListCache: Session[] | null = null;
+
 export function SessionManager({ user }: { user: any }) {
-    const [sessions, setSessions] = useState<Session[]>([]);
+    const [sessions, setSessions] = useState<Session[]>(() => globalSessionListCache || []);
     const [newSessionName, setNewSessionName] = useState("");
     const [newSessionId, setNewSessionId] = useState("");
     const [loading, setLoading] = useState(false);
@@ -77,9 +79,12 @@ export function SessionManager({ user }: { user: any }) {
     const fetchSessions = () => {
         fetch('/api/sessions').then(res => res.json()).then(responseData => {
             const data = responseData?.data || [];
-            if (Array.isArray(data)) setSessions(data);
+            if (Array.isArray(data)) {
+                globalSessionListCache = data;
+                setSessions(data);
+            }
         });
-    }
+    };
 
     const createSession = async () => {
         if (!newSessionName) {

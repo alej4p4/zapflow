@@ -136,6 +136,7 @@ export function MobileNav({ appName = "WA-AKG" }: { appName?: string }) {
                                         <Link
                                             key={href}
                                             href={href}
+                                            prefetch={true}
                                             target={external ? "_blank" : undefined}
                                             onClick={() => setOpen(false)}
                                             className={`
