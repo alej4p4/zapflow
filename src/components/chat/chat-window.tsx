@@ -453,6 +453,7 @@ function ContextMenu({
 // ─── Isolated Chat Input Bar (Local state = 120 FPS typing with zero message re-renders) ───
 function ChatInputBar({
     onSend,
+    onSendAudio,
     onUpload,
     replyingTo,
     onCancelReply,
@@ -462,6 +463,7 @@ function ChatInputBar({
     participants = []
 }: {
     onSend: (text: string, mentions?: string[]) => void;
+    onSendAudio?: (blob: Blob, mimeType: string) => void;
     onUpload: (type: string) => void;
     replyingTo: Message | null;
     onCancelReply: () => void;
@@ -473,10 +475,116 @@ function ChatInputBar({
     const [input, setInput] = useState("");
     const inputRef = useRef<HTMLTextAreaElement>(null);
 
+    // Audio recording state
+    const [isRecording, setIsRecording] = useState(false);
+    const [recordingTime, setRecordingTime] = useState(0);
+    const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+    const audioChunksRef = useRef<Blob[]>([]);
+    const recordingTimerRef = useRef<NodeJS.Timeout | null>(null);
+
     // Mention state
     const [mentionQuery, setMentionQuery] = useState<string | null>(null);
     const [mentionCursorIdx, setMentionCursorIdx] = useState<number>(-1);
     const [selectedMentionIdx, setSelectedMentionIdx] = useState(0);
+
+    const startRecording = async () => {
+        try {
+            if (!navigator.mediaDevices?.getUserMedia) {
+                toast.error("Navegador não suporta gravação de áudio");
+                return;
+            }
+
+            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+
+            let mimeType = 'audio/webm;codecs=opus';
+            if (typeof MediaRecorder !== 'undefined') {
+                if (MediaRecorder.isTypeSupported('audio/ogg;codecs=opus')) {
+                    mimeType = 'audio/ogg;codecs=opus';
+                } else if (MediaRecorder.isTypeSupported('audio/webm;codecs=opus')) {
+                    mimeType = 'audio/webm;codecs=opus';
+                } else if (MediaRecorder.isTypeSupported('audio/mp4')) {
+                    mimeType = 'audio/mp4';
+                } else {
+                    mimeType = '';
+                }
+            }
+
+            const recorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
+            mediaRecorderRef.current = recorder;
+            audioChunksRef.current = [];
+
+            recorder.ondataavailable = (e) => {
+                if (e.data && e.data.size > 0) {
+                    audioChunksRef.current.push(e.data);
+                }
+            };
+
+            recorder.start(250);
+            setIsRecording(true);
+            setRecordingTime(0);
+
+            if (recordingTimerRef.current) clearInterval(recordingTimerRef.current);
+            recordingTimerRef.current = setInterval(() => {
+                setRecordingTime(prev => prev + 1);
+            }, 1000);
+        } catch (err: any) {
+            console.error("Erro ao iniciar gravação:", err);
+            toast.error("Permissão de microfone negada ou indisponível");
+        }
+    };
+
+    const cancelRecording = () => {
+        if (recordingTimerRef.current) clearInterval(recordingTimerRef.current);
+        if (mediaRecorderRef.current) {
+            if (mediaRecorderRef.current.state !== 'inactive') {
+                mediaRecorderRef.current.stop();
+            }
+            mediaRecorderRef.current.stream?.getTracks().forEach(t => t.stop());
+        }
+        audioChunksRef.current = [];
+        setIsRecording(false);
+        setRecordingTime(0);
+    };
+
+    const stopAndSendRecording = () => {
+        if (recordingTimerRef.current) clearInterval(recordingTimerRef.current);
+        const recorder = mediaRecorderRef.current;
+        if (!recorder) return;
+
+        const currentStream = recorder.stream;
+        const actualMime = recorder.mimeType || 'audio/ogg';
+
+        recorder.onstop = () => {
+            currentStream?.getTracks().forEach(t => t.stop());
+            const audioBlob = new Blob(audioChunksRef.current, { type: actualMime });
+            audioChunksRef.current = [];
+            setIsRecording(false);
+            setRecordingTime(0);
+            if (audioBlob.size > 0 && onSendAudio) {
+                onSendAudio(audioBlob, actualMime);
+            }
+        };
+
+        if (recorder.state !== 'inactive') {
+            recorder.stop();
+        }
+    };
+
+    const formatRecordingTime = (secs: number) => {
+        const m = Math.floor(secs / 60);
+        const s = secs % 60;
+        return `${m}:${s < 10 ? '0' : ''}${s}`;
+    };
+
+    useEffect(() => {
+        return () => {
+            if (recordingTimerRef.current) clearInterval(recordingTimerRef.current);
+            if (mediaRecorderRef.current?.state !== 'inactive') {
+                mediaRecorderRef.current?.stop();
+                mediaRecorderRef.current?.stream?.getTracks().forEach(t => t.stop());
+            }
+        };
+    }, []);
 
     // Filter participants by mention query
     const filteredParticipants = useMemo(() => {
@@ -520,6 +628,7 @@ function ChatInputBar({
     useEffect(() => {
         inputRef.current?.focus();
         setMentionQuery(null);
+        cancelRecording();
     }, [jid]);
 
     const handleInputChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
@@ -666,89 +775,131 @@ function ChatInputBar({
                 </div>
             )}
 
-            <div className="flex items-end gap-2 max-w-4xl mx-auto">
-                {/* Emoji Button */}
-                <Button
-                    variant="ghost"
-                    size="icon"
-                    className="h-10 w-10 rounded-full shrink-0 text-[#54656f] dark:text-[#8696a0] hover:text-foreground hover:bg-black/5 dark:hover:bg-white/10"
-                    title="Emojis"
-                >
-                    <Smile className="h-5 w-5" />
-                </Button>
-
-                {/* Attachment Popover */}
-                <Popover>
-                    <PopoverTrigger asChild>
-                        <Button
-                            variant="ghost"
-                            size="icon"
-                            className="h-10 w-10 rounded-full shrink-0 text-[#54656f] dark:text-[#8696a0] hover:text-foreground hover:bg-black/5 dark:hover:bg-white/10"
-                            title="Anexar arquivo"
-                        >
-                            <Paperclip className="h-5 w-5" />
-                        </Button>
-                    </PopoverTrigger>
-                    <PopoverContent className="w-52 p-2 rounded-2xl bg-white dark:bg-[#233138] border border-border/40 shadow-xl" side="top" align="start">
-                        <div className="flex flex-col gap-1">
-                            <Button variant="ghost" size="sm" className="justify-start gap-3 h-9 text-xs rounded-xl" onClick={() => onUpload('image')}>
-                                <span className="h-7 w-7 rounded-full bg-blue-500/15 text-blue-500 flex items-center justify-center">
-                                    <ImageIcon className="h-4 w-4" />
-                                </span>
-                                Fotos e vídeos
-                            </Button>
-                            <Button variant="ghost" size="sm" className="justify-start gap-3 h-9 text-xs rounded-xl" onClick={() => onUpload('document')}>
-                                <span className="h-7 w-7 rounded-full bg-purple-500/15 text-purple-500 flex items-center justify-center">
-                                    <FileText className="h-4 w-4" />
-                                </span>
-                                Documento
-                            </Button>
-                            <Button variant="ghost" size="sm" className="justify-start gap-3 h-9 text-xs rounded-xl" onClick={() => onUpload('audio')}>
-                                <span className="h-7 w-7 rounded-full bg-orange-500/15 text-orange-500 flex items-center justify-center">
-                                    <Music className="h-4 w-4" />
-                                </span>
-                                Áudio
-                            </Button>
-                        </div>
-                    </PopoverContent>
-                </Popover>
-
-                {/* Input Textarea capsule */}
-                <div className="flex-1 min-w-0 bg-white dark:bg-[#2a3942] rounded-xl px-3.5 py-1.5 shadow-[0_1px_0.5px_rgba(11,20,26,0.1)] flex items-center">
-                    <textarea
-                        ref={inputRef}
-                        value={input}
-                        onChange={handleInputChange}
-                        onKeyDown={handleKeyDown}
-                        placeholder={isGroup ? "Digite uma mensagem ou @ para marcar..." : "Digite uma mensagem..."}
-                        rows={1}
-                        style={{ minHeight: "26px", maxHeight: "120px" }}
-                        className="w-full resize-none bg-transparent text-[15px] text-[#111b21] dark:text-[#e9edef] placeholder-[#8696a0] focus:outline-none leading-relaxed py-1"
-                    />
-                </div>
-
-                {/* WhatsApp Send Button */}
-                {input.trim() ? (
+            {isRecording ? (
+                /* WhatsApp Web Recording Bar */
+                <div className="flex items-center justify-between gap-3 max-w-4xl mx-auto bg-white dark:bg-[#202c33] rounded-2xl px-4 py-2 shadow-md border border-red-500/20 animate-in fade-in duration-150">
+                    {/* Discard recording */}
                     <Button
-                        onClick={handleSend}
+                        type="button"
+                        variant="ghost"
                         size="icon"
-                        className="h-10 w-10 rounded-full shrink-0 bg-[#00a884] hover:bg-[#00a884]/90 text-white shadow-sm transition-transform active:scale-95"
-                        title="Enviar mensagem"
+                        onClick={cancelRecording}
+                        className="h-10 w-10 rounded-full text-red-500 hover:text-red-600 hover:bg-red-500/10 cursor-pointer shrink-0 transition-colors"
+                        title="Cancelar gravação"
+                    >
+                        <Trash2 className="h-5 w-5" />
+                    </Button>
+
+                    {/* Recording indicators */}
+                    <div className="flex items-center gap-3 flex-1 min-w-0">
+                        <span className="h-3 w-3 rounded-full bg-red-500 animate-pulse shrink-0" />
+                        <span className="font-mono text-sm font-semibold text-red-500 shrink-0">
+                            {formatRecordingTime(recordingTime)}
+                        </span>
+                        <div className="flex-1 flex items-center gap-1 overflow-hidden px-2">
+                            <span className="text-xs text-muted-foreground select-none truncate">
+                                Gravando áudio...
+                            </span>
+                        </div>
+                    </div>
+
+                    {/* Send Voice Note */}
+                    <Button
+                        type="button"
+                        onClick={stopAndSendRecording}
+                        size="icon"
+                        className="h-10 w-10 rounded-full bg-[#00a884] hover:bg-[#00a884]/90 text-white shadow-md shrink-0 active:scale-95 transition-transform cursor-pointer"
+                        title="Enviar mensagem de voz"
                     >
                         <Send className="h-4.5 w-4.5 translate-x-0.5" />
                     </Button>
-                ) : (
+                </div>
+            ) : (
+                <div className="flex items-end gap-2 max-w-4xl mx-auto">
+                    {/* Emoji Button */}
                     <Button
                         variant="ghost"
                         size="icon"
                         className="h-10 w-10 rounded-full shrink-0 text-[#54656f] dark:text-[#8696a0] hover:text-foreground hover:bg-black/5 dark:hover:bg-white/10"
-                        onClick={() => inputRef.current?.focus()}
-                        title="Mensagem de voz"
+                        title="Emojis"
                     >
-                        <Mic className="h-5 w-5" />
+                        <Smile className="h-5 w-5" />
                     </Button>
-                )}
-            </div>
+
+                    {/* Attachment Popover */}
+                    <Popover>
+                        <PopoverTrigger asChild>
+                            <Button
+                                variant="ghost"
+                                size="icon"
+                                className="h-10 w-10 rounded-full shrink-0 text-[#54656f] dark:text-[#8696a0] hover:text-foreground hover:bg-black/5 dark:hover:bg-white/10"
+                                title="Anexar arquivo"
+                            >
+                                <Paperclip className="h-5 w-5" />
+                            </Button>
+                        </PopoverTrigger>
+                        <PopoverContent className="w-52 p-2 rounded-2xl bg-white dark:bg-[#233138] border border-border/40 shadow-xl" side="top" align="start">
+                            <div className="flex flex-col gap-1">
+                                <Button variant="ghost" size="sm" className="justify-start gap-3 h-9 text-xs rounded-xl" onClick={() => onUpload('image')}>
+                                    <span className="h-7 w-7 rounded-full bg-blue-500/15 text-blue-500 flex items-center justify-center">
+                                        <ImageIcon className="h-4 w-4" />
+                                    </span>
+                                    Fotos e vídeos
+                                </Button>
+                                <Button variant="ghost" size="sm" className="justify-start gap-3 h-9 text-xs rounded-xl" onClick={() => onUpload('document')}>
+                                    <span className="h-7 w-7 rounded-full bg-purple-500/15 text-purple-500 flex items-center justify-center">
+                                        <FileText className="h-4 w-4" />
+                                    </span>
+                                    Documento
+                                </Button>
+                                <Button variant="ghost" size="sm" className="justify-start gap-3 h-9 text-xs rounded-xl" onClick={() => onUpload('audio')}>
+                                    <span className="h-7 w-7 rounded-full bg-orange-500/15 text-orange-500 flex items-center justify-center">
+                                        <Music className="h-4 w-4" />
+                                    </span>
+                                    Áudio
+                                </Button>
+                            </div>
+                        </PopoverContent>
+                    </Popover>
+
+                    {/* Input Textarea capsule */}
+                    <div className="flex-1 min-w-0 bg-white dark:bg-[#2a3942] rounded-xl px-3.5 py-1.5 shadow-[0_1px_0.5px_rgba(11,20,26,0.1)] flex items-center">
+                        <textarea
+                            ref={inputRef}
+                            value={input}
+                            onChange={handleInputChange}
+                            onKeyDown={handleKeyDown}
+                            placeholder={isGroup ? "Digite uma mensagem ou @ para marcar..." : "Digite uma mensagem..."}
+                            rows={1}
+                            style={{ minHeight: "26px", maxHeight: "120px" }}
+                            className="w-full resize-none bg-transparent text-[15px] text-[#111b21] dark:text-[#e9edef] placeholder-[#8696a0] focus:outline-none leading-relaxed py-1"
+                        />
+                    </div>
+
+                    {/* WhatsApp Send Button or Mic Button */}
+                    {input.trim() ? (
+                        <Button
+                            onClick={handleSend}
+                            size="icon"
+                            className="h-10 w-10 rounded-full shrink-0 bg-[#00a884] hover:bg-[#00a884]/90 text-white shadow-sm transition-transform active:scale-95"
+                            title="Enviar mensagem"
+                        >
+                            <Send className="h-4.5 w-4.5 translate-x-0.5" />
+                        </Button>
+                    ) : (
+                        <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            className="h-10 w-10 rounded-full shrink-0 text-[#54656f] dark:text-[#8696a0] hover:text-[#00a884] hover:bg-[#00a884]/10 transition-colors cursor-pointer"
+                            onClick={startRecording}
+                            title="Gravar mensagem de voz"
+                        >
+                            <Mic className="h-5 w-5" />
+                        </Button>
+                    )}
+                </div>
+            )}
         </div>
     );
 }
@@ -1024,6 +1175,50 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
             setTimeout(() => fetchMessages(), 800);
         } catch (error: any) {
             toast.error(error.message || "Falha ao enviar a mídia");
+        }
+    };
+
+    const handleSendAudio = async (blob: Blob, mimeType: string) => {
+        const ext = mimeType.includes('ogg') ? 'ogg' : mimeType.includes('webm') ? 'webm' : 'mp4';
+        const file = new File([blob], `AUDIO-${Date.now()}.${ext}`, { type: mimeType });
+
+        // 0ms Optimistic Audio Voice Note
+        const localBlobUrl = URL.createObjectURL(blob);
+        const tempKeyId = `temp-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+        const nowIso = new Date().toISOString();
+
+        const optimisticMsg: Message = {
+            id: tempKeyId,
+            keyId: tempKeyId,
+            remoteJid: jid,
+            fromMe: true,
+            pushName: undefined,
+            type: "AUDIO",
+            content: "",
+            mediaUrl: localBlobUrl,
+            status: "PENDING",
+            timestamp: nowIso,
+            quoteId: replyingTo?.keyId || null,
+        };
+
+        setReplyingTo(null);
+        setMessages(prev => [...prev, optimisticMsg]);
+        requestAnimationFrame(() => scrollToBottom(true));
+
+        const formData = new FormData();
+        formData.append("file", file);
+        formData.append("type", "voice");
+        formData.append("sessionId", sessionId);
+        formData.append("jid", jid);
+
+        try {
+            await sendMediaMessage(formData);
+            setMessages(prev => prev.map(m => m.keyId === tempKeyId ? { ...m, status: "SENT" } : m));
+            setTimeout(() => fetchMessages(undefined, true), 1200);
+        } catch (error: any) {
+            console.error("Erro ao enviar áudio:", error);
+            toast.error(error?.message || "Falha ao enviar áudio");
+            setMessages(prev => prev.map(m => m.keyId === tempKeyId ? { ...m, status: "FAILED" } : m));
         }
     };
 
@@ -1446,6 +1641,7 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
             <input type="file" ref={fileInputRef} className="hidden" onChange={handleFileUpload} />
             <ChatInputBar
                 onSend={handleSend}
+                onSendAudio={handleSendAudio}
                 onUpload={triggerUpload}
                 replyingTo={replyingTo}
                 onCancelReply={() => setReplyingTo(null)}

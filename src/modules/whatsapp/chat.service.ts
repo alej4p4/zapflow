@@ -633,7 +633,7 @@ export class ChatService {
         } else if (type === 'audio') {
             content = { audio: buffer, mimetype: 'audio/mp4', ptt: false };
         } else if (type === 'voice') {
-            content = { audio: buffer, mimetype: 'audio/mp4', ptt: true };
+            content = { audio: buffer, mimetype: mimetype || 'audio/ogg; codecs=opus', ptt: true };
         } else if (type === 'document') {
             content = { document: buffer, mimetype, fileName, ...messageOptions };
         } else if (type === 'sticker') {
