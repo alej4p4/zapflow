@@ -266,6 +266,15 @@ export const bindSessionStore = (sock: WASocket, sessionId: string, io: Server |
             logger.error("Store", "Error in group-participants.update handling", e);
         }
     });
+
+    // Handle Presence Update (typing/recording/online)
+    sock.ev.on('presence.update', async ({ id, presences }) => {
+        try {
+            io?.to(sessionId).emit('presence.update', { id, presences });
+        } catch {
+            // Ignore socket emit error
+        }
+    });
 };
 
 async function processAndSaveMessage(

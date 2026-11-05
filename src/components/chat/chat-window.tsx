@@ -37,7 +37,10 @@ import {
     ChevronDown,
     Pin,
     Settings,
-    Plus
+    Plus,
+    Forward,
+    User,
+    RefreshCw
 } from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import {
@@ -50,6 +53,18 @@ import {
     AlertDialogHeader,
     AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+
+import { Input } from "@/components/ui/input";
+import { Checkbox } from "@/components/ui/checkbox";
+import {
+    Dialog,
+    DialogContent,
+    DialogHeader,
+    DialogTitle
+} from "@/components/ui/dialog";
+import { getCachedPhoneContacts, getCachedGroups } from "@/lib/whatsapp-client-cache";
+import { globalChatListCache } from "./chat-list";
+
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { sendChatMessage, sendMediaMessage, reactToChatMessage } from "@/app/dashboard/chat/actions";
@@ -426,6 +441,7 @@ function ContextMenu({
     onReply,
     onDelete,
     onTogglePin,
+    onForward,
     isPinned
 }: {
     state: ContextMenuState;
@@ -433,6 +449,7 @@ function ContextMenu({
     onReply: (msg: Message) => void;
     onDelete: (msg: Message) => void;
     onTogglePin: (msg: Message) => void;
+    onForward: (msg: Message) => void;
     isPinned: boolean;
 }) {
     const ref = useRef<HTMLDivElement>(null);
@@ -444,10 +461,23 @@ function ContextMenu({
         return () => document.removeEventListener("mousedown", handler);
     }, [onClose]);
 
+    const handleCopy = () => {
+        const textToCopy = state.msg.content || "";
+        if (textToCopy) {
+            navigator.clipboard.writeText(textToCopy).then(() => {
+                toast.success("Texto copiado para a área de transferência!");
+            }).catch(() => {});
+        } else {
+            toast.info("Nenhum texto para copiar nesta mensagem");
+        }
+        onClose();
+    };
+
     const items = [
         { label: "Responder", icon: CornerUpLeft, action: () => { onReply(state.msg); onClose(); } },
+        { label: "Encaminhar", icon: Forward, action: () => { onForward(state.msg); onClose(); } },
         { label: isPinned ? "Desafixar mensagem" : "Fixar mensagem", icon: Pin, action: () => { onTogglePin(state.msg); onClose(); } },
-        { label: "Copiar texto", icon: Copy, action: () => { navigator.clipboard.writeText(state.msg.content || "").then(() => toast.success("Copiado")).catch(() => {}); onClose(); } },
+        { label: "Copiar texto", icon: Copy, action: handleCopy },
         { label: "Excluir", icon: Trash2, action: () => { onDelete(state.msg); onClose(); }, dangerous: true },
         { label: "Informações", icon: Info, action: () => { toast.info(`Status: ${state.msg.status}\nHorário: ${new Date(state.msg.timestamp).toLocaleString("pt-BR")}`); onClose(); } },
     ];
@@ -477,6 +507,179 @@ function ContextMenu({
     );
 }
 
+
+
+// ─── Forward Message Modal ──────────────────
+interface ForwardModalProps {
+    sessionId: string;
+    message: Message | null;
+    onClose: () => void;
+    onForwardComplete?: () => void;
+}
+
+function ForwardModal({ sessionId, message, onClose, onForwardComplete }: ForwardModalProps) {
+    const [searchQuery, setSearchQuery] = useState("");
+    const [selectedJids, setSelectedJids] = useState<string[]>([]);
+    const [isSending, setIsSending] = useState(false);
+    const [targets, setTargets] = useState<{ jid: string; name: string; isGroup: boolean; phone?: string }[]>([]);
+
+    useEffect(() => {
+        if (!sessionId) return;
+        const recentChats = (globalChatListCache.get(sessionId) || []).map(c => ({
+            jid: c.jid,
+            name: c.name || c.notify || c.jid.split("@")[0],
+            isGroup: c.jid.endsWith("@g.us"),
+            phone: c.jid.replace("@s.whatsapp.net", "")
+        }));
+
+        const cachedContacts = (getCachedPhoneContacts(sessionId) || []).map(c => ({
+            jid: c.jid,
+            name: c.name || c.notify || c.verifiedName || c.jid.split("@")[0],
+            isGroup: false,
+            phone: c.jid.replace("@s.whatsapp.net", "")
+        }));
+
+        const cachedGroups = (getCachedGroups(sessionId) || []).map(g => ({
+            jid: g.jid,
+            name: g.subject || g.jid,
+            isGroup: true,
+            phone: ""
+        }));
+
+        const mergedMap = new Map<string, { jid: string; name: string; isGroup: boolean; phone?: string }>();
+        recentChats.forEach(t => mergedMap.set(t.jid, t));
+        cachedGroups.forEach(t => { if (!mergedMap.has(t.jid)) mergedMap.set(t.jid, t); });
+        cachedContacts.forEach(t => { if (!mergedMap.has(t.jid)) mergedMap.set(t.jid, t); });
+
+        setTargets(Array.from(mergedMap.values()));
+    }, [sessionId]);
+
+    const filteredTargets = useMemo(() => {
+        const q = searchQuery.trim().toLowerCase();
+        if (!q) return targets.slice(0, 50);
+        const digits = q.replace(/\D/g, "");
+        return targets.filter(t => 
+            t.name.toLowerCase().includes(q) || 
+            t.jid.toLowerCase().includes(q) ||
+            (digits && t.phone?.includes(digits))
+        ).slice(0, 50);
+    }, [targets, searchQuery]);
+
+    const toggleSelect = (targetJid: string) => {
+        setSelectedJids(prev => prev.includes(targetJid) ? prev.filter(x => x !== targetJid) : [...prev, targetJid]);
+    };
+
+    const handleConfirmForward = async () => {
+        if (selectedJids.length === 0 || !message) return;
+        setIsSending(true);
+        try {
+            const content = message.content || "";
+            const promises = selectedJids.map(targetJid => {
+                return sendChatMessage(sessionId, targetJid, content);
+            });
+            await Promise.allSettled(promises);
+            toast.success(`Mensagem encaminhada para ${selectedJids.length} conversa(s)!`);
+            onForwardComplete?.();
+            onClose();
+        } catch (e: any) {
+            toast.error(e?.message || "Erro ao encaminhar mensagem");
+        } finally {
+            setIsSending(false);
+        }
+    };
+
+    if (!message) return null;
+
+    return (
+        <Dialog open={true} onOpenChange={(open) => { if (!open) onClose(); }}>
+            <DialogContent className="max-w-md p-0 overflow-hidden rounded-2xl bg-white dark:bg-[#111b21] border border-border/40 shadow-2xl">
+                <DialogHeader className="p-4 pb-2 border-b border-border/20">
+                    <DialogTitle className="text-base font-semibold flex items-center gap-2 text-foreground">
+                        <Forward className="h-5 w-5 text-[#00a884]" />
+                        <span>Encaminhar mensagem</span>
+                    </DialogTitle>
+                </DialogHeader>
+
+                {/* Message preview snippet */}
+                <div className="mx-4 my-2 p-2.5 rounded-lg bg-muted/60 border border-border/30 text-xs text-muted-foreground truncate border-l-4 border-l-[#00a884]">
+                    <span className="font-semibold text-foreground mr-1">Mensagem:</span>
+                    <span>{message.content || (message.type === "IMAGE" ? "📷 Imagem" : "📎 Mídia")}</span>
+                </div>
+
+                {/* Search input */}
+                <div className="px-4 py-1">
+                    <div className="relative">
+                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                        <Input
+                            placeholder="Pesquisar contatos e grupos..."
+                            value={searchQuery}
+                            onChange={e => setSearchQuery(e.target.value)}
+                            className="h-9 pl-9 text-xs bg-muted/40 rounded-xl"
+                            autoFocus
+                        />
+                    </div>
+                </div>
+
+                {/* List of contacts and groups */}
+                <div className="max-h-64 overflow-y-auto divide-y divide-border/10 px-2 py-1">
+                    {filteredTargets.length === 0 ? (
+                        <div className="p-4 text-center text-xs text-muted-foreground">
+                            Nenhum contato ou grupo encontrado.
+                        </div>
+                    ) : (
+                        filteredTargets.map(target => {
+                            const isSelected = selectedJids.includes(target.jid);
+                            return (
+                                <div
+                                    key={target.jid}
+                                    onClick={() => toggleSelect(target.jid)}
+                                    className={cn(
+                                        "flex items-center gap-3 p-2.5 rounded-xl cursor-pointer transition-colors",
+                                        isSelected ? "bg-[#00a884]/10 dark:bg-[#00a884]/20" : "hover:bg-muted/50"
+                                    )}
+                                >
+                                    <div className="w-9 h-9 rounded-full bg-muted flex items-center justify-center shrink-0">
+                                        {target.isGroup ? <Users className="h-4 w-4 text-muted-foreground" /> : <User className="h-4 w-4 text-muted-foreground" />}
+                                    </div>
+                                    <div className="min-w-0 flex-1">
+                                        <p className="text-sm font-medium text-foreground truncate">{target.name}</p>
+                                        <p className="text-xs text-muted-foreground truncate font-mono">{target.isGroup ? "Grupo" : (target.phone || target.jid)}</p>
+                                    </div>
+                                    <Checkbox
+                                        checked={isSelected}
+                                        onCheckedChange={() => toggleSelect(target.jid)}
+                                        className="rounded-md"
+                                    />
+                                </div>
+                            );
+                        })
+                    )}
+                </div>
+
+                {/* Footer with actions */}
+                <div className="p-3 bg-muted/30 border-t border-border/20 flex items-center justify-between">
+                    <span className="text-xs text-muted-foreground font-medium">
+                        {selectedJids.length} selecionado(s)
+                    </span>
+                    <div className="flex items-center gap-2">
+                        <Button variant="ghost" size="sm" onClick={onClose} disabled={isSending}>
+                            Cancelar
+                        </Button>
+                        <Button
+                            size="sm"
+                            onClick={handleConfirmForward}
+                            disabled={selectedJids.length === 0 || isSending}
+                            className="bg-[#00a884] hover:bg-[#00a884]/90 text-white font-medium gap-1.5"
+                        >
+                            {isSending ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Forward className="h-4 w-4" />}
+                            <span>Encaminhar</span>
+                        </Button>
+                    </div>
+                </div>
+            </DialogContent>
+        </Dialog>
+    );
+}
 
 interface QuickReplyItem {
     shortcut: string;
@@ -1387,6 +1590,14 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
     // Pinned Message state (persisted per sessionId:jid in localStorage)
     const [pinnedMessageId, setPinnedMessageId] = useState<string | null>(null);
 
+    // Forward message modal state
+    const [forwardingMessage, setForwardingMessage] = useState<Message | null>(null);
+
+    // Live typing / recording presence state
+    const [presenceInfo, setPresenceInfo] = useState<{ isComposing: boolean; isRecording: boolean; sender?: string } | null>(null);
+    const presenceTimerRef = useRef<NodeJS.Timeout | null>(null);
+
+
     useEffect(() => {
         if (typeof window === "undefined") return;
         try {
@@ -1582,10 +1793,44 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
         };
         socket.on("message.reaction", reactionHandler);
 
+        const presenceHandler = (data: { id: string; presences: Record<string, { lastKnownPresence?: string }> }) => {
+            if (!data?.id || !data?.presences) return;
+            const targetJid = jid.endsWith("@c.us") ? jid.replace("@c.us", "@s.whatsapp.net") : jid;
+            if (data.id !== targetJid && data.id !== jid) return;
+
+            for (const [senderJid, p] of Object.entries(data.presences)) {
+                const status = p?.lastKnownPresence;
+                if (status === "composing" || status === "recording") {
+                    let senderName = "";
+                    if (isGroup) {
+                        const cleanPhone = senderJid.split("@")[0].replace(/\D/g, "");
+                        senderName = (contactMap && (contactMap[senderJid] || contactMap[cleanPhone])) || "";
+                    }
+
+                    setPresenceInfo({
+                        isComposing: status === "composing",
+                        isRecording: status === "recording",
+                        sender: senderName
+                    });
+
+                    if (presenceTimerRef.current) clearTimeout(presenceTimerRef.current);
+                    presenceTimerRef.current = setTimeout(() => {
+                        setPresenceInfo(null);
+                    }, 4000);
+                    return;
+                } else if (status === "paused" || status === "unavailable") {
+                    setPresenceInfo(null);
+                }
+            }
+        };
+        socket.on("presence.update", presenceHandler);
+
+
         return () => {
             socket.off("connect", onConnect);
             socket.off("message.update", handler);
             socket.off("message.reaction", reactionHandler);
+            socket.off("presence.update", presenceHandler);
         };
     }, [sessionId, jid, getSocket, joinSession]);
 
@@ -1672,17 +1917,40 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
             });
     };
 
-    // Keyboard shortcuts
+    
+    // Keyboard shortcuts (Escape to dismiss, Ctrl+Shift+F to search chats, Alt+Up/Down to navigate)
     useEffect(() => {
-        const handler = (e: KeyboardEvent) => {
-            if (e.key === "Escape" && replyingTo) {
+        const handleKeyDown = (e: KeyboardEvent) => {
+            if (e.key === "Escape") {
+                if (isSearching) {
+                    setIsSearching(false);
+                    setSearchQuery("");
+                } else if (replyingTo) {
+                    setReplyingTo(null);
+                } else if (previewFile) {
+                    setPreviewFile(null);
+                } else if (forwardingMessage) {
+                    setForwardingMessage(null);
+                }
+            }
+
+            if (e.ctrlKey && e.shiftKey && (e.key === "F" || e.key === "f")) {
                 e.preventDefault();
-                setReplyingTo(null);
+                window.dispatchEvent(new CustomEvent("zapflow:focus-search"));
+            }
+
+            if (e.altKey && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
+                e.preventDefault();
+                window.dispatchEvent(new CustomEvent("zapflow:nav-chat", {
+                    detail: { direction: e.key === "ArrowDown" ? 1 : -1 }
+                }));
             }
         };
-        window.addEventListener("keydown", handler);
-        return () => window.removeEventListener("keydown", handler);
-    }, [replyingTo]);
+
+        window.addEventListener("keydown", handleKeyDown);
+        return () => window.removeEventListener("keydown", handleKeyDown);
+    }, [isSearching, replyingTo, previewFile, forwardingMessage]);
+
 
     const processFileUpload = async (file: File, explicitType?: string, caption?: string) => {
         const formData = new FormData();
@@ -1842,6 +2110,44 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
         }
     };
 
+    
+    // Export full conversation to formatted .txt file
+    const handleExportConversation = () => {
+        if (messages.length === 0) return toast.info("Nenhuma mensagem para exportar");
+
+        let textOutput = `=======================================================\n`;
+        textOutput += `HISTÓRICO DE CONVERSA - ZAPFLOW\n`;
+        textOutput += `Conversa: ${displayName || jid}\n`;
+        textOutput += `Data da Exportação: ${new Date().toLocaleString("pt-BR")}\n`;
+        textOutput += `Total de Mensagens: ${messages.length}\n`;
+        textOutput += `=======================================================\n\n`;
+
+        for (const msg of messages) {
+            const timeStr = new Date(msg.timestamp).toLocaleString("pt-BR");
+            const sender = msg.fromMe
+                ? "Você"
+                : (msg.pushName || (isGroup ? ((msg.remoteJid && contactMap[msg.remoteJid]) || (msg.remoteJid ? msg.remoteJid.split("@")[0] : "")) : (displayName || jid)));
+            let msgText = msg.content || "";
+            if (msg.type !== "TEXT" && !msgText) {
+                msgText = `[${msg.type || "MÍDIA"}]`;
+            }
+            textOutput += `[${timeStr}] ${sender}: ${msgText}\n`;
+        }
+
+        const blob = new Blob([textOutput], { type: "text/plain;charset=utf-8" });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        const safeName = (displayName || "conversa").replace(/[^a-zA-Z0-9_-]/g, "_");
+        const dateStr = new Date().toISOString().slice(0, 10);
+        link.href = url;
+        link.download = `ZapFlow_${safeName}_${dateStr}.txt`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(url);
+        toast.success("Histórico da conversa exportado com sucesso (.txt)!");
+    };
+
     const exportGroupParticipants = () => {
         if (!participantsList || participantsList.length === 0) {
             toast.error("Nenhum participante encontrado para exportar");
@@ -1905,6 +2211,13 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
             }}
         >
             {/* Context menu */}
+            {forwardingMessage && (
+                <ForwardModal
+                    sessionId={sessionId}
+                    message={forwardingMessage}
+                    onClose={() => setForwardingMessage(null)}
+                />
+            )}
             {contextMenu && (
                 <ContextMenu
                     state={contextMenu}
@@ -1912,6 +2225,7 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
                     onReply={(msg) => { setReplyingTo(msg); scrollToBottom(true); }}
                     onDelete={(msg) => setDeleteConfirmMsg(msg)}
                     onTogglePin={handleTogglePin}
+                    onForward={msg => setForwardingMessage(msg)}
                     isPinned={pinnedMessageId === contextMenu.msg.keyId}
                 />
             )}
@@ -1987,7 +2301,21 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
                             {displayName}
                         </h3>
                         <p className="text-[11.5px] text-muted-foreground truncate flex items-center gap-1.5">
-                            {isGroup ? (
+                            {presenceInfo ? (
+                                <span className="flex items-center gap-1.5 text-[#00a884] font-medium animate-pulse">
+                                    {presenceInfo.isRecording ? (
+                                        <>
+                                            <Mic className="h-3 w-3" />
+                                            <span>{presenceInfo.sender ? `${presenceInfo.sender} gravando áudio...` : "gravando áudio..."}</span>
+                                        </>
+                                    ) : (
+                                        <>
+                                            <span className="h-1.5 w-1.5 rounded-full bg-[#00a884]" />
+                                            <span>{presenceInfo.sender ? `${presenceInfo.sender} digitando...` : "digitando..."}</span>
+                                        </>
+                                    )}
+                                </span>
+                            ) : isGroup ? (
                                 <span className="truncate">
                                     {participantNames.length > 0 ? participantNames.join(", ") : `Grupo • ${jid}`}
                                 </span>
@@ -2058,6 +2386,16 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
                                 <Info className="h-4 w-4 text-muted-foreground" />
                                 <span>Dados do {isGroup ? "grupo" : "contato"}</span>
                             </button>
+
+                            <button
+                                type="button"
+                                onClick={handleExportConversation}
+                                className="w-full flex items-center gap-2.5 px-3 py-2 text-xs font-medium text-foreground rounded-xl hover:bg-black/5 dark:hover:bg-white/10 transition-colors text-left cursor-pointer"
+                            >
+                                <FileText className="h-4 w-4 text-[#00a884]" />
+                                <span>Exportar conversa (.txt)</span>
+                            </button>
+
                         </PopoverContent>
                     </Popover>
                 </div>
