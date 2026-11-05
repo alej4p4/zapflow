@@ -35,7 +35,9 @@ import {
     Zap,
     ChevronUp,
     ChevronDown,
-    Pin
+    Pin,
+    Settings,
+    Plus
 } from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import {
@@ -476,7 +478,13 @@ function ContextMenu({
 }
 
 
-const DEFAULT_QUICK_REPLIES = [
+interface QuickReplyItem {
+    shortcut: string;
+    label: string;
+    text: string;
+}
+
+const DEFAULT_QUICK_REPLIES: QuickReplyItem[] = [
     { shortcut: "/ola", label: "Saudação inicial", text: "Olá! Tudo bem? Como posso te ajudar hoje?" },
     { shortcut: "/pix", label: "Dados do PIX", text: "Segue nossa chave PIX para pagamento: [chave]. Por gentileza, nos envie o comprovante após a transferência." },
     { shortcut: "/horario", label: "Horário de atendimento", text: "Nosso horário de funcionamento é de segunda a sexta, das 08h às 18h." },
@@ -484,6 +492,178 @@ const DEFAULT_QUICK_REPLIES = [
     { shortcut: "/contrato", label: "Envio de contrato", text: "Segue o contrato para conferência e assinatura. Favor acusar o recebimento." },
     { shortcut: "/embarque", label: "Liberação de embarque", text: "🚨 Atenção: Lote liberado e pronto para embarque. Favor alinhar com os motoristas para seguirem viagem." }
 ];
+
+const STORAGE_KEY_QUICK_REPLIES = "zapflow_custom_quick_replies";
+
+function loadQuickReplies(): QuickReplyItem[] {
+    if (typeof window === "undefined") return DEFAULT_QUICK_REPLIES;
+    try {
+        const stored = localStorage.getItem(STORAGE_KEY_QUICK_REPLIES);
+        if (stored) {
+            const parsed = JSON.parse(stored);
+            if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+        }
+    } catch {}
+    return DEFAULT_QUICK_REPLIES;
+}
+
+function saveQuickReplies(items: QuickReplyItem[]) {
+    if (typeof window === "undefined") return;
+    try {
+        localStorage.setItem(STORAGE_KEY_QUICK_REPLIES, JSON.stringify(items));
+        window.dispatchEvent(new CustomEvent("zapflow:quick-replies-updated"));
+    } catch {}
+}
+
+function QuickRepliesManagerModal({
+    isOpen,
+    onClose,
+    quickReplies,
+    onSave
+}: {
+    isOpen: boolean;
+    onClose: () => void;
+    quickReplies: QuickReplyItem[];
+    onSave: (items: QuickReplyItem[]) => void;
+}) {
+    const [list, setList] = useState<QuickReplyItem[]>(quickReplies);
+    const [newShortcut, setNewShortcut] = useState("");
+    const [newLabel, setNewLabel] = useState("");
+    const [newText, setNewText] = useState("");
+
+    useEffect(() => {
+        setList(quickReplies);
+    }, [quickReplies]);
+
+    if (!isOpen) return null;
+
+    const handleAdd = (e: React.FormEvent) => {
+        e.preventDefault();
+        const sc = newShortcut.trim().startsWith("/") ? newShortcut.trim().toLowerCase() : `/${newShortcut.trim().toLowerCase()}`;
+        if (!sc || sc.length < 2) {
+            toast.error("Informe um atalho válido começando com /");
+            return;
+        }
+        if (!newLabel.trim()) {
+            toast.error("Informe um título para o modelo");
+            return;
+        }
+        if (!newText.trim()) {
+            toast.error("Informe o texto da mensagem");
+            return;
+        }
+        const updated = [...list.filter(item => item.shortcut !== sc), { shortcut: sc, label: newLabel.trim(), text: newText.trim() }];
+        setList(updated);
+        onSave(updated);
+        setNewShortcut("");
+        setNewLabel("");
+        setNewText("");
+        toast.success(`Atalho ${sc} salvo!`);
+    };
+
+    const handleDelete = (sc: string) => {
+        const updated = list.filter(item => item.shortcut !== sc);
+        setList(updated);
+        onSave(updated);
+        toast.success("Resposta rápida removida");
+    };
+
+    const handleReset = () => {
+        setList(DEFAULT_QUICK_REPLIES);
+        onSave(DEFAULT_QUICK_REPLIES);
+        toast.success("Modelos restaurados para o padrão!");
+    };
+
+    return (
+        <div className="fixed inset-0 z-[99999] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-150 select-none" onClick={onClose}>
+            <div className="w-full max-w-xl bg-white dark:bg-[#202c33] rounded-2xl shadow-2xl border border-border/30 overflow-hidden flex flex-col max-h-[85vh]" onClick={e => e.stopPropagation()}>
+                {/* Header */}
+                <div className="px-5 py-3.5 border-b border-border/15 flex items-center justify-between">
+                    <div className="flex items-center gap-2 text-foreground">
+                        <Zap className="h-4 w-4 text-amber-500" />
+                        <h3 className="font-semibold text-sm">Gerenciador de Respostas Rápidas</h3>
+                    </div>
+                    <Button variant="ghost" size="icon" className="h-8 w-8 rounded-full text-muted-foreground hover:text-foreground cursor-pointer" onClick={onClose}>
+                        <X className="h-4 w-4" />
+                    </Button>
+                </div>
+
+                {/* Form to add new */}
+                <form onSubmit={handleAdd} className="p-4 bg-muted/20 border-b border-border/10 flex flex-col gap-2.5">
+                    <div className="grid grid-cols-2 gap-2">
+                        <div>
+                            <label className="text-[11px] font-semibold text-muted-foreground mb-1 block">Atalho (ex: /tabela)</label>
+                            <input
+                                type="text"
+                                value={newShortcut}
+                                onChange={e => setNewShortcut(e.target.value)}
+                                placeholder="/exemplo"
+                                className="w-full px-3 py-1.5 rounded-lg bg-background border border-border/40 text-xs font-mono outline-none focus:border-[#00a884]"
+                            />
+                        </div>
+                        <div>
+                            <label className="text-[11px] font-semibold text-muted-foreground mb-1 block">Título / Rótulo</label>
+                            <input
+                                type="text"
+                                value={newLabel}
+                                onChange={e => setNewLabel(e.target.value)}
+                                placeholder="Nome descritivo"
+                                className="w-full px-3 py-1.5 rounded-lg bg-background border border-border/40 text-xs outline-none focus:border-[#00a884]"
+                            />
+                        </div>
+                    </div>
+                    <div>
+                        <label className="text-[11px] font-semibold text-muted-foreground mb-1 block">Texto completo da mensagem</label>
+                        <textarea
+                            value={newText}
+                            onChange={e => setNewText(e.target.value)}
+                            placeholder="Digite o texto que será colado automaticamente ao usar este atalho..."
+                            rows={2}
+                            className="w-full px-3 py-2 rounded-lg bg-background border border-border/40 text-xs outline-none resize-none focus:border-[#00a884]"
+                        />
+                    </div>
+                    <div className="flex justify-end">
+                        <Button type="submit" size="sm" className="bg-[#00a884] hover:bg-[#00a884]/90 text-white text-xs gap-1.5 cursor-pointer">
+                            <Plus className="h-3.5 w-3.5" /> Adicionar Atalho
+                        </Button>
+                    </div>
+                </form>
+
+                {/* List of current quick replies */}
+                <div className="flex-1 overflow-y-auto p-4 flex flex-col gap-2 styled-scrollbar">
+                    <div className="flex items-center justify-between text-xs text-muted-foreground font-medium mb-1">
+                        <span>Atalhos cadastrados ({list.length})</span>
+                        <button type="button" onClick={handleReset} className="text-[11px] text-muted-foreground hover:text-foreground underline cursor-pointer">
+                            Restaurar padrões
+                        </button>
+                    </div>
+                    {list.map(item => (
+                        <div key={item.shortcut} className="p-3 rounded-xl bg-background border border-border/30 flex items-start justify-between gap-3 group hover:border-[#00a884]/40 transition-colors">
+                            <div className="flex-1 min-w-0">
+                                <div className="flex items-center gap-2 mb-1">
+                                    <span className="font-mono text-xs font-bold text-amber-500 bg-amber-500/10 px-2 py-0.5 rounded-md">
+                                        {item.shortcut}
+                                    </span>
+                                    <span className="text-xs font-medium text-foreground truncate">{item.label}</span>
+                                </div>
+                                <p className="text-xs text-muted-foreground whitespace-pre-wrap line-clamp-2">{item.text}</p>
+                            </div>
+                            <Button
+                                variant="ghost"
+                                size="icon"
+                                className="h-7 w-7 rounded-full text-muted-foreground hover:text-red-500 hover:bg-red-500/10 cursor-pointer shrink-0"
+                                onClick={() => handleDelete(item.shortcut)}
+                                title="Excluir atalho"
+                            >
+                                <Trash2 className="h-3.5 w-3.5" />
+                            </Button>
+                        </div>
+                    ))}
+                </div>
+            </div>
+        </div>
+    );
+}
 
 function playNotificationChime() {
     if (typeof window === "undefined") return;
@@ -568,17 +748,26 @@ function ChatInputBar({
     const [quickReplyQuery, setQuickReplyQuery] = useState<string | null>(null);
     const [quickReplyCursorIdx, setQuickReplyCursorIdx] = useState<number>(-1);
     const [selectedQuickReplyIdx, setSelectedQuickReplyIdx] = useState(0);
+    const [quickReplies, setQuickReplies] = useState<QuickReplyItem[]>(DEFAULT_QUICK_REPLIES);
+    const [isQuickRepliesManagerOpen, setIsQuickRepliesManagerOpen] = useState(false);
+
+    useEffect(() => {
+        setQuickReplies(loadQuickReplies());
+        const handleUpdated = () => setQuickReplies(loadQuickReplies());
+        window.addEventListener("zapflow:quick-replies-updated", handleUpdated);
+        return () => window.removeEventListener("zapflow:quick-replies-updated", handleUpdated);
+    }, []);
 
     const filteredQuickReplies = useMemo(() => {
         if (quickReplyQuery === null) return [];
         const q = quickReplyQuery.toLowerCase().trim();
-        if (!q) return DEFAULT_QUICK_REPLIES;
-        return DEFAULT_QUICK_REPLIES.filter(r =>
+        if (!q) return quickReplies;
+        return quickReplies.filter(r =>
             r.shortcut.toLowerCase().includes(q) || r.label.toLowerCase().includes(q) || r.text.toLowerCase().includes(q)
         );
-    }, [quickReplyQuery]);
+    }, [quickReplyQuery, quickReplies]);
 
-    const handleSelectQuickReply = (r: typeof DEFAULT_QUICK_REPLIES[0]) => {
+    const handleSelectQuickReply = (r: QuickReplyItem) => {
         if (quickReplyCursorIdx === -1) return;
         const before = input.slice(0, quickReplyCursorIdx);
         const queryLen = quickReplyQuery ? quickReplyQuery.length : 0;
@@ -870,7 +1059,18 @@ function ChatInputBar({
                             <Zap className="h-3.5 w-3.5" />
                             <span>Respostas Rápidas ({filteredQuickReplies.length})</span>
                         </span>
-                        <span className="text-[10px] text-muted-foreground lowercase">↑↓ Enter</span>
+                        <div className="flex items-center gap-2">
+                            <button
+                                type="button"
+                                onClick={() => setIsQuickRepliesManagerOpen(true)}
+                                className="hover:underline flex items-center gap-1 text-[10px] text-muted-foreground hover:text-foreground cursor-pointer"
+                                title="Gerenciar modelos salvos"
+                            >
+                                <Settings className="h-3 w-3" />
+                                <span>Gerenciar</span>
+                            </button>
+                            <span className="text-[10px] text-muted-foreground lowercase">↑↓ Enter</span>
+                        </div>
                     </div>
                     <div className="flex flex-col gap-0.5">
                         {filteredQuickReplies.map((r, idx) => (
@@ -895,6 +1095,17 @@ function ChatInputBar({
                     </div>
                 </div>
             )}
+
+            {/* Quick Replies Manager Modal */}
+            <QuickRepliesManagerModal
+                isOpen={isQuickRepliesManagerOpen}
+                onClose={() => setIsQuickRepliesManagerOpen(false)}
+                quickReplies={quickReplies}
+                onSave={(updated) => {
+                    setQuickReplies(updated);
+                    saveQuickReplies(updated);
+                }}
+            />
 
             {/* WhatsApp Group Mentions Autocomplete Popover */}
             {mentionQuery !== null && filteredParticipants.length > 0 && (
