@@ -193,7 +193,48 @@ async function executeBroadcast(logId: string): Promise<void> {
                     target = info.jid;
                 }
 
-                await instance.socket!.sendMessage(target, messageContent);
+                // Lookup contact name for dynamic variables
+                let contactName = "";
+                let firstName = "";
+                const cleanNumber = target.split("@")[0].replace(/\D/g, "");
+                const phoneFormatted = cleanNumber ? `+${cleanNumber}` : "";
+
+                try {
+                    const contact = await prisma.contact.findFirst({
+                        where: {
+                            sessionId: log.sessionId,
+                            OR: [
+                                { jid: target },
+                                { jid: `${cleanNumber}@s.whatsapp.net` }
+                            ]
+                        },
+                        select: { name: true, notify: true }
+                    });
+                    if (contact) {
+                        contactName = (contact.name || contact.notify || "").trim();
+                        firstName = contactName.split(" ")[0] || "";
+                    }
+                } catch {}
+
+                // Saudação dinâmica baseada no horário (Brasil)
+                const currentHour = new Date().getHours();
+                const saudacao = currentHour >= 5 && currentHour < 12 ? "Bom dia" : currentHour >= 12 && currentHour < 18 ? "Boa tarde" : "Boa noite";
+
+                // Substituição das variáveis dinâmicas
+                const personalizedText = log.message
+                    .replace(/\{nome\}/gi, contactName || "Amigo(a)")
+                    .replace(/\{primeiro_nome\}/gi, firstName || contactName || "Amigo(a)")
+                    .replace(/\{saudacao\}/gi, saudacao)
+                    .replace(/\{telefone\}/gi, phoneFormatted || cleanNumber);
+
+                // Simulação de digitação humana anti-banimento (400-800ms)
+                try {
+                    await instance.socket!.sendPresenceUpdate("composing", target);
+                    await new Promise(r => setTimeout(r, 400 + Math.floor(Math.random() * 400)));
+                    await instance.socket!.sendPresenceUpdate("paused", target);
+                } catch {}
+
+                await instance.socket!.sendMessage(target, { text: personalizedText });
 
                 const wasFailed = recipient.status === "failed";
                 sent++;

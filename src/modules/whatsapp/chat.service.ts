@@ -342,6 +342,30 @@ export class ChatService {
             }
         }
 
+        // Load distinct pushNames from previous messages in this group to resolve historical senders
+        if (isGroup) {
+            try {
+                const groupSenders = await prisma.message.findMany({
+                    where: {
+                        sessionId: dbSessionId,
+                        remoteJid: jid,
+                        pushName: { not: null }
+                    },
+                    select: { senderJid: true, pushName: true },
+                    distinct: ['senderJid']
+                });
+                for (const s of groupSenders) {
+                    if (s.senderJid && s.pushName) {
+                        const bare = s.senderJid.split('@')[0];
+                        if (!contactMap[s.senderJid]) contactMap[s.senderJid] = s.pushName;
+                        if (!contactMap[bare]) contactMap[bare] = s.pushName;
+                    }
+                }
+            } catch (e) {
+                console.error("Error loading distinct group sender pushNames:", e);
+            }
+        }
+
         // Link group participant LIDs to phone numbers if resolved
         if (isGroup && groupParticipants.length > 0) {
             for (const p of groupParticipants) {
@@ -369,12 +393,29 @@ export class ChatService {
 
         const participantNames = Array.from(participantNamesSet).sort((a, b) => a.localeCompare(b));
 
+        const participantsList = groupParticipants.map(p => {
+            const lidNum = p.id ? p.id.split('@')[0] : '';
+            const phoneNum = p.phoneNumber ? p.phoneNumber.split('@')[0] : '';
+            const resolvedName = (phoneNum && contactMap[phoneNum]) ||
+                                 (lidNum && contactMap[lidNum]) ||
+                                 (p.phoneNumber && contactMap[p.phoneNumber]) ||
+                                 (p.id && contactMap[p.id]) ||
+                                 (phoneNum ? `+${phoneNum}` : lidNum);
+            return {
+                id: p.id,
+                name: resolvedName,
+                phoneNumber: p.phoneNumber || p.id,
+                avatarJid: p.phoneNumber || p.id
+            };
+        }).sort((a, b) => a.name.localeCompare(b.name));
+
         // Return chronological order (oldest first)
         return {
             messages: messagesWithQuote.reverse(),
             hasMore,
             contactMap,
-            participantNames
+            participantNames,
+            participantsList
         };
     }
 
@@ -493,6 +534,20 @@ export class ChatService {
                 msgPayload.audio = Buffer.from(buffer);
             } catch (e: any) {
                 throw new Error(`Failed to fetch audio from URL: ${e.message}`);
+            }
+        }
+
+        // Automatically resolve mentions from text if not explicitly provided
+        if ((!mentions || mentions.length === 0) && (msgPayload.text || msgPayload.caption)) {
+            const textContent = msgPayload.text || msgPayload.caption || "";
+            const extractedMentions: string[] = [];
+            const mentionDigitsRegex = /@(\d{8,25})/g;
+            let m;
+            while ((m = mentionDigitsRegex.exec(textContent)) !== null) {
+                extractedMentions.push(`${m[1]}@s.whatsapp.net`);
+            }
+            if (extractedMentions.length > 0) {
+                mentions = extractedMentions;
             }
         }
 

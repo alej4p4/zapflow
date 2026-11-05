@@ -568,15 +568,40 @@ export default function BroadcastPage() {
                                 </CardHeader>
                                 <CardContent className="space-y-4">
                                     <div className="space-y-2">
-                                        <Label>Mensagem</Label>
+                                        <div className="flex flex-wrap items-center justify-between gap-1.5">
+                                            <Label>Mensagem</Label>
+                                            <div className="flex flex-wrap items-center gap-1.5">
+                                                <span className="text-[11px] text-muted-foreground mr-1">Variáveis:</span>
+                                                {[
+                                                    { tag: "{primeiro_nome}", label: "Primeiro Nome" },
+                                                    { tag: "{nome}", label: "Nome Completo" },
+                                                    { tag: "{saudacao}", label: "Bom dia/tarde" },
+                                                    { tag: "{telefone}", label: "Telefone" }
+                                                ].map(v => (
+                                                    <button
+                                                        key={v.tag}
+                                                        type="button"
+                                                        onClick={() => setMessage(prev => prev + (prev.endsWith(" ") || prev === "" ? "" : " ") + v.tag + " ")}
+                                                        className="px-2 py-0.5 text-[11px] font-mono font-medium rounded bg-primary/10 hover:bg-primary/20 text-primary border border-primary/20 transition-colors cursor-pointer"
+                                                        title={`Inserir ${v.tag}`}
+                                                        disabled={loading}
+                                                    >
+                                                        {v.tag}
+                                                    </button>
+                                                ))}
+                                            </div>
+                                        </div>
                                         <Textarea
-                                            placeholder="Digite sua mensagem aqui..."
+                                            placeholder="Ex: Olá {primeiro_nome}, {saudacao}! Tudo bem? Digite sua mensagem aqui..."
                                             className="h-44 max-h-56 [field-sizing:fixed] overflow-y-auto text-sm resize-y"
                                             style={{ fieldSizing: "fixed", maxHeight: "220px", height: "180px", overflowY: "auto" }}
                                             value={message}
                                             onChange={e => setMessage(e.target.value)}
                                             disabled={loading}
                                         />
+                                        <p className="text-[11px] text-muted-foreground">
+                                            Dica: As variáveis são substituídas dinamicamente para cada destinatário com simulação de digitação humana para máxima segurança.
+                                        </p>
                                     </div>
 
                                     <div className="space-y-4 pt-4">

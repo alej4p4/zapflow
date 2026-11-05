@@ -98,7 +98,7 @@ export async function getChatMessages(
 
     if (!session) throw new Error("Session not found");
 
-    const { messages, hasMore, contactMap, participantNames } = await ChatService.getMessages(session.id, jid, limit, before);
+    const { messages, hasMore, contactMap, participantNames, participantsList } = await ChatService.getMessages(session.id, jid, limit, before);
 
     return {
         messages: messages.map((msg: any) => ({
@@ -109,12 +109,13 @@ export async function getChatMessages(
         })),
         hasMore,
         contactMap: contactMap || {},
-        participantNames: participantNames || []
+        participantNames: participantNames || [],
+        participantsList: participantsList || []
     };
 }
 
 // Send a basic text message
-export async function sendChatMessage(sessionId: string, jid: string, text: string, quotedMessageId?: string) {
+export async function sendChatMessage(sessionId: string, jid: string, text: string, quotedMessageId?: string, mentions?: string[]) {
     const user = await getAuthenticatedUserForAction();
     if (!user) throw new Error("Unauthorized");
 
@@ -122,7 +123,7 @@ export async function sendChatMessage(sessionId: string, jid: string, text: stri
     if (!canAccess) throw new Error("Forbidden");
 
     try {
-        const result = await ChatService.sendTextMessage(sessionId, jid, { text }, undefined, quotedMessageId);
+        const result = await ChatService.sendTextMessage(sessionId, jid, { text }, mentions, quotedMessageId);
         return {
             success: true,
             keyId: result?.key?.id,

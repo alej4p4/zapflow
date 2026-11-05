@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import {
@@ -26,7 +26,10 @@ import {
     Check,
     CheckCheck,
     Clock,
-    Users
+    Users,
+    Play,
+    Pause,
+    AtSign
 } from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import {
@@ -43,7 +46,7 @@ import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { sendChatMessage, sendMediaMessage } from "@/app/dashboard/chat/actions";
 import { useSocket } from "./socket-context";
-import { chatCache, fetchOrGetChatMessages, type Message } from "./chat-cache";
+import { chatCache, fetchOrGetChatMessages, type Message, type GroupParticipant } from "./chat-cache";
 
 interface ChatWindowProps {
     sessionId: string;
@@ -253,6 +256,111 @@ function LazyVideo({ src }: { src: string }) {
     );
 }
 
+// ─── Authentic WhatsApp Voice Note Audio Player with Speed Control (1x, 1.5x, 2x) ───
+function WhatsAppAudioPlayer({ src, downloadFileName }: { src: string; downloadFileName?: string }) {
+    const audioRef = useRef<HTMLAudioElement | null>(null);
+    const [isPlaying, setIsPlaying] = useState(false);
+    const [currentTime, setCurrentTime] = useState(0);
+    const [duration, setDuration] = useState(0);
+    const [playbackRate, setPlaybackRate] = useState<number>(1);
+
+    const togglePlay = () => {
+        if (!audioRef.current) return;
+        if (isPlaying) {
+            audioRef.current.pause();
+        } else {
+            audioRef.current.play();
+        }
+    };
+
+    const toggleSpeed = (e: React.MouseEvent) => {
+        e.stopPropagation();
+        const nextRate = playbackRate === 1 ? 1.5 : playbackRate === 1.5 ? 2 : 1;
+        setPlaybackRate(nextRate);
+        if (audioRef.current) {
+            audioRef.current.playbackRate = nextRate;
+        }
+    };
+
+    const formatTime = (seconds: number) => {
+        if (!seconds || isNaN(seconds)) return "0:00";
+        const mins = Math.floor(seconds / 60);
+        const secs = Math.floor(seconds % 60);
+        return `${mins}:${secs < 10 ? '0' : ''}${secs}`;
+    };
+
+    const handleSeek = (e: React.ChangeEvent<HTMLInputElement>) => {
+        const time = parseFloat(e.target.value);
+        setCurrentTime(time);
+        if (audioRef.current) {
+            audioRef.current.currentTime = time;
+        }
+    };
+
+    return (
+        <div className="flex items-center gap-2.5 py-1 px-1 my-1 min-w-[240px] max-w-[320px] select-none">
+            <audio
+                ref={audioRef}
+                src={src}
+                preload="metadata"
+                onPlay={() => setIsPlaying(true)}
+                onPause={() => setIsPlaying(false)}
+                onEnded={() => { setIsPlaying(false); setCurrentTime(0); }}
+                onTimeUpdate={() => audioRef.current && setCurrentTime(audioRef.current.currentTime)}
+                onLoadedMetadata={() => audioRef.current && setDuration(audioRef.current.duration)}
+            />
+            {/* Play/Pause Button */}
+            <button
+                type="button"
+                onClick={togglePlay}
+                className="h-10 w-10 rounded-full bg-[#00a884] hover:bg-[#00a884]/90 text-white flex items-center justify-center shrink-0 shadow-sm transition-transform active:scale-95 cursor-pointer"
+                title={isPlaying ? "Pausar" : "Tocar áudio"}
+            >
+                {isPlaying ? <Pause className="h-5 w-5 fill-current" /> : <Play className="h-5 w-5 fill-current ml-0.5" />}
+            </button>
+
+            {/* Scrubber & Time */}
+            <div className="flex-1 flex flex-col justify-center min-w-0 gap-1">
+                <input
+                    type="range"
+                    min="0"
+                    max={duration || 100}
+                    value={currentTime}
+                    onChange={handleSeek}
+                    className="w-full h-1.5 bg-black/15 dark:bg-white/20 rounded-lg appearance-none cursor-pointer accent-[#00a884]"
+                />
+                <div className="flex justify-between items-center text-[11px] text-muted-foreground tabular-nums px-0.5">
+                    <span>{formatTime(currentTime)}</span>
+                    <span>{formatTime(duration)}</span>
+                </div>
+            </div>
+
+            {/* Speed Pill (1x, 1.5x, 2x) */}
+            <button
+                type="button"
+                onClick={toggleSpeed}
+                className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-black/5 dark:bg-white/10 hover:bg-black/10 text-muted-foreground hover:text-foreground shrink-0 tabular-nums transition-colors"
+                title="Velocidade de reprodução"
+            >
+                {playbackRate}x
+            </button>
+
+            {/* Download */}
+            {downloadFileName && (
+                <Button
+                    size="icon"
+                    variant="ghost"
+                    className="h-7 w-7 rounded-full text-muted-foreground hover:text-foreground shrink-0"
+                    onClick={() => handleDownload(src, downloadFileName)}
+                    title="Baixar áudio"
+                >
+                    <Download className="h-3.5 w-3.5" />
+                </Button>
+            )}
+        </div>
+    );
+}
+
 function useDateLabel() {
     const cache = useRef(new Map<string, string>());
     return (timestamp: string): string => {
@@ -348,16 +456,58 @@ function ChatInputBar({
     onUpload,
     replyingTo,
     onCancelReply,
-    jid
+    jid,
+    sessionId,
+    isGroup,
+    participants = []
 }: {
-    onSend: (text: string) => void;
+    onSend: (text: string, mentions?: string[]) => void;
     onUpload: (type: string) => void;
     replyingTo: Message | null;
     onCancelReply: () => void;
     jid: string;
+    sessionId?: string;
+    isGroup?: boolean;
+    participants?: GroupParticipant[];
 }) {
     const [input, setInput] = useState("");
     const inputRef = useRef<HTMLTextAreaElement>(null);
+
+    // Mention state
+    const [mentionQuery, setMentionQuery] = useState<string | null>(null);
+    const [mentionCursorIdx, setMentionCursorIdx] = useState<number>(-1);
+    const [selectedMentionIdx, setSelectedMentionIdx] = useState(0);
+
+    // Filter participants by mention query
+    const filteredParticipants = useMemo(() => {
+        if (!isGroup || mentionQuery === null) return [];
+        const q = mentionQuery.toLowerCase().trim();
+        if (!q) return participants.slice(0, 10);
+        return participants.filter(p =>
+            p.name.toLowerCase().includes(q) || (p.phoneNumber && p.phoneNumber.includes(q))
+        ).slice(0, 10);
+    }, [isGroup, mentionQuery, participants]);
+
+    // Handle selecting a participant from autocomplete
+    const handleSelectParticipant = (p: GroupParticipant) => {
+        if (mentionCursorIdx === -1) return;
+        const before = input.slice(0, mentionCursorIdx);
+        const queryLen = mentionQuery ? mentionQuery.length : 0;
+        const after = input.slice(mentionCursorIdx + 1 + queryLen);
+        const mentionTag = `@${p.name} `;
+        const nextInput = `${before}${mentionTag}${after}`;
+        setInput(nextInput);
+        setMentionQuery(null);
+        setMentionCursorIdx(-1);
+
+        setTimeout(() => {
+            if (inputRef.current) {
+                inputRef.current.focus();
+                const pos = before.length + mentionTag.length;
+                inputRef.current.setSelectionRange(pos, pos);
+            }
+        }, 10);
+    };
 
     // Auto-focus when replying
     useEffect(() => {
@@ -366,22 +516,87 @@ function ChatInputBar({
         }
     }, [replyingTo]);
 
-    // Focus on jid change
+    // Focus on jid change & reset
     useEffect(() => {
         inputRef.current?.focus();
+        setMentionQuery(null);
     }, [jid]);
+
+    const handleInputChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+        const val = e.target.value;
+        setInput(val);
+        const el = e.target;
+        el.style.height = "auto";
+        el.style.height = Math.min(el.scrollHeight, 120) + "px";
+
+        if (isGroup) {
+            const cursor = el.selectionStart || 0;
+            const textBefore = val.slice(0, cursor);
+            const atMatch = textBefore.match(/@([a-zA-Z0-9_\u00C0-\u00FF]*)$/);
+            if (atMatch) {
+                setMentionQuery(atMatch[1]);
+                setMentionCursorIdx(atMatch.index!);
+                setSelectedMentionIdx(0);
+            } else {
+                setMentionQuery(null);
+            }
+        }
+    };
 
     const handleSend = () => {
         const text = input.trim();
         if (!text) return;
+
+        // Extract mentions if in group
+        let mentions: string[] | undefined = undefined;
+        if (isGroup && participants.length > 0) {
+            const foundMentions = new Set<string>();
+            for (const p of participants) {
+                if (p.name && text.includes(`@${p.name}`)) {
+                    foundMentions.add(p.id.endsWith('@lid') || p.id.endsWith('@s.whatsapp.net') ? p.id : `${p.id}@s.whatsapp.net`);
+                    if (p.phoneNumber) {
+                        foundMentions.add(p.phoneNumber.endsWith('@s.whatsapp.net') ? p.phoneNumber : `${p.phoneNumber}@s.whatsapp.net`);
+                    }
+                }
+            }
+            if (foundMentions.size > 0) {
+                mentions = Array.from(foundMentions);
+            }
+        }
+
         setInput("");
+        setMentionQuery(null);
         if (inputRef.current) {
             inputRef.current.style.height = "auto";
         }
-        onSend(text);
+        onSend(text, mentions);
     };
 
     const handleKeyDown = (e: React.KeyboardEvent) => {
+        if (mentionQuery !== null && filteredParticipants.length > 0) {
+            if (e.key === "ArrowDown") {
+                e.preventDefault();
+                setSelectedMentionIdx(prev => (prev + 1) % filteredParticipants.length);
+                return;
+            }
+            if (e.key === "ArrowUp") {
+                e.preventDefault();
+                setSelectedMentionIdx(prev => (prev - 1 + filteredParticipants.length) % filteredParticipants.length);
+                return;
+            }
+            if (e.key === "Enter" || e.key === "Tab") {
+                e.preventDefault();
+                const chosen = filteredParticipants[selectedMentionIdx] || filteredParticipants[0];
+                if (chosen) handleSelectParticipant(chosen);
+                return;
+            }
+            if (e.key === "Escape") {
+                e.preventDefault();
+                setMentionQuery(null);
+                return;
+            }
+        }
+
         if (e.key === "Enter" && !e.shiftKey) {
             e.preventDefault();
             handleSend();
@@ -389,7 +604,48 @@ function ChatInputBar({
     };
 
     return (
-        <div className="shrink-0 px-3.5 py-2.5 bg-[#f0f2f5] dark:bg-[#202c33] border-t border-border/15">
+        <div className="shrink-0 px-3.5 py-2.5 bg-[#f0f2f5] dark:bg-[#202c33] border-t border-border/15 relative">
+            {/* WhatsApp Group Mentions Autocomplete Popover */}
+            {mentionQuery !== null && filteredParticipants.length > 0 && (
+                <div className="mb-2 p-1.5 rounded-2xl bg-white dark:bg-[#233138] border border-border/40 shadow-2xl animate-in slide-in-from-bottom-2 duration-150 max-h-56 overflow-y-auto no-scrollbar">
+                    <div className="px-3 py-1.5 text-[11px] font-semibold text-[#00a884] dark:text-[#25d366] uppercase tracking-wider flex items-center gap-1.5 border-b border-border/10 mb-1">
+                        <AtSign className="h-3.5 w-3.5" />
+                        <span>Mencionar participante ({filteredParticipants.length})</span>
+                    </div>
+                    <div className="flex flex-col gap-0.5">
+                        {filteredParticipants.map((p, idx) => (
+                            <button
+                                key={p.id || idx}
+                                type="button"
+                                onClick={() => handleSelectParticipant(p)}
+                                className={cn(
+                                    "w-full flex items-center gap-2.5 px-2.5 py-1.5 rounded-xl text-left transition-colors cursor-pointer select-none",
+                                    idx === selectedMentionIdx
+                                        ? "bg-[#00a884]/15 dark:bg-[#00a884]/25 text-foreground"
+                                        : "hover:bg-black/5 dark:hover:bg-white/5 text-foreground"
+                                )}
+                            >
+                                <Avatar className="h-7 w-7 shrink-0">
+                                    <AvatarImage
+                                        src={`/api/avatar/${sessionId}/${encodeURIComponent(p.avatarJid || p.id)}`}
+                                        referrerPolicy="no-referrer"
+                                    />
+                                    <AvatarFallback className="text-[10px] font-bold bg-[#00a884]/20 text-[#00a884]">
+                                        {p.name.slice(0, 2).toUpperCase()}
+                                    </AvatarFallback>
+                                </Avatar>
+                                <div className="flex-1 min-w-0">
+                                    <p className="text-xs font-medium truncate leading-tight">{p.name}</p>
+                                    {p.phoneNumber && (
+                                        <p className="text-[10px] text-muted-foreground truncate">{p.phoneNumber.split('@')[0]}</p>
+                                    )}
+                                </div>
+                            </button>
+                        ))}
+                    </div>
+                </div>
+            )}
+
             {/* Reply preview bar */}
             {replyingTo && (
                 <div className="mb-2 p-2 rounded-xl bg-white/80 dark:bg-[#111b21]/80 backdrop-blur-sm border-l-4 border-[#00a884] flex items-center justify-between text-xs animate-in slide-in-from-bottom-2 duration-150">
@@ -403,7 +659,7 @@ function ChatInputBar({
                     </div>
                     <button
                         onClick={onCancelReply}
-                        className="p-1 text-muted-foreground hover:text-foreground rounded-full"
+                        className="p-1 text-muted-foreground hover:text-foreground rounded-full cursor-pointer"
                     >
                         <X className="h-4 w-4" />
                     </button>
@@ -462,14 +718,9 @@ function ChatInputBar({
                     <textarea
                         ref={inputRef}
                         value={input}
-                        onChange={(e) => {
-                            setInput(e.target.value);
-                            const el = e.target;
-                            el.style.height = "auto";
-                            el.style.height = Math.min(el.scrollHeight, 120) + "px";
-                        }}
+                        onChange={handleInputChange}
                         onKeyDown={handleKeyDown}
-                        placeholder="Digite uma mensagem..."
+                        placeholder={isGroup ? "Digite uma mensagem ou @ para marcar..." : "Digite uma mensagem..."}
                         rows={1}
                         style={{ minHeight: "26px", maxHeight: "120px" }}
                         className="w-full resize-none bg-transparent text-[15px] text-[#111b21] dark:text-[#e9edef] placeholder-[#8696a0] focus:outline-none leading-relaxed py-1"
@@ -516,6 +767,7 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
     const [contactMap, setContactMap] = useState<Record<string, string>>({});
     const [lightboxMedia, setLightboxMedia] = useState<{ src: string; caption?: string | null } | null>(null);
     const [participantNames, setParticipantNames] = useState<string[]>([]);
+    const [participantsList, setParticipantsList] = useState<GroupParticipant[]>([]);
     const [oldestTimestamp, setOldestTimestamp] = useState<string | null>(null);
     const [autoScroll, setAutoScroll] = useState(true);
     const [newMsgBadge, setNewMsgBadge] = useState(false);
@@ -560,6 +812,9 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
             if (data.participantNames && data.participantNames.length > 0) {
                 setParticipantNames(data.participantNames);
             }
+            if (data.participantsList && data.participantsList.length > 0) {
+                setParticipantsList(data.participantsList);
+            }
             if (!before) {
                 setMessages(data.messages || []);
                 setAutoScroll(true);
@@ -590,6 +845,7 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
             setOldestTimestamp(cached.oldestTimestamp);
             if (cached.contactMap) setContactMap(cached.contactMap);
             if (cached.participantNames) setParticipantNames(cached.participantNames);
+            if (cached.participantsList) setParticipantsList(cached.participantsList);
             setLoading(false);
             setAutoScroll(true);
             // Silently check for fresh messages in background without wiping screen
@@ -598,6 +854,7 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
             setMessages([]);
             setContactMap({});
             setParticipantNames([]);
+            setParticipantsList([]);
             setOldestTimestamp(null);
             setHasMore(false);
             setLoading(true);
@@ -673,7 +930,7 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
     }, [hasMore, loadingMore, oldestTimestamp, fetchMessages]);
 
     // 0ms Optimistic Send: message appears instantly on screen with WhatsApp Clock icon
-    const handleSend = (text: string) => {
+    const handleSend = (text: string, mentions?: string[]) => {
         const replyKeyId = replyingTo?.keyId;
         setReplyingTo(null);
 
@@ -718,7 +975,7 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
         }
 
         // 5. Send in background — non-blocking, zero perceived delay
-        sendChatMessage(sessionId, jid, text, replyKeyId)
+        sendChatMessage(sessionId, jid, text, replyKeyId, mentions)
             .then(res => {
                 if (res?.keyId) {
                     setMessages(prev => prev.map(m => m.keyId === tempKeyId ? { ...m, keyId: res.keyId!, status: "SENT" } : m));
@@ -1106,19 +1363,9 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
                                             </div>
                                         )}
 
-                                        {/* AUDIO */}
+                                        {/* AUDIO (WhatsApp Voice Note Player with 1x, 1.5x, 2x speed) */}
                                         {msg.type === 'AUDIO' && msg.mediaUrl && (
-                                            <div className="flex items-center gap-2 mb-1.5 py-1">
-                                                <audio src={msg.mediaUrl} controls className="h-8 max-w-[220px]" preload="none" />
-                                                <Button
-                                                    size="icon"
-                                                    variant="ghost"
-                                                    className="h-8 w-8 rounded-full"
-                                                    onClick={() => handleDownload(msg.mediaUrl!, `AUDIO-${msg.keyId}.mp3`)}
-                                                >
-                                                    <Download className="h-3.5 w-3.5" />
-                                                </Button>
-                                            </div>
+                                            <WhatsAppAudioPlayer src={msg.mediaUrl} downloadFileName={`AUDIO-${msg.keyId}.mp3`} />
                                         )}
 
                                         {/* STICKER */}
@@ -1203,6 +1450,9 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
                 replyingTo={replyingTo}
                 onCancelReply={() => setReplyingTo(null)}
                 jid={jid}
+                sessionId={sessionId}
+                isGroup={isGroup}
+                participants={participantsList}
             />
 
             {/* Lightbox Modal (WhatsApp Web Style) */}

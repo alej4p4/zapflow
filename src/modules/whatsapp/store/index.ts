@@ -562,6 +562,57 @@ async function processAndSaveMessage(
                 } : {}
             });
 
+            // If it is a group message, ensure participant contact exists with pushName
+            const effectiveParticipant = msg.key.participant || msg.participant;
+            if (isGroup && effectiveParticipant && pushName && !fromMe) {
+                const participantJid = normalizeJid(effectiveParticipant);
+                try {
+                    await prisma.contact.upsert({
+                        where: { sessionId_jid: { sessionId: dbSessionId, jid: participantJid } },
+                        create: {
+                            sessionId: dbSessionId,
+                            jid: participantJid,
+                            notify: pushName,
+                            name: pushName,
+                            // @ts-ignore
+                            remoteJidAlt: remoteJidAlt || undefined,
+                            // @ts-ignore
+                            lid: isLidJid(effectiveParticipant) ? effectiveParticipant : undefined
+                        },
+                        update: {
+                            notify: pushName,
+                            name: pushName,
+                            // @ts-ignore
+                            remoteJidAlt: remoteJidAlt || undefined,
+                            // @ts-ignore
+                            lid: isLidJid(effectiveParticipant) ? effectiveParticipant : undefined
+                        }
+                    });
+                    if (remoteJidAlt) {
+                        const altJid = normalizeJid(remoteJidAlt);
+                        await prisma.contact.upsert({
+                            where: { sessionId_jid: { sessionId: dbSessionId, jid: altJid } },
+                            create: {
+                                sessionId: dbSessionId,
+                                jid: altJid,
+                                notify: pushName,
+                                name: pushName,
+                                // @ts-ignore
+                                remoteJidAlt: participantJid
+                            },
+                            update: {
+                                notify: pushName,
+                                name: pushName,
+                                // @ts-ignore
+                                remoteJidAlt: participantJid
+                            }
+                        });
+                    }
+                } catch (e) {
+                    // Ignore silent upsert race conditions
+                }
+            }
+
             // Welcome Message Logic
             if (!fromMe && triggerWebhook && config?.welcomeMessage && sock) {
                 // Let's check if message count for this contact is exactly 1 (the one we just saved)
