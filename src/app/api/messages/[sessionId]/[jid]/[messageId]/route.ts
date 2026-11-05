@@ -1,8 +1,9 @@
 import { NextResponse, NextRequest } from "next/server";
 import { waManager } from "@/modules/whatsapp/manager";
+import { prisma } from "@/lib/prisma";
 import { getAuthenticatedUser, canAccessSession } from "@/lib/api-auth";
 
-// DELETE: Delete message for everyone
+// DELETE: Delete message for everyone (if fromMe) and remove from DB
 export async function DELETE(
     request: NextRequest,
     { params }: { params: Promise<{ sessionId: string; jid: string; messageId: string }> }
@@ -15,41 +16,64 @@ export async function DELETE(
 
         const { sessionId, jid, messageId } = await params;
 
-        // Check if user can access this session
         const canAccess = await canAccessSession(user.id, user.role, sessionId);
         if (!canAccess) {
             return NextResponse.json({ status: false, message: "Forbidden - Cannot access this session", error: "Forbidden - Cannot access this session" }, { status: 403 });
         }
 
+        const decodedJid = decodeURIComponent(jid);
+        const session = await prisma.session.findUnique({
+            where: { sessionId },
+            select: { id: true }
+        });
+
+        const existingMsg = session
+            ? await prisma.message.findFirst({
+                  where: { sessionId: session.id, keyId: messageId },
+                  select: { id: true, fromMe: true, senderJid: true }
+              })
+            : null;
+
         const instance = waManager.getInstance(sessionId);
-        if (!instance?.socket) {
-            return NextResponse.json({ status: false, message: "Session not ready", error: "Session not ready" }, { status: 503 });
+        if (instance?.socket && (!existingMsg || existingMsg.fromMe)) {
+            try {
+                await instance.socket.sendMessage(decodedJid, {
+                    delete: {
+                        remoteJid: decodedJid,
+                        fromMe: true,
+                        id: messageId,
+                        participant: undefined
+                    }
+                });
+            } catch (waErr) {
+                console.warn("Non-fatal error revoking message on WhatsApp:", waErr);
+            }
         }
 
-        const decodedJid = decodeURIComponent(jid);
+        if (session) {
+            await prisma.message.deleteMany({
+                where: { sessionId: session.id, keyId: messageId }
+            });
+        }
 
-        // Delete message for everyone
-        await instance.socket.sendMessage(decodedJid, { delete: {
-            remoteJid: decodedJid,
-            fromMe: true,
-            id: messageId,
-            participant: undefined
-        }});
+        try {
+            const io = (global as any).io;
+            if (io) {
+                io.to(sessionId).emit("message.deleted", {
+                    keyId: messageId,
+                    remoteJid: decodedJid
+                });
+            }
+        } catch {}
 
-        return NextResponse.json({ status: true, message: "Message deleted for everyone" });
-
+        return NextResponse.json({ status: true, message: "Mensagem apagada com sucesso" });
     } catch (error: any) {
         console.error("Delete message error:", error);
-        
-        if (error.message?.includes("too old") || error.message?.includes("time limit")) {
-            return NextResponse.json({ status: false, message: "Cannot delete message older than 7 minutes", error: "Cannot delete message older than 7 minutes" }, { status: 400 });
-        }
-        
         return NextResponse.json({ status: false, message: "Failed to delete message", error: "Failed to delete message" }, { status: 500 });
     }
 }
 
-// PATCH: Edit a sent message
+// PATCH: Edit a sent message on WhatsApp and update DB
 export async function PATCH(
     request: NextRequest,
     { params }: { params: Promise<{ sessionId: string; jid: string; messageId: string }> }
@@ -64,8 +88,8 @@ export async function PATCH(
         const body = await request.json().catch(() => ({}));
         const { text } = body;
 
-        if (!text) {
-            return NextResponse.json({ status: false, message: "Text is required to edit message", error: "Bad Request" }, { status: 400 });
+        if (!text || !text.trim()) {
+            return NextResponse.json({ status: false, message: "Texto é obrigatório para editar a mensagem", error: "Bad Request" }, { status: 400 });
         }
 
         const canAccess = await canAccessSession(user.id, user.role, sessionId);
@@ -75,13 +99,14 @@ export async function PATCH(
 
         const instance = waManager.getInstance(sessionId);
         if (!instance?.socket) {
-            return NextResponse.json({ status: false, message: "Session not ready", error: "Session not ready" }, { status: 503 });
+            return NextResponse.json({ status: false, message: "Sessão do WhatsApp desconectada", error: "Session not ready" }, { status: 503 });
         }
 
         const decodedJid = decodeURIComponent(jid);
+        const trimmedText = text.trim();
 
         await instance.socket.sendMessage(decodedJid, {
-            text: text,
+            text: trimmedText,
             edit: {
                 remoteJid: decodedJid,
                 id: messageId,
@@ -89,9 +114,32 @@ export async function PATCH(
             }
         });
 
-        return NextResponse.json({ status: true, message: "Message edited successfully" });
+        const session = await prisma.session.findUnique({
+            where: { sessionId },
+            select: { id: true }
+        });
+
+        if (session) {
+            await prisma.message.updateMany({
+                where: { sessionId: session.id, keyId: messageId },
+                data: { content: trimmedText }
+            });
+        }
+
+        try {
+            const io = (global as any).io;
+            if (io) {
+                io.to(sessionId).emit("message.edit", {
+                    keyId: messageId,
+                    newContent: trimmedText,
+                    isEdited: true
+                });
+            }
+        } catch {}
+
+        return NextResponse.json({ status: true, message: "Mensagem editada com sucesso" });
     } catch (error: any) {
         console.error("Edit message error:", error);
-        return NextResponse.json({ status: false, message: "Failed to edit message", error: error.message || "Failed to edit message" }, { status: 500 });
+        return NextResponse.json({ status: false, message: "Falha ao editar mensagem", error: error.message || "Failed to edit message" }, { status: 500 });
     }
 }

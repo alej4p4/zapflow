@@ -43,7 +43,10 @@ import {
     User,
     RefreshCw,
     Tag,
-    MessageCircle
+    MessageCircle,
+    Pencil,
+    Star,
+    Eye
 } from "lucide-react";
 import { LabelAssignPopover, LabelData } from "./label-assign-popover";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -71,7 +74,7 @@ import { globalChatListCache } from "./chat-list";
 
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
-import { sendChatMessage, sendMediaMessage, reactToChatMessage, sendChatPresence } from "@/app/dashboard/chat/actions";
+import { sendChatMessage, sendMediaMessage, reactToChatMessage, sendChatPresence, forwardChatMessage } from "@/app/dashboard/chat/actions";
 import { useSocket } from "./socket-context";
 import { chatCache, fetchOrGetChatMessages, type Message, type GroupParticipant } from "./chat-cache";
 
@@ -443,18 +446,24 @@ function ContextMenu({
     state,
     onClose,
     onReply,
+    onEdit,
     onDelete,
     onTogglePin,
+    onToggleStar,
     onForward,
-    isPinned
+    isPinned,
+    isStarred
 }: {
     state: ContextMenuState;
     onClose: () => void;
     onReply: (msg: Message) => void;
+    onEdit?: (msg: Message) => void;
     onDelete: (msg: Message) => void;
     onTogglePin: (msg: Message) => void;
+    onToggleStar?: (msg: Message) => void;
     onForward: (msg: Message) => void;
     isPinned: boolean;
+    isStarred?: boolean;
 }) {
     const ref = useRef<HTMLDivElement>(null);
     useEffect(() => {
@@ -477,23 +486,27 @@ function ContextMenu({
         onClose();
     };
 
+    const canEdit = state.msg.fromMe && state.msg.type === "TEXT" && !state.msg.keyId.startsWith("temp-");
+
     const items = [
         { label: "Responder", icon: CornerUpLeft, action: () => { onReply(state.msg); onClose(); } },
+        ...(canEdit && onEdit ? [{ label: "Editar mensagem", icon: Pencil, action: () => { onEdit(state.msg); onClose(); } }] : []),
         { label: "Encaminhar", icon: Forward, action: () => { onForward(state.msg); onClose(); } },
         { label: isPinned ? "Desafixar mensagem" : "Fixar mensagem", icon: Pin, action: () => { onTogglePin(state.msg); onClose(); } },
+        ...(onToggleStar ? [{ label: isStarred ? "Remover dos favoritos" : "Favoritar mensagem", icon: Star, action: () => { onToggleStar(state.msg); onClose(); } }] : []),
         { label: "Copiar texto", icon: Copy, action: handleCopy },
-        { label: "Excluir", icon: Trash2, action: () => { onDelete(state.msg); onClose(); }, dangerous: true },
+        { label: state.msg.fromMe ? "Apagar para todos" : "Excluir mensagem", icon: Trash2, action: () => { onDelete(state.msg); onClose(); }, dangerous: true },
         { label: "Informações", icon: Info, action: () => { toast.info(`Status: ${state.msg.status}\nHorário: ${new Date(state.msg.timestamp).toLocaleString("pt-BR")}`); onClose(); } },
     ];
 
     const style: React.CSSProperties = { position: "fixed", top: state.y, left: state.x, zIndex: 9999 };
     if (typeof window !== "undefined") {
-        if (state.x > window.innerWidth - 180) style.left = state.x - 180;
-        if (state.y > window.innerHeight - 200) style.top = state.y - 180;
+        if (state.x > window.innerWidth - 200) style.left = state.x - 200;
+        if (state.y > window.innerHeight - 260) style.top = state.y - 240;
     }
 
     return (
-        <div ref={ref} style={style} className="w-48 rounded-xl bg-popover/95 backdrop-blur-md border border-border/60 shadow-2xl py-1 animate-in fade-in zoom-in-95 origin-top-left">
+        <div ref={ref} style={style} className="w-52 rounded-xl bg-popover/95 backdrop-blur-md border border-border/60 shadow-2xl py-1 animate-in fade-in zoom-in-95 origin-top-left">
             {items.map((item, i) => (
                 <button
                     key={i}
@@ -503,7 +516,7 @@ function ContextMenu({
                         item.dangerous ? "text-red-500 hover:bg-red-500/10" : "text-foreground hover:bg-muted"
                     )}
                 >
-                    <item.icon className="h-4 w-4 shrink-0 text-muted-foreground" />
+                    <item.icon className={cn("h-4 w-4 shrink-0", item.dangerous ? "text-red-500" : "text-muted-foreground")} />
                     {item.label}
                 </button>
             ))}
@@ -577,12 +590,12 @@ function ForwardModal({ sessionId, message, onClose, onForwardComplete }: Forwar
         if (selectedJids.length === 0 || !message) return;
         setIsSending(true);
         try {
-            const content = message.content || "";
-            const promises = selectedJids.map(targetJid => {
-                return sendChatMessage(sessionId, targetJid, content);
+            const res = await forwardChatMessage(sessionId, selectedJids, {
+                content: message.content,
+                type: message.type,
+                mediaUrl: message.mediaUrl
             });
-            await Promise.allSettled(promises);
-            toast.success(`Mensagem encaminhada para ${selectedJids.length} conversa(s)!`);
+            toast.success(`Mensagem encaminhada para ${res?.count || selectedJids.length} conversa(s)!`);
             onForwardComplete?.();
             onClose();
         } catch (e: any) {
@@ -605,9 +618,16 @@ function ForwardModal({ sessionId, message, onClose, onForwardComplete }: Forwar
                 </DialogHeader>
 
                 {/* Message preview snippet */}
-                <div className="mx-4 my-2 p-2.5 rounded-lg bg-muted/60 border border-border/30 text-xs text-muted-foreground truncate border-l-4 border-l-[#00a884]">
-                    <span className="font-semibold text-foreground mr-1">Mensagem:</span>
-                    <span>{message.content || (message.type === "IMAGE" ? "📷 Imagem" : "📎 Mídia")}</span>
+                <div className="mx-4 my-2 p-2.5 rounded-lg bg-muted/60 border border-border/30 text-xs text-muted-foreground flex items-center gap-2.5 border-l-4 border-l-[#00a884]">
+                    {message.type === "IMAGE" && message.mediaUrl && (
+                        <img src={message.mediaUrl} alt="Preview" className="h-9 w-9 rounded object-cover shrink-0" />
+                    )}
+                    <div className="min-w-0 flex-1 truncate">
+                        <span className="font-semibold text-foreground mr-1">
+                            {message.type === "IMAGE" ? "📷 Foto:" : message.type === "VIDEO" ? "🎥 Vídeo:" : message.type === "AUDIO" ? "🎤 Áudio:" : message.type === "DOCUMENT" ? "📄 Documento:" : "Mensagem:"}
+                        </span>
+                        <span>{message.content || (message.type === "IMAGE" ? "Imagem" : message.type === "AUDIO" ? "Mensagem de voz" : "Arquivo de mídia")}</span>
+                    </div>
                 </div>
 
                 {/* Search input */}
@@ -736,6 +756,7 @@ function ChatInfoAndMediaModal({
     participants = [],
     sessionId,
     initialTab = "media",
+    starredIds = [],
     onPreviewMedia,
     onExportParticipants,
     onSendBroadcastToMembers
@@ -749,12 +770,13 @@ function ChatInfoAndMediaModal({
     messages: Message[];
     participants?: GroupParticipant[];
     sessionId: string;
-    initialTab?: "media" | "docs" | "audio" | "links" | "members";
+    initialTab?: "media" | "docs" | "audio" | "links" | "starred" | "members";
+    starredIds?: string[];
     onPreviewMedia: (src: string, caption?: string) => void;
     onExportParticipants?: () => void;
     onSendBroadcastToMembers?: () => void;
 }) {
-    const [tab, setTab] = useState<"media" | "docs" | "audio" | "links" | "members">(initialTab);
+    const [tab, setTab] = useState<"media" | "docs" | "audio" | "links" | "starred" | "members">(initialTab);
     const [participantSearch, setParticipantSearch] = useState("");
 
     useEffect(() => {
@@ -766,6 +788,7 @@ function ChatInfoAndMediaModal({
     const mediaMessages = messages.filter(m => (m.type === 'IMAGE' || m.type === 'VIDEO') && m.mediaUrl);
     const docMessages = messages.filter(m => m.type === 'DOCUMENT' && m.mediaUrl);
     const audioMessages = messages.filter(m => m.type === 'AUDIO' && m.mediaUrl);
+    const starredMessages = messages.filter(m => starredIds.includes(m.keyId));
 
     const linkItems: { url: string; text: string; timestamp: string }[] = [];
     const urlRegex = /(https?:\/\/[^\s]+)/gi;
@@ -883,6 +906,17 @@ function ChatInfoAndMediaModal({
                     >
                         <ExternalLink className="h-3.5 w-3.5" />
                         <span>Links ({linkItems.length})</span>
+                    </button>
+                    <button
+                        type="button"
+                        onClick={() => setTab("starred")}
+                        className={cn(
+                            "py-2.5 px-3 border-b-2 transition-colors cursor-pointer flex items-center gap-1.5",
+                            tab === "starred" ? "border-[#00a884] text-[#00a884] font-semibold" : "border-transparent text-muted-foreground hover:text-foreground"
+                        )}
+                    >
+                        <Star className="h-3.5 w-3.5 text-amber-500" />
+                        <span>Favoritas ({starredMessages.length})</span>
                     </button>
                     {isGroup && (
                         <button
@@ -1024,6 +1058,50 @@ function ChatInfoAndMediaModal({
                                         </div>
                                         <ExternalLink className="h-4 w-4 text-muted-foreground group-hover:text-foreground shrink-0" />
                                     </a>
+                                ))}
+                            </div>
+                        )
+                    )}
+
+                    {tab === "starred" && (
+                        starredMessages.length === 0 ? (
+                            <div className="py-12 text-center text-muted-foreground">
+                                <Star className="h-10 w-10 mx-auto opacity-30 mb-2 text-amber-500" />
+                                <p className="text-xs">Nenhuma mensagem favoritada nesta conversa.</p>
+                            </div>
+                        ) : (
+                            <div className="flex flex-col gap-2">
+                                {starredMessages.map(m => (
+                                    <div
+                                        key={m.keyId}
+                                        onClick={() => {
+                                            onClose();
+                                            setTimeout(() => {
+                                                const target = document.getElementById(`msg-${m.keyId}`);
+                                                if (target) {
+                                                    target.scrollIntoView({ behavior: "smooth", block: "center" });
+                                                    target.classList.add("bg-amber-500/20", "transition-colors", "duration-500");
+                                                    setTimeout(() => target.classList.remove("bg-amber-500/20"), 1500);
+                                                }
+                                            }, 120);
+                                        }}
+                                        className="p-3 rounded-xl bg-muted/30 border border-border/25 flex items-start justify-between gap-3 hover:bg-muted/50 transition-colors cursor-pointer"
+                                    >
+                                        <div className="flex-1 min-w-0">
+                                            <div className="flex items-center gap-1.5 mb-1">
+                                                <Star className="h-3 w-3 fill-amber-400 text-amber-400 shrink-0" />
+                                                <span className="text-[11px] font-semibold text-foreground truncate">
+                                                    {m.fromMe ? "Você" : (m.pushName || "Contato")}
+                                                </span>
+                                                <span className="text-[10px] text-muted-foreground">
+                                                    • {new Date(m.timestamp).toLocaleDateString("pt-BR")} às {new Date(m.timestamp).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}
+                                                </span>
+                                            </div>
+                                            <p className="text-xs text-foreground/90 whitespace-pre-wrap line-clamp-3">
+                                                {m.content || `[${m.type}]`}
+                                            </p>
+                                        </div>
+                                    </div>
                                 ))}
                             </div>
                         )
@@ -1277,6 +1355,45 @@ function showDesktopNotification(title: string, body: string, icon?: string) {
     }
 }
 
+const EMOJI_CATEGORIES = [
+    {
+        id: "freq",
+        label: "Frequentes",
+        emojis: ["👍", "✅", "🙏", "🚛", "📦", "📍", "⚠️", "🚨", "😀", "😂", "❤️", "🤝", "🔥", "👏", "💰", "📄", "⏰", "📞", "👀", "🚀"]
+    },
+    {
+        id: "logistics",
+        label: "Frota & Operação",
+        emojis: ["🚛", "🚚", "🚜", "📦", "📍", "🗺️", "⛽", "🛠️", "⚠️", "🚨", "🛑", "✅", "❌", "📄", "📋", "📊", "💰", "💳", "🧾", "🔐", "🏢", "🏭", "🌾", "🌽", "🌱", "⚖️", "⏱️", "📅", "📲", "📞"]
+    },
+    {
+        id: "faces",
+        label: "Rostos & Gestos",
+        emojis: ["😀", "😃", "😄", "😁", "😅", "😂", "🤣", "😊", "😇", "🙂", "😉", "😌", "😍", "😎", "🤩", "🤔", "🤨", "😐", "🙄", "😮", "😢", "😭", "😤", "👍", "👎", "👌", "✌️", "🤞", "🙏", "🤝", "👏", "🙌", "💪", "👋", "🫡"]
+    },
+    {
+        id: "symbols",
+        label: "Símbolos",
+        emojis: ["❤️", "🧡", "💛", "💚", "💙", "💜", "🖤", "💯", "💥", "✨", "⭐", "🌟", "⚡", "🔥", "🎉", "🎊", "📌", "📎", "🔗", "🔍", "📢", "🔔", "🔕", "🟢", "🟡", "🔴", "🔵", "⬆️", "➡️", "⬇️"]
+    }
+];
+
+function persistChatDraft(sessionId: string | undefined, jid: string, text: string) {
+    if (typeof window === "undefined" || !sessionId || !jid) return;
+    try {
+        const key = `zapflow_drafts_${sessionId}`;
+        const raw = localStorage.getItem(key);
+        const map: Record<string, string> = raw ? JSON.parse(raw) : {};
+        if (text.trim()) {
+            map[jid] = text;
+        } else {
+            delete map[jid];
+        }
+        localStorage.setItem(key, JSON.stringify(map));
+        window.dispatchEvent(new CustomEvent("zapflow:draft-changed", { detail: { jid, text } }));
+    } catch {}
+}
+
 // ─── Isolated Chat Input Bar (Local state = 120 FPS typing with zero message re-renders) ───
 function ChatInputBar({
     onSend,
@@ -1302,6 +1419,7 @@ function ChatInputBar({
     participants?: GroupParticipant[];
 }) {
     const [input, setInput] = useState("");
+    const [emojiTab, setEmojiTab] = useState<string>("freq");
     const inputRef = useRef<HTMLTextAreaElement>(null);
     const lastTypingSentRef = useRef<number>(0);
 
@@ -1353,6 +1471,7 @@ function ChatInputBar({
         }
         const nextInput = `${before}${r.text}${after.startsWith(" ") ? after : (after ? " " + after : "")}`;
         setInput(nextInput);
+        persistChatDraft(sessionId, jid, nextInput);
         setQuickReplyQuery(null);
         setQuickReplyCursorIdx(-1);
 
@@ -1360,6 +1479,22 @@ function ChatInputBar({
             if (inputRef.current) {
                 inputRef.current.focus();
                 const pos = before.length + r.text.length;
+                inputRef.current.setSelectionRange(pos, pos);
+            }
+        }, 10);
+    };
+
+    const handleInsertEmoji = (emoji: string) => {
+        const el = inputRef.current;
+        const start = el?.selectionStart ?? input.length;
+        const end = el?.selectionEnd ?? input.length;
+        const nextInput = input.slice(0, start) + emoji + input.slice(end);
+        setInput(nextInput);
+        persistChatDraft(sessionId, jid, nextInput);
+        setTimeout(() => {
+            if (inputRef.current) {
+                inputRef.current.focus();
+                const pos = start + emoji.length;
                 inputRef.current.setSelectionRange(pos, pos);
             }
         }, 10);
@@ -1486,6 +1621,7 @@ function ChatInputBar({
         const mentionTag = `@${p.name} `;
         const nextInput = `${before}${mentionTag}${after}`;
         setInput(nextInput);
+        persistChatDraft(sessionId, jid, nextInput);
         setMentionQuery(null);
         setMentionCursorIdx(-1);
 
@@ -1505,17 +1641,29 @@ function ChatInputBar({
         }
     }, [replyingTo]);
 
-    // Focus on jid change & reset
+    // Focus on jid change & load saved per-chat draft (#C13)
     useEffect(() => {
         inputRef.current?.focus();
         setMentionQuery(null);
         setQuickReplyQuery(null);
         cancelRecording();
-    }, [jid]);
+        if (typeof window !== "undefined" && sessionId && jid) {
+            try {
+                const raw = localStorage.getItem(`zapflow_drafts_${sessionId}`);
+                const map: Record<string, string> = raw ? JSON.parse(raw) : {};
+                setInput(map[jid] || "");
+            } catch {
+                setInput("");
+            }
+        } else {
+            setInput("");
+        }
+    }, [jid, sessionId]);
 
     const handleInputChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
         const val = e.target.value;
         setInput(val);
+        persistChatDraft(sessionId, jid, val);
         const el = e.target;
         el.style.height = "auto";
         el.style.height = Math.min(el.scrollHeight, 120) + "px";
@@ -1576,6 +1724,7 @@ function ChatInputBar({
         }
 
         setInput("");
+        persistChatDraft(sessionId, jid, "");
         setMentionQuery(null);
         setQuickReplyQuery(null);
         if (inputRef.current) {
@@ -1822,15 +1971,51 @@ function ChatInputBar({
                 </div>
             ) : (
                 <div className="flex items-end gap-2 max-w-4xl mx-auto">
-                    {/* Emoji Button */}
-                    <Button
-                        variant="ghost"
-                        size="icon"
-                        className="h-10 w-10 rounded-full shrink-0 text-[#54656f] dark:text-[#8696a0] hover:text-foreground hover:bg-black/5 dark:hover:bg-white/10"
-                        title="Emojis"
-                    >
-                        <Smile className="h-5 w-5" />
-                    </Button>
+                    {/* Functional WhatsApp Emoji Picker (#C9) */}
+                    <Popover>
+                        <PopoverTrigger asChild>
+                            <Button
+                                type="button"
+                                variant="ghost"
+                                size="icon"
+                                className="h-10 w-10 rounded-full shrink-0 text-[#54656f] dark:text-[#8696a0] hover:text-foreground hover:bg-black/5 dark:hover:bg-white/10 cursor-pointer"
+                                title="Emojis"
+                            >
+                                <Smile className="h-5 w-5" />
+                            </Button>
+                        </PopoverTrigger>
+                        <PopoverContent className="w-72 p-2.5 rounded-2xl bg-white dark:bg-[#233138] border border-border/40 shadow-2xl" side="top" align="start">
+                            <div className="flex items-center gap-1 border-b border-border/15 pb-1.5 mb-2 overflow-x-auto no-scrollbar">
+                                {EMOJI_CATEGORIES.map(cat => (
+                                    <button
+                                        key={cat.id}
+                                        type="button"
+                                        onClick={() => setEmojiTab(cat.id)}
+                                        className={cn(
+                                            "px-2 py-1 rounded-lg text-[10.5px] font-semibold whitespace-nowrap transition-colors cursor-pointer",
+                                            emojiTab === cat.id
+                                                ? "bg-[#00a884]/15 text-[#00a884] dark:text-[#25d366]"
+                                                : "text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5"
+                                        )}
+                                    >
+                                        {cat.label}
+                                    </button>
+                                ))}
+                            </div>
+                            <div className="grid grid-cols-6 gap-1 max-h-48 overflow-y-auto styled-scrollbar p-0.5">
+                                {(EMOJI_CATEGORIES.find(c => c.id === emojiTab)?.emojis || EMOJI_CATEGORIES[0].emojis).map(emoji => (
+                                    <button
+                                        key={emoji}
+                                        type="button"
+                                        onClick={() => handleInsertEmoji(emoji)}
+                                        className="h-9 w-9 rounded-lg flex items-center justify-center text-lg hover:bg-black/5 dark:hover:bg-white/10 hover:scale-110 transition-transform cursor-pointer select-none"
+                                    >
+                                        {emoji}
+                                    </button>
+                                ))}
+                            </div>
+                        </PopoverContent>
+                    </Popover>
 
                     {/* Attachment Popover */}
                     <Popover>
@@ -1978,8 +2163,10 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
     const [autoScroll, setAutoScroll] = useState(true);
     const [newMsgBadge, setNewMsgBadge] = useState(false);
 
-    // Delete confirmation
+    // Delete & Edit confirmation (#C8)
     const [deleteConfirmMsg, setDeleteConfirmMsg] = useState<Message | null>(null);
+    const [editingMessage, setEditingMessage] = useState<{ keyId: string; text: string } | null>(null);
+    const [isSavingEdit, setIsSavingEdit] = useState(false);
 
     // Reply state
     const [replyingTo, setReplyingTo] = useState<Message | null>(null);
@@ -1998,7 +2185,7 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
     // In-chat message search (WhatsApp Web style)
     const [isSearching, setIsSearching] = useState(false);
     const [isChatInfoModalOpen, setIsChatInfoModalOpen] = useState(false);
-    const [chatInfoModalTab, setChatInfoModalTab] = useState<"media" | "docs" | "audio" | "links" | "members">("media");
+    const [chatInfoModalTab, setChatInfoModalTab] = useState<"media" | "docs" | "audio" | "links" | "starred" | "members">("media");
     const [searchQuery, setSearchQuery] = useState("");
     const [searchMatchIdx, setSearchMatchIdx] = useState(0);
     const searchInputRef = useRef<HTMLInputElement>(null);
@@ -2047,8 +2234,9 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
         return () => window.removeEventListener("keydown", handleKeyDown);
     }, []);
 
-    // Pinned Message state (persisted per sessionId:jid in localStorage)
+    // Pinned Message & Starred Messages state (persisted per sessionId:jid in localStorage) (#C12)
     const [pinnedMessageId, setPinnedMessageId] = useState<string | null>(null);
+    const [starredIds, setStarredIds] = useState<string[]>([]);
 
     // Forward message modal state
     const [forwardingMessage, setForwardingMessage] = useState<Message | null>(null);
@@ -2091,7 +2279,21 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
         try {
             const saved = localStorage.getItem(`zapflow_pinned_msg_${sessionId}_${jid}`);
             setPinnedMessageId(saved || null);
+            const rawStars = localStorage.getItem(`zapflow_starred_${sessionId}_${jid}`);
+            setStarredIds(rawStars ? JSON.parse(rawStars) : []);
         } catch {}
+    }, [sessionId, jid]);
+
+    const handleToggleStar = useCallback((msg: Message) => {
+        setStarredIds(prev => {
+            const isStarred = prev.includes(msg.keyId);
+            const next = isStarred ? prev.filter(id => id !== msg.keyId) : [...prev, msg.keyId];
+            try {
+                localStorage.setItem(`zapflow_starred_${sessionId}_${jid}`, JSON.stringify(next));
+            } catch {}
+            toast.success(isStarred ? "Mensagem removida dos favoritos" : "⭐ Mensagem adicionada aos favoritos!");
+            return next;
+        });
     }, [sessionId, jid]);
 
     const pinnedMessage = useMemo(() => {
@@ -2338,6 +2540,12 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
         };
         socket.on("message.edit", editHandler);
 
+        const deletedHandler = (data: { keyId: string; remoteJid?: string }) => {
+            if (!data?.keyId) return;
+            setMessages(prev => prev.filter(m => m.keyId !== data.keyId));
+        };
+        socket.on("message.deleted", deletedHandler);
+
         const presenceHandler = (data: { id: string; presences: Record<string, { lastKnownPresence?: string }> }) => {
             if (!data?.id || !data?.presences) return;
             const targetJid = jid.endsWith("@c.us") ? jid.replace("@c.us", "@s.whatsapp.net") : jid;
@@ -2377,6 +2585,7 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
             socket.off("message.status", statusHandler);
             socket.off("message.reaction", reactionHandler);
             socket.off("message.edit", editHandler);
+            socket.off("message.deleted", deletedHandler);
             socket.off("presence.update", presenceHandler);
         };
     }, [sessionId, jid, getSocket, joinSession]);
@@ -2806,10 +3015,13 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
                     state={contextMenu}
                     onClose={() => setContextMenu(null)}
                     onReply={(msg) => { setReplyingTo(msg); scrollToBottom(true); }}
+                    onEdit={(msg) => setEditingMessage({ keyId: msg.keyId, text: msg.content || "" })}
                     onDelete={(msg) => setDeleteConfirmMsg(msg)}
                     onTogglePin={handleTogglePin}
+                    onToggleStar={handleToggleStar}
                     onForward={msg => setForwardingMessage(msg)}
                     isPinned={pinnedMessageId === contextMenu.msg.keyId}
+                    isStarred={starredIds.includes(contextMenu.msg.keyId)}
                 />
             )}
 
@@ -2821,13 +3033,80 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
                 </div>
             )}
 
-            {/* Delete confirmation dialog */}
+            {/* Edit sent message dialog (#C8) */}
+            <Dialog open={!!editingMessage} onOpenChange={(open) => { if (!open) setEditingMessage(null); }}>
+                <DialogContent className="max-w-md rounded-2xl bg-white dark:bg-[#202c33] border border-border/40 shadow-2xl">
+                    <DialogHeader>
+                        <DialogTitle className="text-base font-semibold flex items-center gap-2 text-foreground">
+                            <Pencil className="h-4.5 w-4.5 text-[#00a884]" />
+                            <span>Editar mensagem enviada</span>
+                        </DialogTitle>
+                    </DialogHeader>
+                    <div className="py-2">
+                        <textarea
+                            value={editingMessage?.text || ""}
+                            onChange={(e) => setEditingMessage(prev => prev ? { ...prev, text: e.target.value } : null)}
+                            onKeyDown={(e) => {
+                                if (e.key === "Enter" && !e.shiftKey) {
+                                    e.preventDefault();
+                                    const btn = document.getElementById("zapflow-confirm-edit-btn");
+                                    btn?.click();
+                                }
+                            }}
+                            rows={3}
+                            className="w-full rounded-xl bg-muted/40 dark:bg-[#2a3942] border border-border/40 px-3.5 py-2.5 text-sm text-foreground outline-none focus:border-[#00a884] resize-none"
+                            placeholder="Digite o novo texto da mensagem..."
+                            autoFocus
+                        />
+                    </div>
+                    <div className="flex justify-end gap-2">
+                        <Button variant="ghost" size="sm" onClick={() => setEditingMessage(null)} disabled={isSavingEdit}>
+                            Cancelar
+                        </Button>
+                        <Button
+                            id="zapflow-confirm-edit-btn"
+                            size="sm"
+                            disabled={!editingMessage?.text.trim() || isSavingEdit}
+                            className="bg-[#00a884] hover:bg-[#00a884]/90 text-white"
+                            onClick={async () => {
+                                if (!editingMessage || !editingMessage.text.trim()) return;
+                                const { keyId, text } = editingMessage;
+                                const cleanText = text.trim();
+                                setIsSavingEdit(true);
+                                try {
+                                    const res = await fetch(`/api/messages/${sessionId}/${encodeURIComponent(jid)}/${encodeURIComponent(keyId)}`, {
+                                        method: "PATCH",
+                                        headers: { "Content-Type": "application/json" },
+                                        body: JSON.stringify({ text: cleanText })
+                                    });
+                                    if (!res.ok) throw new Error("Falha ao editar mensagem");
+                                    setMessages(prev => prev.map(m => m.keyId === keyId ? { ...m, content: cleanText, isEdited: true } : m));
+                                    toast.success("Mensagem editada com sucesso!");
+                                    setEditingMessage(null);
+                                } catch (err: any) {
+                                    toast.error(err?.message || "Erro ao editar a mensagem");
+                                } finally {
+                                    setIsSavingEdit(false);
+                                }
+                            }}
+                        >
+                            Salvar alteração
+                        </Button>
+                    </div>
+                </DialogContent>
+            </Dialog>
+
+            {/* Delete confirmation dialog (#C8) */}
             <AlertDialog open={!!deleteConfirmMsg} onOpenChange={(open) => { if (!open) setDeleteConfirmMsg(null); }}>
                 <AlertDialogContent>
                     <AlertDialogHeader>
-                        <AlertDialogTitle>Excluir mensagem?</AlertDialogTitle>
+                        <AlertDialogTitle>
+                            {deleteConfirmMsg?.fromMe ? "Apagar mensagem para todos?" : "Excluir mensagem?"}
+                        </AlertDialogTitle>
                         <AlertDialogDescription>
-                            Isso removerá a mensagem selecionada. Esta ação não pode ser desfeita.
+                            {deleteConfirmMsg?.fromMe
+                                ? "Esta mensagem será revogada no WhatsApp de todos os participantes e removida do histórico."
+                                : "Isso removerá a mensagem selecionada do seu histórico local."}
                         </AlertDialogDescription>
                     </AlertDialogHeader>
                     <AlertDialogFooter>
@@ -2837,16 +3116,16 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
                             onClick={() => {
                                 const msg = deleteConfirmMsg;
                                 if (!msg) return;
-                                fetch(`/api/messages/${sessionId}/${jid}/${msg.keyId}`, { method: "DELETE" })
+                                fetch(`/api/messages/${sessionId}/${encodeURIComponent(jid)}/${encodeURIComponent(msg.keyId)}`, { method: "DELETE" })
                                     .then(() => {
                                         setMessages(p => p.filter(m => m.keyId !== msg.keyId));
-                                        toast.success("Mensagem excluída");
+                                        toast.success(msg.fromMe ? "Mensagem apagada para todos" : "Mensagem excluída");
                                     })
                                     .catch(() => toast.error("Falha ao excluir a mensagem"));
                                 setDeleteConfirmMsg(null);
                             }}
                         >
-                            Excluir
+                            {deleteConfirmMsg?.fromMe ? "Apagar para todos" : "Excluir"}
                         </AlertDialogAction>
                     </AlertDialogFooter>
                 </AlertDialogContent>
@@ -2969,6 +3248,21 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
                         variant="ghost"
                         size="icon"
                         className={cn(
+                            "h-9 w-9 rounded-full hover:bg-black/5 dark:hover:bg-white/10 cursor-pointer relative",
+                            starredIds.length > 0 && "text-amber-500"
+                        )}
+                        title={`Mensagens favoritas (${starredIds.length})`}
+                        onClick={() => {
+                            setChatInfoModalTab("starred");
+                            setIsChatInfoModalOpen(true);
+                        }}
+                    >
+                        <Star className={cn("h-4 w-4", starredIds.length > 0 && "fill-amber-400 text-amber-400")} />
+                    </Button>
+                    <Button
+                        variant="ghost"
+                        size="icon"
+                        className={cn(
                             "h-9 w-9 rounded-full hover:bg-black/5 dark:hover:bg-white/10 cursor-pointer",
                             isSearching && "bg-[#00a884]/15 text-[#00a884]"
                         )}
@@ -3027,6 +3321,14 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
                             >
                                 <ImageIcon className="h-4 w-4 text-blue-500" />
                                 <span>Mídias, links e docs</span>
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() => { setChatInfoModalTab("starred"); setIsChatInfoModalOpen(true); }}
+                                className="w-full flex items-center gap-2.5 px-3 py-2 text-xs font-medium text-foreground rounded-xl hover:bg-black/5 dark:hover:bg-white/10 transition-colors text-left cursor-pointer"
+                            >
+                                <Star className="h-4 w-4 text-amber-500" />
+                                <span>Mensagens favoritas ({starredIds.length})</span>
                             </button>
                             <LabelAssignPopover sessionId={sessionId} jid={jid}>
                                 <button
@@ -3274,13 +3576,33 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
                                     {/* Authentic WhatsApp Bubble */}
                                     <div
                                         className={cn(
-                                            "flex flex-col max-w-[85%] sm:max-w-[70%] px-3 py-1.5 shadow-[0_1px_0.5px_rgba(11,20,26,0.13)] cursor-context-menu relative text-[14.2px] leading-[19px]",
+                                            "flex flex-col max-w-[85%] sm:max-w-[70%] px-3 py-1.5 shadow-[0_1px_0.5px_rgba(11,20,26,0.13)] cursor-context-menu relative text-[14.2px] leading-[19px] group/bubble",
                                             msg.fromMe
                                                 ? "bg-[#d9fdd3] dark:bg-[#005c4b] text-[#111b21] dark:text-[#e9edef] rounded-xl rounded-tr-xs ml-auto"
                                                 : "bg-white dark:bg-[#202c33] text-[#111b21] dark:text-[#e9edef] rounded-xl rounded-tl-xs mr-auto"
                                         )}
                                         onContextMenu={(e) => handleContextMenu(e, msg)}
+                                        onDoubleClick={() => { setReplyingTo(msg); scrollToBottom(true); }}
                                     >
+                                        {/* WhatsApp Web Hover Menu Chevron in top-right corner (#C12) */}
+                                        <button
+                                            type="button"
+                                            onClick={(e) => {
+                                                e.stopPropagation();
+                                                const rect = e.currentTarget.getBoundingClientRect();
+                                                setContextMenu({ x: rect.left, y: rect.bottom + 4, msg });
+                                            }}
+                                            className={cn(
+                                                "absolute top-1 right-1 z-10 h-5 w-5 rounded-full flex items-center justify-center opacity-0 group-hover/bubble:opacity-100 transition-opacity cursor-pointer shadow-xs",
+                                                msg.fromMe
+                                                    ? "bg-[#d9fdd3]/95 dark:bg-[#005c4b]/95 text-[#54656f] dark:text-[#aebac1]"
+                                                    : "bg-white/95 dark:bg-[#202c33]/95 text-[#54656f] dark:text-[#aebac1]"
+                                            )}
+                                            title="Mais opções da mensagem"
+                                        >
+                                            <ChevronDown className="h-3.5 w-3.5" />
+                                        </button>
+
                                         {/* Group sender resolved name with WhatsApp participant color */}
                                         {!msg.fromMe && isGroup && (() => {
                                             const sJid = msg.senderJid || "";
@@ -3407,29 +3729,81 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
                                             </div>
                                         )}
 
-                                        {/* DOCUMENT */}
-                                        {msg.type !== 'TEXT' && msg.type !== 'IMAGE' && msg.type !== 'STICKER' && msg.type !== 'VIDEO' && msg.type !== 'AUDIO' && (
-                                            <div className={cn("flex items-center justify-between gap-2 py-2 px-3 rounded-lg mb-1", msg.fromMe ? "bg-black/5 dark:bg-black/20" : "bg-black/5 dark:bg-white/5")}>
-                                                <div className="flex items-center gap-2.5 truncate min-w-0">
-                                                    <FileText className="h-4 w-4 shrink-0 text-[#00a884]" />
-                                                    <span className="text-xs font-medium truncate">
-                                                        {({ TEXT: "Mensagem", IMAGE: "Imagem", VIDEO: "Vídeo", AUDIO: "Áudio", DOCUMENT: "Documento", STICKER: "Figurinha", LOCATION: "Localização", CONTACT: "Contato" }[msg.type] || "Documento")}
-                                                    </span>
+                                        {/* DOCUMENT (WhatsApp Web Rich File Card #C10) */}
+                                        {msg.type !== 'TEXT' && msg.type !== 'IMAGE' && msg.type !== 'STICKER' && msg.type !== 'VIDEO' && msg.type !== 'AUDIO' && (() => {
+                                            const rawFileName = (msg.type === 'DOCUMENT' && msg.content ? msg.content.trim() : "") ||
+                                                ({ LOCATION: "Localização", CONTACT: "Contato" }[msg.type] || `DOCUMENTO-${msg.keyId.slice(-6)}.pdf`);
+                                            const extMatch = rawFileName.match(/\.([a-zA-Z0-9]{2,5})$/);
+                                            const ext = (extMatch ? extMatch[1] : (msg.mediaUrl?.split('.').pop() || "DOC")).toUpperCase().slice(0, 4);
+                                            const badgeColor =
+                                                ext === "PDF"
+                                                    ? "bg-red-500 text-white"
+                                                    : (ext === "XLS" || ext === "XLSX" || ext === "CSV")
+                                                        ? "bg-emerald-600 text-white"
+                                                        : (ext === "DOC" || ext === "DOCX")
+                                                            ? "bg-blue-600 text-white"
+                                                            : (ext === "XML" || ext === "ZIP" || ext === "RAR")
+                                                                ? "bg-amber-600 text-white"
+                                                                : "bg-[#00a884] text-white";
+                                            return (
+                                                <div
+                                                    className={cn(
+                                                        "flex items-center justify-between gap-3 py-2.5 px-3 rounded-xl mb-1.5 min-w-[230px] border border-black/5 dark:border-white/10 select-none",
+                                                        msg.fromMe ? "bg-black/5 dark:bg-black/25" : "bg-black/5 dark:bg-white/5"
+                                                    )}
+                                                >
+                                                    <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                                                        <div className={cn("h-10 w-9 rounded-lg flex flex-col items-center justify-center shrink-0 font-bold text-[9.5px] tracking-wider shadow-xs", badgeColor)}>
+                                                            <FileText className="h-4 w-4 mb-0.5 opacity-90" />
+                                                            <span>{ext}</span>
+                                                        </div>
+                                                        <div className="min-w-0 flex-1">
+                                                            <p className="text-xs font-semibold text-foreground truncate" title={rawFileName}>
+                                                                {rawFileName}
+                                                            </p>
+                                                            <span className="text-[10px] text-muted-foreground uppercase tracking-wide">
+                                                                Arquivo {ext} • WhatsApp
+                                                            </span>
+                                                        </div>
+                                                    </div>
+                                                    {msg.mediaUrl && (
+                                                        <div className="flex items-center gap-1 shrink-0">
+                                                            <a
+                                                                href={msg.mediaUrl}
+                                                                target="_blank"
+                                                                rel="noopener noreferrer"
+                                                                onClick={(e) => e.stopPropagation()}
+                                                                className="h-8 w-8 rounded-full flex items-center justify-center text-muted-foreground hover:text-[#00a884] hover:bg-black/5 dark:hover:bg-white/10 transition-colors"
+                                                                title="Abrir / Visualizar documento"
+                                                            >
+                                                                <Eye className="h-4 w-4" />
+                                                            </a>
+                                                            <Button
+                                                                size="icon"
+                                                                variant="ghost"
+                                                                className="h-8 w-8 rounded-full shrink-0 text-muted-foreground hover:text-foreground"
+                                                                onClick={() => handleDownload(msg.mediaUrl!, rawFileName)}
+                                                                title="Baixar arquivo"
+                                                            >
+                                                                <Download className="h-4 w-4" />
+                                                            </Button>
+                                                        </div>
+                                                    )}
                                                 </div>
-                                                {msg.mediaUrl && (
-                                                    <Button size="icon" variant="ghost" className="h-7 w-7 rounded-full shrink-0" onClick={() => handleDownload(msg.mediaUrl!, `${msg.type}-${msg.keyId}`)}>
-                                                        <Download className="h-3.5 w-3.5" />
-                                                    </Button>
-                                                )}
-                                            </div>
-                                        )}
+                                            );
+                                        })()}
 
                                         {/* Text content with mentions & Timestamp + status checks */}
                                         <div className="flex flex-wrap items-end justify-end gap-x-2 gap-y-0.5">
-                                            <span className="flex-1 break-words whitespace-pre-wrap text-[14.2px]">
-                                                {renderMessageContent(msg.content, contactMap, searchQuery)}
-                                            </span>
+                                            {msg.type !== 'DOCUMENT' && (
+                                                <span className="flex-1 break-words whitespace-pre-wrap text-[14.2px]">
+                                                    {renderMessageContent(msg.content, contactMap, searchQuery)}
+                                                </span>
+                                            )}
                                             <div className="inline-flex items-center gap-1 shrink-0 ml-auto select-none pt-0.5">
+                                                {starredIds.includes(msg.keyId) && (
+                                                    <Star className="h-3 w-3 fill-amber-400 text-amber-400 shrink-0 mr-0.5" />
+                                                )}
                                                 {msg.isEdited && (
                                                     <span className="text-[10px] italic text-[#667781] dark:text-[#8696a0] select-none mr-0.5">
                                                         editada
@@ -3542,6 +3916,7 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
                 participants={participantsList}
                 sessionId={sessionId}
                 initialTab={chatInfoModalTab}
+                starredIds={starredIds}
                 onPreviewMedia={(src, caption) => {
                     setIsChatInfoModalOpen(false);
                     setLightboxMedia({ src, caption });

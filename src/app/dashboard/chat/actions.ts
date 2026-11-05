@@ -5,6 +5,9 @@ import { ChatService } from "@/modules/whatsapp/chat.service";
 import { getAuthenticatedUserForAction } from "@/lib/server-action-auth";
 import { canAccessSession } from "@/lib/api-auth";
 import { waManager } from "@/modules/whatsapp/manager";
+import { mediaDir } from "@/lib/paths";
+import { readFile } from "fs/promises";
+import path from "path";
 
 const CHAT_PAGE_SIZE = parseInt(process.env.NEXT_PUBLIC_CHAT_PAGE_SIZE || "300", 10);
 
@@ -190,6 +193,96 @@ export async function sendChatPresence(sessionId: string, jid: string, presence:
     } catch {
         return { success: false };
     }
+}
+
+// Forward a message (text or media: image, video, audio, document, sticker) to multiple recipients (#C11)
+export async function forwardChatMessage(
+    sessionId: string,
+    targetJids: string[],
+    msg: { content?: string; type: string; mediaUrl?: string }
+) {
+    const user = await getAuthenticatedUserForAction();
+    if (!user) throw new Error("Unauthorized");
+
+    const canAccess = await canAccessSession(user.id, user.role, sessionId);
+    if (!canAccess) throw new Error("Forbidden");
+
+    if (!targetJids || targetJids.length === 0) {
+        throw new Error("Selecione pelo menos um destinatário");
+    }
+
+    const msgType = (msg.type || "TEXT").toUpperCase();
+    const isMedia = msgType !== "TEXT" && !!msg.mediaUrl;
+
+    let mediaBuffer: Buffer | null = null;
+    let mimeType = "application/octet-stream";
+    let fileName = msg.content || `arquivo-${Date.now()}`;
+
+    if (isMedia && msg.mediaUrl) {
+        try {
+            if (msg.mediaUrl.startsWith("data:")) {
+                const match = msg.mediaUrl.match(/^data:([^;]+);base64,(.+)$/);
+                if (match) {
+                    mimeType = match[1];
+                    mediaBuffer = Buffer.from(match[2], "base64");
+                }
+            } else if (msg.mediaUrl.startsWith("/api/media/") || msg.mediaUrl.startsWith("/media/")) {
+                const baseName = path.basename(msg.mediaUrl);
+                const fullPath = path.join(mediaDir, baseName);
+                mediaBuffer = await readFile(fullPath);
+                const ext = path.extname(baseName).toLowerCase().replace(".", "");
+                const extMimeMap: Record<string, string> = {
+                    jpg: "image/jpeg",
+                    jpeg: "image/jpeg",
+                    png: "image/png",
+                    webp: "image/webp",
+                    mp4: "video/mp4",
+                    mp3: "audio/mp3",
+                    ogg: "audio/ogg; codecs=opus",
+                    pdf: "application/pdf",
+                    xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    xls: "application/vnd.ms-excel",
+                    csv: "text/csv",
+                    doc: "application/msword",
+                    docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                };
+                mimeType = extMimeMap[ext] || "application/octet-stream";
+                if (!msg.content) fileName = baseName;
+            } else if (msg.mediaUrl.startsWith("http")) {
+                const res = await fetch(msg.mediaUrl);
+                if (res.ok) {
+                    mimeType = res.headers.get("content-type") || mimeType;
+                    mediaBuffer = Buffer.from(await res.arrayBuffer());
+                }
+            }
+        } catch (err) {
+            console.error("Error loading media buffer for forward:", err);
+        }
+    }
+
+    const mappedSendType =
+        msgType === "IMAGE" ? "image" :
+        msgType === "VIDEO" ? "video" :
+        msgType === "AUDIO" ? "audio" :
+        msgType === "STICKER" ? "sticker" : "document";
+
+    for (const targetJid of targetJids) {
+        if (mediaBuffer) {
+            await ChatService.sendMediaMessage(
+                sessionId,
+                targetJid,
+                mediaBuffer,
+                mappedSendType,
+                mimeType,
+                fileName,
+                msgType === "DOCUMENT" ? "" : (msg.content || "")
+            );
+        } else {
+            await ChatService.sendTextMessage(sessionId, targetJid, { text: msg.content || "" });
+        }
+    }
+
+    return { success: true, count: targetJids.length };
 }
 
 // React to chat message

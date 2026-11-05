@@ -28,7 +28,9 @@ import {
     ChevronDown,
     Settings,
     Volume2,
-    VolumeX
+    VolumeX,
+    Archive,
+    ArchiveRestore
 } from "lucide-react";
 import { LabelAssignPopover, LabelData, ManageLabelsModal } from "./label-assign-popover";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -153,6 +155,7 @@ interface CtxMenuState {
     name: string;
     profilePic?: string | null;
     isPinned: boolean;
+    isArchived: boolean;
     unreadCount?: number;
 }
 
@@ -161,12 +164,14 @@ function ChatContextMenu({
     onClose,
     onSelect,
     onTogglePin,
+    onToggleArchive,
     onToggleRead
 }: {
     state: CtxMenuState;
     onClose: () => void;
     onSelect: (jid: string, name?: string, profilePic?: string | null) => void;
     onTogglePin: (jid: string) => void;
+    onToggleArchive: (jid: string) => void;
     onToggleRead: (jid: string, isUnread: boolean) => void;
 }) {
     const ref = useRef<HTMLDivElement>(null);
@@ -189,6 +194,11 @@ function ChatContextMenu({
             action: () => { onTogglePin(state.jid); onClose(); }
         },
         {
+            label: state.isArchived ? "Desarquivar conversa" : "Arquivar conversa",
+            icon: state.isArchived ? ArchiveRestore : Archive,
+            action: () => { onToggleArchive(state.jid); onClose(); }
+        },
+        {
             label: isUnread ? "Marcar como lida" : "Marcar como não lida",
             icon: isUnread ? CheckCheck : Eye,
             action: () => { onToggleRead(state.jid, isUnread); onClose(); }
@@ -206,7 +216,7 @@ function ChatContextMenu({
     const style: React.CSSProperties = { position: "fixed", top: state.y, left: state.x, zIndex: 9999 };
     if (typeof window !== "undefined") {
         if (state.x > window.innerWidth - 190) style.left = state.x - 190;
-        if (state.y > window.innerHeight - 150) style.top = state.y - 150;
+        if (state.y > window.innerHeight - 190) style.top = state.y - 190;
     }
 
     return (
@@ -226,9 +236,12 @@ function ChatRow({
     chat,
     isSelected,
     isPinned,
+    isArchived,
+    draftText,
     presence,
     onSelect,
     onTogglePin,
+    onToggleArchive,
     onToggleRead,
     sessionId,
     labelDots
@@ -236,9 +249,12 @@ function ChatRow({
     chat: ChatContact;
     isSelected: boolean;
     isPinned: boolean;
+    isArchived: boolean;
+    draftText?: string;
     presence?: { status: "composing" | "recording" };
     onSelect: (jid: string, name?: string, profilePic?: string | null) => void;
     onTogglePin: (jid: string, e?: React.MouseEvent) => void;
+    onToggleArchive: (jid: string, e?: React.MouseEvent) => void;
     onToggleRead: (jid: string, isUnread: boolean) => void;
     sessionId: string;
     labelDots: { colorHex: string; name?: string }[];
@@ -257,6 +273,7 @@ function ChatRow({
                     onClose={() => setCtxMenu(null)}
                     onSelect={onSelect}
                     onTogglePin={onTogglePin}
+                    onToggleArchive={onToggleArchive}
                     onToggleRead={onToggleRead}
                 />
             )}
@@ -271,7 +288,16 @@ function ChatRow({
                 onMouseEnter={() => prefetchChatMessages(sessionId, chat.jid)}
                 onContextMenu={(e) => {
                     e.preventDefault();
-                    setCtxMenu({ x: e.clientX, y: e.clientY, jid: chat.jid, name: displayName, profilePic: chat.profilePic, isPinned, unreadCount: chat.unreadCount });
+                    setCtxMenu({
+                        x: e.clientX,
+                        y: e.clientY,
+                        jid: chat.jid,
+                        name: displayName,
+                        profilePic: chat.profilePic,
+                        isPinned,
+                        isArchived,
+                        unreadCount: chat.unreadCount
+                    });
                 }}
             >
                 {/* Avatar with WhatsApp group/user style */}
@@ -319,7 +345,7 @@ function ChatRow({
                         )}
                     </div>
 
-                    {/* Line 2: Presence OR Message preview + Status Check + Unread Badge + Pin Icon */}
+                    {/* Line 2: Presence OR Draft OR Message preview + Status Check + Unread Badge + Pin Icon */}
                     <div className="flex items-center justify-between gap-1 mt-0.5">
                         {presence ? (
                             <p className="text-[13px] text-[#00a884] dark:text-[#25d366] font-medium truncate flex items-center gap-1 flex-1 animate-pulse">
@@ -331,6 +357,11 @@ function ChatRow({
                                 ) : (
                                     <span>digitando...</span>
                                 )}
+                            </p>
+                        ) : draftText && !isSelected ? (
+                            <p className="text-[13px] truncate flex items-center gap-1 flex-1">
+                                <span className="text-red-500 dark:text-red-400 font-semibold shrink-0">Rascunho:</span>
+                                <span className="text-[#667781] dark:text-[#8696a0] truncate">{draftText}</span>
                             </p>
                         ) : (
                             <p className={cn(
@@ -381,6 +412,17 @@ function ChatRow({
                                 onClick={(e) => onTogglePin(chat.jid, e)}
                             >
                                 {isPinned ? <PinOff className="h-3.5 w-3.5" /> : <Pin className="h-3.5 w-3.5 rotate-45" />}
+                            </Button>
+
+                            {/* Archive / Unarchive Button on Hover */}
+                            <Button
+                                variant="ghost"
+                                size="icon"
+                                title={isArchived ? "Desarquivar conversa" : "Arquivar conversa"}
+                                className="h-6 w-6 rounded-full opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground hover:text-foreground shrink-0"
+                                onClick={(e) => onToggleArchive(chat.jid, e)}
+                            >
+                                {isArchived ? <ArchiveRestore className="h-3.5 w-3.5 text-[#00a884]" /> : <Archive className="h-3.5 w-3.5" />}
                             </Button>
 
                             {/* Tag Button on Hover */}
@@ -454,7 +496,7 @@ export function ChatList({ sessionId, onSelectChat, selectedJid }: ChatListProps
     const [chats, setChats] = useState<ChatContact[]>(initialCached);
     const [loading, setLoading] = useState(initialCached.length === 0);
     const [searchInput, setSearchInput] = useState("");
-    const [filterType, setFilterType] = useState<"all" | "unread" | "contacts" | "groups" | "pinned">("all");
+    const [filterType, setFilterType] = useState<"all" | "unread" | "contacts" | "groups" | "pinned" | "archived">("all");
     const [isNewChatOpen, setIsNewChatOpen] = useState(false);
     const [newChatNumber, setNewChatNumber] = useState("");
     const [hasMore, setHasMore] = useState(true);
@@ -469,6 +511,11 @@ export function ChatList({ sessionId, onSelectChat, selectedJid }: ChatListProps
 
     // Unlimited pinned chats (persisted per sessionId in localStorage)
     const [pinnedJids, setPinnedJids] = useState<string[]>([]);
+    // Archived chats (#C14)
+    const [archivedJids, setArchivedJids] = useState<string[]>([]);
+    // Per-chat message drafts (#C13)
+    const [draftMap, setDraftMap] = useState<Record<string, string>>({});
+
     const searchInputRef = useRef<HTMLInputElement>(null);
 
     // Contacts searched from the address book
@@ -490,12 +537,54 @@ export function ChatList({ sessionId, onSelectChat, selectedJid }: ChatListProps
     soundMutedRef.current = soundMuted;
     const fetchingRef = useRef(false);
 
-    // Load mute state from localStorage
+    // Load mute state, pinned, archived, and drafts from localStorage
     useEffect(() => {
         if (typeof window === "undefined") return;
         try {
             setSoundMuted(localStorage.getItem("zapflow_chat_muted") === "1");
         } catch {}
+    }, []);
+
+    useEffect(() => {
+        if (!sessionId || typeof window === "undefined") return;
+        try {
+            const storedPinned = localStorage.getItem(`zapflow_pinned_${sessionId}`);
+            if (storedPinned) {
+                const parsed = JSON.parse(storedPinned);
+                if (Array.isArray(parsed)) setPinnedJids(parsed);
+            }
+            const storedArchived = localStorage.getItem(`zapflow_archived_${sessionId}`);
+            if (storedArchived) {
+                const parsed = JSON.parse(storedArchived);
+                if (Array.isArray(parsed)) setArchivedJids(parsed);
+            }
+            const storedDrafts = localStorage.getItem(`zapflow_drafts_${sessionId}`);
+            if (storedDrafts) {
+                const parsed = JSON.parse(storedDrafts);
+                if (parsed && typeof parsed === "object") setDraftMap(parsed);
+            }
+        } catch (e) {
+            console.error("Failed to load local chat preferences", e);
+        }
+    }, [sessionId]);
+
+    // Listen for live draft updates from ChatInputBar (#C13)
+    useEffect(() => {
+        const handleDraftChanged = (e: Event) => {
+            const { jid: draftJid, text } = (e as CustomEvent<{ jid: string; text: string }>).detail || {};
+            if (!draftJid) return;
+            setDraftMap(prev => {
+                const next = { ...prev };
+                if (text && text.trim()) {
+                    next[draftJid] = text;
+                } else {
+                    delete next[draftJid];
+                }
+                return next;
+            });
+        };
+        window.addEventListener("zapflow:draft-changed", handleDraftChanged);
+        return () => window.removeEventListener("zapflow:draft-changed", handleDraftChanged);
     }, []);
 
     const toggleMuteSound = () => {
@@ -552,22 +641,6 @@ export function ChatList({ sessionId, onSelectChat, selectedJid }: ChatListProps
         };
     }, [searchInput, sessionId]);
 
-    // Load pinned chats from localStorage on mount
-    useEffect(() => {
-        if (!sessionId || typeof window === "undefined") return;
-        try {
-            const stored = localStorage.getItem(`zapflow_pinned_${sessionId}`);
-            if (stored) {
-                const parsed = JSON.parse(stored);
-                if (Array.isArray(parsed)) {
-                    setPinnedJids(parsed);
-                }
-            }
-        } catch (e) {
-            console.error("Failed to load pinned chats from localStorage", e);
-        }
-    }, [sessionId]);
-
     // Handle selecting a chat and automatically clearing its unread badge
     const handleSelectAndClearUnread = useCallback((jid: string, name?: string, profilePic?: string | null) => {
         setChats(prev => {
@@ -618,6 +691,28 @@ export function ChatList({ sessionId, onSelectChat, selectedJid }: ChatListProps
             if (typeof window !== "undefined") {
                 try {
                     localStorage.setItem(`zapflow_pinned_${sessionId}`, JSON.stringify(next));
+                } catch {}
+            }
+            return next;
+        });
+    }, [sessionId]);
+
+    // Toggle Archive / Unarchive (#C14)
+    const handleToggleArchive = useCallback((jid: string, e?: React.MouseEvent) => {
+        e?.stopPropagation();
+        setArchivedJids(prev => {
+            let next: string[];
+            const isCurrentlyArchived = prev.includes(jid);
+            if (isCurrentlyArchived) {
+                next = prev.filter(id => id !== jid);
+                toast.success("Conversa desarquivada");
+            } else {
+                next = [jid, ...prev];
+                toast.success("Conversa arquivada");
+            }
+            if (typeof window !== "undefined") {
+                try {
+                    localStorage.setItem(`zapflow_archived_${sessionId}`, JSON.stringify(next));
                 } catch {}
             }
             return next;
@@ -713,6 +808,15 @@ export function ChatList({ sessionId, onSelectChat, selectedJid }: ChatListProps
                     const isIncomingFromOther = !msg.fromMe && jid !== selectedJidRef.current;
                     if (isIncomingFromOther && isNewKey) {
                         shouldPlaySound = true;
+                        // Automatically unarchive chat if a new message arrives (#C14)
+                        setArchivedJids(prevArch => {
+                            if (!prevArch.includes(jid)) return prevArch;
+                            const nextArch = prevArch.filter(id => id !== jid);
+                            try {
+                                localStorage.setItem(`zapflow_archived_${sessionId}`, JSON.stringify(nextArch));
+                            } catch {}
+                            return nextArch;
+                        });
                     }
 
                     // Clear typing indicator for this chat when message arrives
@@ -925,9 +1029,10 @@ export function ChatList({ sessionId, onSelectChat, selectedJid }: ChatListProps
     }, [reloadLabelsAndAssignments]);
 
     // ─── INSTANT SEARCH & SORTING (0ms delay, no skeleton wipe, unlimited pinning) ───
-    const totalUnreadCount = useMemo(() => chats.filter(c => (c.unreadCount || 0) > 0).length, [chats]);
-    const totalGroupsCount = useMemo(() => chats.filter(c => c.jid.endsWith("@g.us")).length, [chats]);
-    const totalContactsCount = useMemo(() => chats.filter(c => !c.jid.endsWith("@g.us")).length, [chats]);
+    const archivedSet = useMemo(() => new Set(archivedJids), [archivedJids]);
+    const totalUnreadCount = useMemo(() => chats.filter(c => !archivedSet.has(c.jid) && (c.unreadCount || 0) > 0).length, [chats, archivedSet]);
+    const totalGroupsCount = useMemo(() => chats.filter(c => !archivedSet.has(c.jid) && c.jid.endsWith("@g.us")).length, [chats, archivedSet]);
+    const totalContactsCount = useMemo(() => chats.filter(c => !archivedSet.has(c.jid) && !c.jid.endsWith("@g.us")).length, [chats, archivedSet]);
 
     const filteredAndSortedChats = useMemo(() => {
         let list = chats;
@@ -955,17 +1060,23 @@ export function ChatList({ sessionId, onSelectChat, selectedJid }: ChatListProps
                 const toAdd = extraContacts.filter(c => !existingJids.has(c.jid));
                 list = [...list, ...toAdd];
             }
-        } else if (filterType === "all" && !selectedLabelId) {
-            // In "Tudo" view without search, show active chats (with messages) + all groups first, then contacts
-            list = [...chats].sort((a, b) => {
-                const tA = a.lastMessage?.timestamp ? new Date(a.lastMessage.timestamp).getTime() : (a.jid.endsWith("@g.us") ? 1 : 0);
-                const tB = b.lastMessage?.timestamp ? new Date(b.lastMessage.timestamp).getTime() : (b.jid.endsWith("@g.us") ? 1 : 0);
-                if (tB !== tA) return tB - tA;
-                return (a.name || a.jid).localeCompare(b.name || b.jid);
-            });
+        } else if (filterType === "archived") {
+            list = list.filter(c => archivedSet.has(c.jid));
+        } else {
+            // Exclude archived chats from normal views unless searching
+            list = list.filter(c => !archivedSet.has(c.jid));
+
+            if (filterType === "all" && !selectedLabelId) {
+                list = [...list].sort((a, b) => {
+                    const tA = a.lastMessage?.timestamp ? new Date(a.lastMessage.timestamp).getTime() : (a.jid.endsWith("@g.us") ? 1 : 0);
+                    const tB = b.lastMessage?.timestamp ? new Date(b.lastMessage.timestamp).getTime() : (b.jid.endsWith("@g.us") ? 1 : 0);
+                    if (tB !== tA) return tB - tA;
+                    return (a.name || a.jid).localeCompare(b.name || b.jid);
+                });
+            }
         }
 
-        // 2. Filter buttons: Tudo, Contatos, Grupos, Fixados, Etiquetas
+        // 2. Filter buttons: Tudo, Contatos, Grupos, Fixados, Arquivadas, Etiquetas
         if (selectedLabelId) {
             list = list.filter(c => chatLabelMap.get(c.jid)?.some(l => l.labelId === selectedLabelId));
         }
@@ -998,7 +1109,7 @@ export function ChatList({ sessionId, onSelectChat, selectedJid }: ChatListProps
         });
 
         return [...pinnedList, ...unpinnedList];
-    }, [chats, searchInput, extraContacts, filterType, pinnedJids, selectedLabelId, chatLabelMap]);
+    }, [chats, searchInput, extraContacts, filterType, pinnedJids, archivedSet, selectedLabelId, chatLabelMap]);
 
     // Keyboard shortcuts listeners (Ctrl+Shift+F to search, Alt+Up/Down to navigate chats)
     useEffect(() => {
@@ -1043,15 +1154,18 @@ export function ChatList({ sessionId, onSelectChat, selectedJid }: ChatListProps
                 chat={chat}
                 isSelected={selectedJid === chat.jid}
                 isPinned={pinnedJids.includes(chat.jid)}
+                isArchived={archivedSet.has(chat.jid)}
+                draftText={draftMap[chat.jid]}
                 presence={presenceMap[chat.jid]}
                 onSelect={handleSelectAndClearUnread}
                 onTogglePin={handleTogglePin}
+                onToggleArchive={handleToggleArchive}
                 onToggleRead={handleToggleRead}
                 sessionId={sessionId}
                 labelDots={chatLabelMap.get(chat.jid) || []}
             />
         ),
-        [selectedJid, pinnedJids, presenceMap, handleSelectAndClearUnread, handleTogglePin, handleToggleRead, sessionId, chatLabelMap]
+        [selectedJid, pinnedJids, archivedSet, draftMap, presenceMap, handleSelectAndClearUnread, handleTogglePin, handleToggleArchive, handleToggleRead, sessionId, chatLabelMap]
     );
 
     const handleStartNewChat = () => {
@@ -1138,7 +1252,7 @@ export function ChatList({ sessionId, onSelectChat, selectedJid }: ChatListProps
                     )}
                 </div>
 
-                {/* Quick Filters: Tudo, Não lidas, Contatos, Grupos, Fixados, Etiquetas */}
+                {/* Quick Filters: Tudo, Não lidas, Contatos, Grupos, Fixados, Arquivadas, Etiquetas */}
                 <div className="flex items-center gap-1.5 pt-0.5 overflow-x-auto no-scrollbar">
                     <button
                         onClick={() => { setFilterType("all"); setSelectedLabelId(null); }}
@@ -1212,6 +1326,20 @@ export function ChatList({ sessionId, onSelectChat, selectedJid }: ChatListProps
                         <Pin className="h-3 w-3 rotate-45" />
                         Fixados {pinnedJids.length > 0 && `(${pinnedJids.length})`}
                     </button>
+                    {archivedJids.length > 0 && (
+                        <button
+                            onClick={() => { setFilterType("archived"); setSelectedLabelId(null); }}
+                            className={cn(
+                                "px-3 py-1 rounded-full text-xs font-medium transition-colors shrink-0 flex items-center gap-1 cursor-pointer",
+                                filterType === "archived" && !selectedLabelId
+                                    ? "bg-[#00a884] text-white"
+                                    : "bg-muted/70 hover:bg-muted text-muted-foreground"
+                            )}
+                        >
+                            <Archive className="h-3 w-3" />
+                            Arquivadas ({archivedJids.length})
+                        </button>
+                    )}
 
                     {/* Active Label Chip or Labels Dropdown */}
                     {selectedLabelId ? (
