@@ -171,10 +171,19 @@ export default function BroadcastPage() {
             prevSessionIdRef.current = sessionId;
         }
 
-        // A. Importação de rascunho de grupo via chat
+        // A. Importação de rascunho de grupo via chat (suporta JSON array de números ou texto puro)
         const draftGroup = sessionStorage.getItem("zapflow_broadcast_draft_recipients");
         if (draftGroup) {
-            setContacts(draftGroup);
+            try {
+                const parsed = JSON.parse(draftGroup);
+                if (Array.isArray(parsed)) {
+                    setContacts(parsed.join("\n"));
+                } else {
+                    setContacts(draftGroup);
+                }
+            } catch {
+                setContacts(draftGroup);
+            }
             sessionStorage.removeItem("zapflow_broadcast_draft_recipients");
             toast.success("Contatos importados do grupo com sucesso!");
         } else {

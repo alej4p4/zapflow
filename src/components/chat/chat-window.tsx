@@ -691,9 +691,11 @@ const DEFAULT_QUICK_REPLIES: QuickReplyItem[] = [
     { shortcut: "/ola", label: "Saudação inicial", text: "Olá! Tudo bem? Como posso te ajudar hoje?" },
     { shortcut: "/pix", label: "Dados do PIX", text: "Segue nossa chave PIX para pagamento: [chave]. Por gentileza, nos envie o comprovante após a transferência." },
     { shortcut: "/horario", label: "Horário de atendimento", text: "Nosso horário de funcionamento é de segunda a sexta, das 08h às 18h." },
-    { shortcut: "/obrigado", label: "Agradecimento", text: "Muito obrigado pelo contato! Qualquer dúvida estamos à total disposição." },
+    { shortcut: "/endereco", label: "Endereço e localização", text: "Estamos localizados na [Endereço completo]. Venha nos visitar ou utilize o Waze/Google Maps!" },
+    { shortcut: "/catalogo", label: "Catálogo / Tabela", text: "Olá! Segue nosso catálogo completo de produtos e serviços atualizados." },
     { shortcut: "/contrato", label: "Envio de contrato", text: "Segue o contrato para conferência e assinatura. Favor acusar o recebimento." },
-    { shortcut: "/embarque", label: "Liberação de embarque", text: "🚨 Atenção: Lote liberado e pronto para embarque. Favor alinhar com os motoristas para seguirem viagem." }
+    { shortcut: "/embarque", label: "Liberação de embarque", text: "🚨 Atenção: Lote liberado e pronto para embarque. Favor alinhar com os motoristas para seguirem viagem." },
+    { shortcut: "/obrigado", label: "Agradecimento", text: "Muito obrigado pelo contato e pela preferência! Qualquer dúvida estamos à total disposição." }
 ];
 
 const STORAGE_KEY_QUICK_REPLIES = "zapflow_custom_quick_replies";
@@ -971,11 +973,17 @@ function ChatInputBar({
     }, [quickReplyQuery, quickReplies]);
 
     const handleSelectQuickReply = (r: QuickReplyItem) => {
-        if (quickReplyCursorIdx === -1) return;
-        const before = input.slice(0, quickReplyCursorIdx);
-        const queryLen = quickReplyQuery ? quickReplyQuery.length : 0;
-        const after = input.slice(quickReplyCursorIdx + 1 + queryLen);
-        const nextInput = `${before}${r.text}${after}`;
+        let before = "";
+        let after = "";
+        if (quickReplyCursorIdx === -1 || (quickReplyQuery === "" && !input.includes("/"))) {
+            before = input.trim() ? `${input.trim()} ` : "";
+            after = "";
+        } else {
+            before = input.slice(0, quickReplyCursorIdx);
+            const queryLen = quickReplyQuery ? quickReplyQuery.length : 0;
+            after = input.slice(quickReplyCursorIdx + 1 + queryLen);
+        }
+        const nextInput = `${before}${r.text}${after.startsWith(" ") ? after : (after ? " " + after : "")}`;
         setInput(nextInput);
         setQuickReplyQuery(null);
         setQuickReplyCursorIdx(-1);
@@ -1255,7 +1263,7 @@ function ChatInputBar({
     return (
         <div className="shrink-0 px-3.5 py-2.5 bg-[#f0f2f5] dark:bg-[#202c33] border-t border-border/15 relative">
             {/* Quick Replies Autocomplete Popover (/) */}
-            {quickReplyQuery !== null && filteredQuickReplies.length > 0 && (
+            {quickReplyQuery !== null && (
                 <div className="mb-2 p-1.5 rounded-2xl bg-white dark:bg-[#233138] border border-border/40 shadow-2xl animate-in slide-in-from-bottom-2 duration-150 max-h-56 overflow-y-auto no-scrollbar max-w-md">
                     <div className="px-3 py-1.5 text-[11px] font-semibold text-amber-500 uppercase tracking-wider flex items-center justify-between border-b border-border/10 mb-1">
                         <span className="flex items-center gap-1.5">
@@ -1275,27 +1283,42 @@ function ChatInputBar({
                             <span className="text-[10px] text-muted-foreground lowercase">↑↓ Enter</span>
                         </div>
                     </div>
-                    <div className="flex flex-col gap-0.5">
-                        {filteredQuickReplies.map((r, idx) => (
-                            <button
-                                key={r.shortcut}
+                    {filteredQuickReplies.length === 0 ? (
+                        <div className="p-3 text-center">
+                            <p className="text-xs text-muted-foreground mb-2">Nenhum atalho encontrado para &quot;/{quickReplyQuery}&quot;</p>
+                            <Button
                                 type="button"
-                                onClick={() => handleSelectQuickReply(r)}
-                                className={cn(
-                                    "w-full px-3 py-2 rounded-xl text-left transition-colors cursor-pointer select-none flex flex-col gap-0.5",
-                                    idx === selectedQuickReplyIdx
-                                        ? "bg-amber-500/15 dark:bg-amber-500/25 text-foreground"
-                                        : "hover:bg-black/5 dark:hover:bg-white/5 text-foreground"
-                                )}
+                                size="sm"
+                                variant="outline"
+                                className="text-xs gap-1.5 h-7 cursor-pointer"
+                                onClick={() => setIsQuickRepliesManagerOpen(true)}
                             >
-                                <div className="flex items-center justify-between">
-                                    <span className="font-mono text-xs font-semibold text-amber-600 dark:text-amber-400">{r.shortcut}</span>
-                                    <span className="text-[11px] font-medium text-muted-foreground">{r.label}</span>
-                                </div>
-                                <p className="text-xs text-muted-foreground truncate">{r.text}</p>
-                            </button>
-                        ))}
-                    </div>
+                                <Plus className="h-3.5 w-3.5" /> Criar nova resposta rápida
+                            </Button>
+                        </div>
+                    ) : (
+                        <div className="flex flex-col gap-0.5">
+                            {filteredQuickReplies.map((r, idx) => (
+                                <button
+                                    key={r.shortcut}
+                                    type="button"
+                                    onClick={() => handleSelectQuickReply(r)}
+                                    className={cn(
+                                        "w-full px-3 py-2 rounded-xl text-left transition-colors cursor-pointer select-none flex flex-col gap-0.5",
+                                        idx === selectedQuickReplyIdx
+                                            ? "bg-amber-500/15 dark:bg-amber-500/25 text-foreground"
+                                            : "hover:bg-black/5 dark:hover:bg-white/5 text-foreground"
+                                    )}
+                                >
+                                    <div className="flex items-center justify-between">
+                                        <span className="font-mono text-xs font-semibold text-amber-600 dark:text-amber-400">{r.shortcut}</span>
+                                        <span className="text-[11px] font-medium text-muted-foreground">{r.label}</span>
+                                    </div>
+                                    <p className="text-xs text-muted-foreground truncate">{r.text}</p>
+                                </button>
+                            ))}
+                        </div>
+                    )}
                 </div>
             )}
 
@@ -1458,6 +1481,32 @@ function ChatInputBar({
                         </PopoverContent>
                     </Popover>
 
+                    {/* Quick Replies Trigger Button (⚡) */}
+                    <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => {
+                            if (quickReplyQuery !== null) {
+                                setQuickReplyQuery(null);
+                            } else {
+                                setQuickReplyQuery("");
+                                setQuickReplyCursorIdx(input.length);
+                                setSelectedQuickReplyIdx(0);
+                                inputRef.current?.focus();
+                            }
+                        }}
+                        className={cn(
+                            "h-10 w-10 rounded-full shrink-0 transition-colors cursor-pointer",
+                            quickReplyQuery !== null
+                                ? "text-amber-500 bg-amber-500/15"
+                                : "text-[#54656f] dark:text-[#8696a0] hover:text-amber-500 hover:bg-black/5 dark:hover:bg-white/10"
+                        )}
+                        title="Respostas Rápidas (/)"
+                    >
+                        <Zap className="h-5 w-5" />
+                    </Button>
+
                     {/* Input Textarea capsule */}
                     <div className="flex-1 min-w-0 bg-white dark:bg-[#2a3942] rounded-xl px-3.5 py-1.5 shadow-[0_1px_0.5px_rgba(11,20,26,0.1)] flex items-center">
                         <textarea
@@ -1465,7 +1514,7 @@ function ChatInputBar({
                             value={input}
                             onChange={handleInputChange}
                             onKeyDown={handleKeyDown}
-                            placeholder={isGroup ? "Digite uma mensagem ou @ para marcar..." : "Digite uma mensagem..."}
+                            placeholder={isGroup ? "Digite uma mensagem, / para respostas rápidas ou @..." : "Digite uma mensagem ou / para respostas rápidas..."}
                             rows={1}
                             style={{ minHeight: "26px", maxHeight: "120px" }}
                             className="w-full resize-none bg-transparent text-[15px] text-[#111b21] dark:text-[#e9edef] placeholder-[#8696a0] focus:outline-none leading-relaxed py-1"
@@ -2331,6 +2380,19 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
 
                 {/* Header right icons */}
                 <div className="flex items-center gap-1 text-[#54656f] dark:text-[#aebac1]">
+                    {isGroup && participantsList.length > 0 && (
+                        <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            onClick={exportGroupParticipants}
+                            className="hidden md:flex items-center gap-1.5 h-8 px-2.5 text-xs font-medium text-[#00a884] hover:bg-[#00a884]/10 rounded-full cursor-pointer transition-colors"
+                            title={`Exportar ${participantsList.length} participantes para CSV`}
+                        >
+                            <FileDown className="h-4 w-4" />
+                            <span>Exportar ({participantsList.length})</span>
+                        </Button>
+                    )}
                     <Button
                         variant="ghost"
                         size="icon"
