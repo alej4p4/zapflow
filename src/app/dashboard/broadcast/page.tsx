@@ -20,12 +20,14 @@ import { fetchCachedPhoneContacts, getCachedPhoneContacts, fetchCachedGroups, ge
 
 interface BroadcastProgress {
     broadcastId: string;
-    status: "running" | "completed" | "cancelled" | "interrupted" | "scheduled";
+    status: "running" | "completed" | "cancelled" | "interrupted" | "scheduled" | "queued";
     total: number;
     sent: number;
     failed: number;
     current?: string | null;
     progress?: number;
+    position?: number;
+    message?: string;
     errors?: { jid: string; error: string }[];
     startedAt?: string;
     completedAt?: string;
@@ -42,6 +44,8 @@ interface BroadcastLog {
     delay: number;
     startedAt: string;
     scheduledAt: string | null;
+    repeatDaily?: boolean;
+    timeSlot?: string | null;
     completedAt: string | null;
     _count?: { recipients: number };
     recipients?: BroadcastRecipient[];
@@ -83,6 +87,41 @@ function contactLabel(contact: PhoneContact): string {
     return contact.name || contact.verifiedName || contact.notify || "";
 }
 
+/** Interpreta horários como "12h00, 15h00, 18h00" ou "12:00, 15:00, 18:00" */
+function parseProgrammedTimes(input: string): { hour: number; minute: number; timeStr: string }[] {
+    if (!input || !input.trim()) return [];
+    // Match tokens separated by comma, space, semicolon, newline
+    const tokens = input.split(/[,;\s\n]+/).map(s => s.trim()).filter(Boolean);
+    const results: { hour: number; minute: number; timeStr: string }[] = [];
+    const seen = new Set<string>();
+
+    for (const token of tokens) {
+        // Match 12h00, 12:00, 12h, 12
+        const m = token.match(/^(\d{1,2})(?:[hH:](\d{1,2})?)?$/);
+        if (m) {
+            const h = parseInt(m[1], 10);
+            const min = m[2] ? parseInt(m[2], 10) : 0;
+            if (h >= 0 && h <= 23 && min >= 0 && min <= 59) {
+                const timeStr = `${String(h).padStart(2, '0')}:${String(min).padStart(2, '0')}`;
+                if (!seen.has(timeStr)) {
+                    seen.add(timeStr);
+                    results.push({ hour: h, minute: min, timeStr });
+                }
+            }
+        }
+    }
+    return results.sort((a, b) => a.hour === b.hour ? a.minute - b.minute : a.hour - b.hour);
+}
+
+function getNextTargetDate(h: number, m: number): Date {
+    const now = new Date();
+    const target = new Date(now.getFullYear(), now.getMonth(), now.getDate(), h, m, 0, 0);
+    if (target.getTime() <= now.getTime()) {
+        target.setDate(target.getDate() + 1);
+    }
+    return target;
+}
+
 export default function BroadcastPage() {
     const { sessionId } = useSession();
     const [contacts, setContacts] = useState("");
@@ -98,7 +137,10 @@ export default function BroadcastPage() {
     const [groups, setGroups] = useState<PhoneGroup[]>(initialCachedGroups);
     const [selectedGroups, setSelectedGroups] = useState<string[]>([]);
     const [loading, setLoading] = useState(false);
+    const [scheduleMode, setScheduleMode] = useState<"now" | "datetime" | "programmed">("now");
     const [scheduledAt, setScheduledAt] = useState("");
+    const [programmedTimesInput, setProgrammedTimesInput] = useState("12h00, 15h00, 18h00");
+    const [repeatDaily, setRepeatDaily] = useState(true);
     const [broadcastProgress, setBroadcastProgress] = useState<BroadcastProgress | null>(null);
     const [activeTab, setActiveTab] = useState<"new" | "history">("new");
 
@@ -293,43 +335,70 @@ export default function BroadcastPage() {
     const handleSend = async () => {
         if (!sessionId) return toast.error("Nenhuma sessão ativa encontrada");
         if (!message.trim()) return toast.error("A mensagem não pode ficar vazia");
+
+        const recipients = contacts.split(/[\n,]+/).map(s => s.trim()).filter(Boolean).map(s => {
+            if (!s.includes('@')) return `${s}@s.whatsapp.net`;
+            return s;
+        });
+
+        if (recipients.length === 0) {
+            return toast.error("Nenhum destinatário informado");
+        }
+
+        let bodyPayload: any = {
+            recipients,
+            message,
+            delay: delay[0],
+            mode: scheduleMode
+        };
+
+        if (scheduleMode === "datetime") {
+            if (!scheduledAt) {
+                return toast.error("Selecione a data e hora do agendamento");
+            }
+            bodyPayload.scheduledAt = scheduledAt;
+        } else if (scheduleMode === "programmed") {
+            const times = parseProgrammedTimes(programmedTimesInput);
+            if (times.length === 0) {
+                return toast.error("Informe pelo menos um horário válido (ex: 12h00, 15h00, 18h00)");
+            }
+            const scheduledDateTimes = times.map(t => getNextTargetDate(t.hour, t.minute).toISOString());
+            bodyPayload.programmedTimes = times.map(t => t.timeStr);
+            bodyPayload.scheduledDateTimes = scheduledDateTimes;
+            bodyPayload.repeatDaily = repeatDaily;
+        }
+
         setLoading(true);
         setBroadcastProgress(null);
 
         try {
-            const recipients = contacts.split(/[\n,]+/).map(s => s.trim()).filter(Boolean).map(s => {
-                if (!s.includes('@')) return `${s}@s.whatsapp.net`;
-                return s;
-            });
-
-            if (recipients.length === 0) {
-                toast.error("Nenhum destinatário informado");
-                setLoading(false);
-                return;
-            }
-
             const res = await fetch(`/api/messages/${sessionId}/broadcast`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                    recipients,
-                    message,
-                    delay: delay[0],
-                    scheduledAt: scheduledAt || undefined
-                })
+                body: JSON.stringify(bodyPayload)
             });
 
             const data = await res.json();
 
             if (res.ok) {
-                toast.info(`Broadcast started for ${recipients.length} recipients...`);
+                if (scheduleMode === "programmed") {
+                    toast.success(`${bodyPayload.programmedTimes.length} disparos automáticos programados com sucesso! Executarão em sequência.`);
+                    setActiveTab("history");
+                    fetchHistory();
+                } else if (scheduleMode === "datetime") {
+                    toast.success("Disparo agendado com sucesso!");
+                    setActiveTab("history");
+                    fetchHistory();
+                } else {
+                    toast.info(`Disparo iniciado para ${recipients.length} destinatários na fila sequencial...`);
+                }
             } else {
                 toast.error(data.message || "Não foi possível iniciar o disparo");
-                setLoading(false);
             }
         } catch (e) {
             console.error(e);
             toast.error("Erro ao enviar o disparo");
+        } finally {
             setLoading(false);
         }
     };
@@ -571,26 +640,177 @@ export default function BroadcastPage() {
                                             </p>
                                         </div>
 
-                                        <div className="space-y-2">
-                                            <Label className="flex items-center gap-2">
-                                                <Clock className="h-4 w-4" /> Agendar disparo para
-                                            </Label>
-                                            <Input
-                                                type="datetime-local"
-                                                value={scheduledAt}
-                                                onChange={e => setScheduledAt(e.target.value)}
-                                                disabled={loading}
-                                            />
-                                            <p className="text-xs text-muted-foreground">Deixe em branco para enviar agora. Horário do computador.</p>
+                                        {/* Programação de Envio e Horários */}
+                                        <div className="space-y-3 pt-3 border-t">
+                                            <div className="flex items-center justify-between">
+                                                <Label className="flex items-center gap-2 font-semibold text-sm">
+                                                    <Clock className="h-4 w-4 text-primary" /> Programação de envio
+                                                </Label>
+                                                <span className="text-[11px] text-muted-foreground font-normal">
+                                                    Sequencial (um atrás do outro)
+                                                </span>
+                                            </div>
+
+                                            {/* Modos de Disparo */}
+                                            <div className="grid grid-cols-3 gap-1.5 p-1 bg-muted/60 rounded-lg">
+                                                <button
+                                                    type="button"
+                                                    onClick={() => setScheduleMode("now")}
+                                                    disabled={loading}
+                                                    className={`flex items-center justify-center gap-1.5 py-1.5 px-2 text-xs font-medium rounded-md transition-all ${
+                                                        scheduleMode === "now"
+                                                            ? "bg-background shadow-sm text-foreground font-semibold"
+                                                            : "text-muted-foreground hover:text-foreground"
+                                                    }`}
+                                                >
+                                                    <Send className="h-3.5 w-3.5" /> Agora
+                                                </button>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => setScheduleMode("datetime")}
+                                                    disabled={loading}
+                                                    className={`flex items-center justify-center gap-1.5 py-1.5 px-2 text-xs font-medium rounded-md transition-all ${
+                                                        scheduleMode === "datetime"
+                                                            ? "bg-background shadow-sm text-foreground font-semibold"
+                                                            : "text-muted-foreground hover:text-foreground"
+                                                    }`}
+                                                >
+                                                    <Calendar className="h-3.5 w-3.5" /> Data/Hora
+                                                </button>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => setScheduleMode("programmed")}
+                                                    disabled={loading}
+                                                    className={`flex items-center justify-center gap-1.5 py-1.5 px-2 text-xs font-medium rounded-md transition-all ${
+                                                        scheduleMode === "programmed"
+                                                            ? "bg-primary text-primary-foreground font-semibold shadow-sm"
+                                                            : "text-muted-foreground hover:text-foreground"
+                                                    }`}
+                                                >
+                                                    <Clock className="h-3.5 w-3.5" /> Horários
+                                                </button>
+                                            </div>
+
+                                            {/* Modo: Data e Hora única */}
+                                            {scheduleMode === "datetime" && (
+                                                <div className="space-y-2 p-3 rounded-lg border bg-muted/20 animate-in fade-in duration-150">
+                                                    <Label className="text-xs">Data e horário do envio:</Label>
+                                                    <Input
+                                                        type="datetime-local"
+                                                        value={scheduledAt}
+                                                        onChange={e => setScheduledAt(e.target.value)}
+                                                        disabled={loading}
+                                                    />
+                                                    <p className="text-[11px] text-muted-foreground">O disparo iniciará automaticamente na data e hora selecionadas.</p>
+                                                </div>
+                                            )}
+
+                                            {/* Modo: Horários Programados (ex: 12h00, 15h00, 18h00) */}
+                                            {scheduleMode === "programmed" && (
+                                                <div className="space-y-3 p-3.5 rounded-lg border border-primary/25 bg-primary/5 dark:bg-primary/10 animate-in fade-in duration-150">
+                                                    <div className="space-y-1.5">
+                                                        <div className="flex items-center justify-between">
+                                                            <Label className="text-xs font-semibold text-foreground">
+                                                                Horários programados:
+                                                            </Label>
+                                                            <span className="text-[11px] text-muted-foreground">Ex: 12h00, 15h00, 18h00</span>
+                                                        </div>
+                                                        <Input
+                                                            placeholder="12h00, 15h00, 18h00"
+                                                            value={programmedTimesInput}
+                                                            onChange={e => setProgrammedTimesInput(e.target.value)}
+                                                            disabled={loading}
+                                                            className="font-mono text-sm bg-background"
+                                                        />
+                                                    </div>
+
+                                                    {/* Sugestões rápidas */}
+                                                    <div className="space-y-1">
+                                                        <span className="text-[11px] text-muted-foreground font-medium">Sugestões rápidas:</span>
+                                                        <div className="flex flex-wrap gap-1.5">
+                                                            {[
+                                                                "12h00, 15h00, 18h00",
+                                                                "08h00, 12h00, 18h00",
+                                                                "09h00, 14h00, 17h00",
+                                                                "10h00, 16h00, 20h00"
+                                                            ].map(preset => (
+                                                                <button
+                                                                    key={preset}
+                                                                    type="button"
+                                                                    onClick={() => setProgrammedTimesInput(preset)}
+                                                                    className="px-2 py-0.5 text-[11px] rounded bg-background border hover:border-primary hover:text-primary transition-colors text-muted-foreground"
+                                                                >
+                                                                    {preset}
+                                                                </button>
+                                                            ))}
+                                                        </div>
+                                                    </div>
+
+                                                    {/* Preview dos horários identificados */}
+                                                    {(() => {
+                                                        const pTimes = parseProgrammedTimes(programmedTimesInput);
+                                                        if (pTimes.length === 0) return null;
+                                                        return (
+                                                            <div className="space-y-1 pt-1">
+                                                                <span className="text-[11px] text-muted-foreground font-medium">Horários identificados ({pTimes.length}):</span>
+                                                                <div className="flex flex-wrap gap-1.5">
+                                                                    {pTimes.map(t => {
+                                                                        const nextDate = getNextTargetDate(t.hour, t.minute);
+                                                                        const isToday = nextDate.getDate() === new Date().getDate();
+                                                                        return (
+                                                                            <span
+                                                                                key={t.timeStr}
+                                                                                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-background border border-primary/30 text-xs font-medium text-foreground shadow-xs"
+                                                                            >
+                                                                                <Clock className="h-3 w-3 text-primary" />
+                                                                                <span className="font-bold">{t.timeStr}</span>
+                                                                                <span className="text-[10px] text-muted-foreground">({isToday ? "Hoje" : "Amanhã"})</span>
+                                                                            </span>
+                                                                        );
+                                                                    })}
+                                                                </div>
+                                                            </div>
+                                                        );
+                                                    })()}
+
+                                                    {/* Repetir diariamente */}
+                                                    <div className="flex items-center gap-2 pt-1 border-t border-border/50">
+                                                        <Checkbox
+                                                            id="repeatDaily"
+                                                            checked={repeatDaily}
+                                                            onCheckedChange={(checked) => setRepeatDaily(!!checked)}
+                                                            disabled={loading}
+                                                        />
+                                                        <label htmlFor="repeatDaily" className="text-xs text-foreground cursor-pointer font-medium select-none">
+                                                            Repetir diariamente nestes horários automaticamente
+                                                        </label>
+                                                    </div>
+
+                                                    {/* Nota de sequencialidade */}
+                                                    <div className="rounded-md bg-background/80 p-2 text-[11px] text-muted-foreground border flex items-start gap-2">
+                                                        <RotateCcw className="h-3.5 w-3.5 text-primary shrink-0 mt-0.5" />
+                                                        <span>
+                                                            <strong>Execução sequencial:</strong> Os disparos rodam <strong>um atrás do outro em sequência</strong> sem sobreposição.
+                                                        </span>
+                                                    </div>
+                                                </div>
+                                            )}
                                         </div>
 
-                                        <Button
+                                                                                <Button
                                             className="w-full"
                                             onClick={handleSend}
                                             disabled={loading || !sessionId || recipientCount === 0 || !message.trim()}
                                         >
                                             {loading ? <RefreshCw className="mr-2 h-4 w-4 animate-spin" /> : <Send className="mr-2 h-4 w-4" />}
-                                            {loading ? "Enviando..." : "Iniciar disparo"}
+                                            {loading
+                                                ? "Processando..."
+                                                : scheduleMode === "programmed"
+                                                    ? `Programar ${parseProgrammedTimes(programmedTimesInput).length} disparo(s) automático(s)`
+                                                    : scheduleMode === "datetime"
+                                                        ? "Agendar disparo"
+                                                        : `Iniciar disparo (${recipientCount} ${recipientCount === 1 ? 'destinatário' : 'destinatários'})`
+                                            }
                                         </Button>
                                     </div>
                                 </CardContent>
@@ -734,12 +954,21 @@ export default function BroadcastPage() {
                                                     <span className="flex items-center gap-1">
                                                         <XCircle className="h-3 w-3 text-red-500" /> {log.failed}
                                                     </span>
-                                                    <span className="flex items-center gap-1">
-                                                        <Calendar className="h-3 w-3" /> {formatTime(log.startedAt)}
-                                                    </span>
-                                                    {log.status !== "running" && log.status !== "completed" && (
+                                                    {log.status === "scheduled" ? (
+                                                        <span className="flex items-center gap-1 text-amber-600 dark:text-amber-400 font-medium">
+                                                            <Clock className="h-3 w-3" />
+                                                            Agendado para: {log.scheduledAt ? formatTime(log.scheduledAt) : "-"}
+                                                            {log.timeSlot && ` (${log.timeSlot})`}
+                                                            {log.repeatDaily && " • Diário"}
+                                                        </span>
+                                                    ) : (
+                                                        <span className="flex items-center gap-1">
+                                                            <Calendar className="h-3 w-3" /> {formatTime(log.startedAt)}
+                                                        </span>
+                                                    )}
+                                                    {log.status !== "running" && log.status !== "completed" && log.status !== "scheduled" && (
                                                         <span className="flex items-center gap-1 font-medium">
-                                                            {log.status === "cancelled" ? "Cancelado" : "Interrompido"}
+                                                            {log.status === "cancelled" ? "Cancelado" : log.status === "queued" ? "Na fila" : "Interrompido"}
                                                         </span>
                                                     )}
                                                 </div>
@@ -755,6 +984,17 @@ export default function BroadcastPage() {
                                                         disabled={logActionId === log.id}
                                                     >
                                                         <Ban className="h-4 w-4 mr-1" /> Cancelar
+                                                    </Button>
+                                                )}
+                                                {log.status === "scheduled" && (
+                                                    <Button
+                                                        variant="outline"
+                                                        size="sm"
+                                                        className="text-red-600 hover:text-red-700 hover:bg-red-50 dark:hover:bg-red-950/20"
+                                                        onClick={() => handleLogAction(log, "cancel")}
+                                                        disabled={logActionId === log.id}
+                                                    >
+                                                        <Ban className="h-4 w-4 mr-1" /> Cancelar agendamento
                                                     </Button>
                                                 )}
                                                 {log.status !== "running" && log.total > log.sent && (

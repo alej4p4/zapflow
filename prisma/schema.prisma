@@ -371,6 +371,8 @@ model BroadcastLog {
   delay       Int                 @default(2000)
   startedAt   DateTime            @default(now())
   scheduledAt DateTime?
+  repeatDaily Boolean             @default(false)
+  timeSlot    String?
   completedAt DateTime?
 
   recipients  BroadcastRecipient[]

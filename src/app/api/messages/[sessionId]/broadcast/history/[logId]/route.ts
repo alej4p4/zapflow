@@ -11,14 +11,14 @@ export async function GET(
     try {
         const user = await getAuthenticatedUser(request);
         if (!user) {
-            return NextResponse.json({ status: false, message: "Unauthorized" }, { status: 401 });
+            return NextResponse.json({ status: false, message: "Unauthorized", error: "Unauthorized" }, { status: 401 });
         }
 
         const { sessionId, logId } = await params;
 
         const canAccess = await canAccessSession(user.id, user.role, sessionId);
         if (!canAccess) {
-            return NextResponse.json({ status: false, message: "Forbidden" }, { status: 403 });
+            return NextResponse.json({ status: false, message: "Forbidden", error: "Forbidden" }, { status: 403 });
         }
 
         const log = await prisma.broadcastLog.findFirst({
@@ -39,7 +39,7 @@ export async function GET(
 
 /**
  * Ações sobre um disparo:
- *  - cancel: para o envio em andamento (destinatários restantes ficam pendentes)
+ *  - cancel: para o envio em andamento ou cancela agendamento futuro
  *  - retry: reenvia apenas quem falhou ou ficou pendente
  */
 export async function POST(
@@ -49,13 +49,13 @@ export async function POST(
     try {
         const user = await getAuthenticatedUser(request);
         if (!user) {
-            return NextResponse.json({ status: false, message: "Unauthorized" }, { status: 401 });
+            return NextResponse.json({ status: false, message: "Unauthorized", error: "Unauthorized" }, { status: 401 });
         }
 
         const { sessionId, logId } = await params;
         const canAccess = await canAccessSession(user.id, user.role, sessionId);
         if (!canAccess) {
-            return NextResponse.json({ status: false, message: "Forbidden" }, { status: 403 });
+            return NextResponse.json({ status: false, message: "Forbidden", error: "Forbidden" }, { status: 403 });
         }
 
         const body = await request.json().catch(() => ({}));
@@ -69,6 +69,15 @@ export async function POST(
         }
 
         if (action === "cancel") {
+            if (log.status === "scheduled" || log.status === "queued") {
+                cancelBroadcast(logId);
+                await prisma.broadcastLog.update({
+                    where: { id: logId },
+                    data: { status: "cancelled", completedAt: new Date() }
+                });
+                return NextResponse.json({ status: true, message: "Agendamento cancelado com sucesso" });
+            }
+
             if (log.status !== "running") {
                 return NextResponse.json({ status: false, message: "Este disparo não está em andamento" }, { status: 400 });
             }

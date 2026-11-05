@@ -3,22 +3,46 @@ import { waManager } from "./manager";
 import { logger } from "@/lib/logger";
 import type { AnyMessageContent } from "@whiskeysockets/baileys";
 
-/**
- * Executa (ou retoma) um disparo em massa a partir do que está gravado no banco.
- * - Só envia destinatários pendentes/falhos: fechar o app e reabrir não duplica envios.
- * - Cancelamento é cooperativo (verifica a flag antes de cada envio).
- */
 const cancelled = new Set<string>();
 const active = new Set<string>();
 
+// FIFO queue per session: sessionId -> array of logId
+const sessionQueues = new Map<string, string[]>();
+const sessionActiveLog = new Map<string, string | null>();
+
 export function cancelBroadcast(logId: string): boolean {
-    if (!active.has(logId)) return false;
     cancelled.add(logId);
-    return true;
+
+    // If waiting in session queue, remove and mark cancelled
+    for (const [sessId, q] of sessionQueues.entries()) {
+        const idx = q.indexOf(logId);
+        if (idx !== -1) {
+            q.splice(idx, 1);
+            void prisma.broadcastLog.update({
+                where: { id: logId },
+                data: { status: "cancelled", completedAt: new Date() }
+            }).catch(() => {});
+            const io = (global as any).io;
+            try {
+                io?.to(sessId).emit("broadcast.progress", {
+                    broadcastId: logId,
+                    status: "cancelled",
+                    message: "Disparo cancelado da fila"
+                });
+            } catch {}
+            return true;
+        }
+    }
+
+    return active.has(logId);
 }
 
 export function isBroadcastActive(logId: string): boolean {
     return active.has(logId);
+}
+
+export function isSessionBroadcasting(sessionId: string): boolean {
+    return !!sessionActiveLog.get(sessionId);
 }
 
 /** Marca como interrompidos os disparos que ficaram "running" após um reinício. */
@@ -36,14 +60,83 @@ export async function markStaleBroadcasts() {
     }
 }
 
+/**
+ * Enfileira um disparo na fila sequencial da sessão.
+ * Disparos automáticos e manuais rodam estritamente UM ATRÁS DO OUTRO EM SEQUÊNCIA.
+ */
 export async function runBroadcast(logId: string): Promise<void> {
-    if (active.has(logId)) return;
+    const log = await prisma.broadcastLog.findUnique({
+        where: { id: logId },
+        select: { sessionId: true, status: true, total: true, sent: true, failed: true }
+    });
+    if (!log) return;
 
+    if (!sessionQueues.has(log.sessionId)) {
+        sessionQueues.set(log.sessionId, []);
+    }
+    const queue = sessionQueues.get(log.sessionId)!;
+
+    if (!queue.includes(logId) && sessionActiveLog.get(log.sessionId) !== logId) {
+        queue.push(logId);
+        logger.info("Broadcast", `Disparo ${logId} enfileirado na sessão ${log.sessionId} (posição: ${queue.length})`);
+    }
+
+    // Se já houver um disparo rodando nesta sessão, notifica que este está na fila
+    if (sessionActiveLog.get(log.sessionId) && sessionActiveLog.get(log.sessionId) !== logId) {
+        const io = (global as any).io;
+        const position = queue.indexOf(logId) + 1;
+        try {
+            io?.to(log.sessionId).emit("broadcast.progress", {
+                broadcastId: logId,
+                status: "queued",
+                position,
+                total: log.total,
+                sent: log.sent,
+                failed: log.failed,
+                message: `Aguardando disparo anterior terminar (${position}º na fila sequencial)`
+            });
+        } catch {}
+    }
+
+    void processSessionQueue(log.sessionId);
+}
+
+async function processSessionQueue(sessionId: string): Promise<void> {
+    if (sessionActiveLog.get(sessionId)) {
+        // Disparo ativo em andamento — o próximo iniciará assim que este terminar
+        return;
+    }
+
+    const queue = sessionQueues.get(sessionId);
+    if (!queue || queue.length === 0) {
+        sessionActiveLog.set(sessionId, null);
+        return;
+    }
+
+    const nextLogId = queue.shift()!;
+    sessionActiveLog.set(sessionId, nextLogId);
+
+    try {
+        await executeBroadcast(nextLogId);
+    } catch (err) {
+        logger.error("Broadcast", `Erro ao executar disparo ${nextLogId} na fila:`, err);
+    } finally {
+        sessionActiveLog.set(sessionId, null);
+        // Processa o próximo item da fila sequencial imediatamente
+        void processSessionQueue(sessionId);
+    }
+}
+
+async function executeBroadcast(logId: string): Promise<void> {
     const log = await prisma.broadcastLog.findUnique({
         where: { id: logId },
         include: { recipients: true }
     });
     if (!log) return;
+
+    if (cancelled.has(logId) || log.status === "cancelled") {
+        return;
+    }
 
     const io = (global as any).io;
     const emit = (payload: Record<string, any>) => {
@@ -71,6 +164,11 @@ export async function runBroadcast(logId: string): Promise<void> {
     const messageContent: AnyMessageContent = { text: log.message };
     const baseDelay = log.delay || 2000;
 
+    await prisma.broadcastLog.update({
+        where: { id: logId },
+        data: { status: "running", startedAt: log.status === "scheduled" ? new Date() : undefined }
+    }).catch(() => {});
+
     emit({
         broadcastId: logId, status: "running", total, sent, failed,
         current: null, progress: total ? Math.round(((sent + failed) / total) * 100) : 0
@@ -85,7 +183,6 @@ export async function runBroadcast(logId: string): Promise<void> {
 
             let current: { jid: string; error: string } | null = null;
             try {
-                // O WhatsApp só entrega no JID canônico (ex.: 5566996876005 -> 556696876005)
                 let target = recipient.jid;
                 if (target.endsWith("@s.whatsapp.net")) {
                     const number = target.split("@")[0];
@@ -102,7 +199,6 @@ export async function runBroadcast(logId: string): Promise<void> {
                 sent++;
                 if (wasFailed) failed--;
 
-                // Atualização assíncrona para não travar a velocidade do envio
                 void prisma.broadcastRecipient.update({
                     where: { id: recipient.id },
                     data: { status: "sent", sentAt: new Date(), jid: target, error: null }
@@ -171,12 +267,40 @@ export async function runBroadcast(logId: string): Promise<void> {
         });
 
         logger.info("Broadcast", `Disparo ${logId} ${stopReason === "cancelled" ? "cancelado" : "concluído"}: ${sent} enviados, ${failed} falhas de ${total}`);
+
+        // Se este disparo é recorrente diário (Horários Programados) e completou, renova para o dia seguinte
+        if (stopReason === "completed" && (log as any).repeatDaily && log.scheduledAt) {
+            try {
+                const nextRun = new Date(log.scheduledAt.getTime() + 24 * 60 * 60 * 1000);
+                const nextLog = await prisma.broadcastLog.create({
+                    data: {
+                        sessionId: log.sessionId,
+                        message: log.message,
+                        total: log.recipients.length,
+                        delay: log.delay,
+                        status: "scheduled",
+                        scheduledAt: nextRun,
+                        repeatDaily: true,
+                        timeSlot: (log as any).timeSlot || null,
+                        recipients: {
+                            create: log.recipients.map(r => ({
+                                jid: r.jid,
+                                status: "pending"
+                            }))
+                        }
+                    }
+                });
+                logger.info("Broadcast Scheduler", `Disparo diário renovado para o próximo dia às ${(log as any).timeSlot || 'horário programado'} (${nextRun.toISOString()}) - Novo ID: ${nextLog.id}`);
+            } catch (err) {
+                logger.error("Broadcast Scheduler", "Falha ao renovar agendamento diário:", err);
+            }
+        }
     }
 }
 
 /**
  * Processa disparos agendados cujo horário já chegou.
- * Chame a cada 30 s (ou similar) a partir do servidor.
+ * Roda a cada 10 segundos no servidor.
  */
 export async function processScheduledBroadcasts(): Promise<void> {
     try {
@@ -185,19 +309,22 @@ export async function processScheduledBroadcasts(): Promise<void> {
             where: {
                 status: "scheduled",
                 scheduledAt: { lte: now }
-            }
+            },
+            orderBy: { scheduledAt: "asc" }
         });
 
         if (due.length === 0) return;
 
-        logger.info("Broadcast Scheduler", `${due.length} disparo agendado(s) devido(s)`);
+        logger.info("Broadcast Scheduler", `${due.length} disparo(s) agendado(s) devido(s)`);
 
         for (const log of due) {
             if (active.has(log.id)) continue;
+            // Marca como running/queued no DB para não ser capturado por outro ciclo
             await prisma.broadcastLog.update({
                 where: { id: log.id },
                 data: { status: "running", startedAt: new Date() }
             }).catch(() => {});
+            // Enfileira na fila sequencial da sessão
             void runBroadcast(log.id);
         }
     } catch (e) {
@@ -207,7 +334,7 @@ export async function processScheduledBroadcasts(): Promise<void> {
 
 let _bcastTimer: ReturnType<typeof setInterval> | null = null;
 
-export function startBroadcastScheduler(intervalMs = 30 * 1000): void {
+export function startBroadcastScheduler(intervalMs = 10 * 1000): void {
     if (_bcastTimer) return;
     void processScheduledBroadcasts();
     _bcastTimer = setInterval(() => {
@@ -216,22 +343,25 @@ export function startBroadcastScheduler(intervalMs = 30 * 1000): void {
 }
 
 /**
- * Adiciona a coluna scheduledAt ao banco existente, se ainda não existir.
- * Idempotente: ignora erro de coluna duplicada.
+ * Adiciona as colunas scheduledAt, repeatDaily e timeSlot ao banco existente.
+ * Idempotente.
  */
 export async function ensureScheduledColumn(): Promise<void> {
     try {
         const isPostgres = process.env.DATABASE_URL?.startsWith("postgres");
         if (isPostgres) {
             await prisma.$executeRawUnsafe(`ALTER TABLE "BroadcastLog" ADD COLUMN IF NOT EXISTS "scheduledAt" TIMESTAMP`);
+            await prisma.$executeRawUnsafe(`ALTER TABLE "BroadcastLog" ADD COLUMN IF NOT EXISTS "repeatDaily" BOOLEAN DEFAULT FALSE`);
+            await prisma.$executeRawUnsafe(`ALTER TABLE "BroadcastLog" ADD COLUMN IF NOT EXISTS "timeSlot" VARCHAR(20)`);
         } else {
             await prisma.$executeRawUnsafe(`ALTER TABLE "BroadcastLog" ADD COLUMN "scheduledAt" DATETIME`);
+            await prisma.$executeRawUnsafe(`ALTER TABLE "BroadcastLog" ADD COLUMN "repeatDaily" BOOLEAN DEFAULT 0`);
+            await prisma.$executeRawUnsafe(`ALTER TABLE "BroadcastLog" ADD COLUMN "timeSlot" TEXT`);
         }
     } catch (e: any) {
         const msg = String(e?.message || e);
         if (!/duplicate column|already exists|coluna.*existe/i.test(msg)) {
-            logger.warn("Broadcast Scheduler", `Não foi possível adicionar coluna scheduledAt: ${msg}`);
+            logger.warn("Broadcast Scheduler", `Não foi possível verificar colunas de agendamento: ${msg}`);
         }
     }
 }
-

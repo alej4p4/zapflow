@@ -10,7 +10,11 @@ const broadcastBodySchema = z.object({
     recipients: z.array(z.string()),
     message: z.string().min(1),
     delay: z.number().optional(),
-    scheduledAt: z.string().optional()
+    scheduledAt: z.string().optional(),
+    mode: z.enum(["now", "datetime", "programmed"]).optional(),
+    programmedTimes: z.array(z.string()).optional(),
+    scheduledDateTimes: z.array(z.string()).optional(),
+    repeatDaily: z.boolean().optional(),
 });
 
 export async function POST(
@@ -31,7 +35,7 @@ export async function POST(
             return NextResponse.json({ error: parseResult.error.flatten() }, { status: 400 });
         }
 
-        const { message, delay, scheduledAt } = parseResult.data;
+        const { message, delay, scheduledAt, mode, programmedTimes, scheduledDateTimes, repeatDaily } = parseResult.data;
         // Normaliza e remove duplicados (mesmo número digitado duas vezes)
         const recipients = [...new Set(parseResult.data.recipients.map(toWhatsAppJid).filter(Boolean))];
         if (recipients.length === 0) {
@@ -48,6 +52,53 @@ export async function POST(
             return NextResponse.json({ status: false, message: "Session not ready", error: "Session not ready" }, { status: 503 });
         }
 
+        // Modo Horários Programados (ex.: 12:00, 15:00, 18:00)
+        if (mode === "programmed" && programmedTimes && programmedTimes.length > 0) {
+            const createdLogs = [];
+            for (let i = 0; i < programmedTimes.length; i++) {
+                const timeSlot = programmedTimes[i];
+                let targetDate: Date;
+
+                if (scheduledDateTimes && scheduledDateTimes[i]) {
+                    targetDate = new Date(scheduledDateTimes[i]);
+                } else {
+                    const [h, m] = timeSlot.split(":");
+                    const now = new Date();
+                    targetDate = new Date(now.getFullYear(), now.getMonth(), now.getDate(), parseInt(h, 10), parseInt(m || "0", 10), 0, 0);
+                    if (targetDate.getTime() <= now.getTime()) {
+                        targetDate.setDate(targetDate.getDate() + 1);
+                    }
+                }
+
+                const bLog = await prisma.broadcastLog.create({
+                    data: {
+                        sessionId,
+                        message,
+                        total: recipients.length,
+                        delay: delay || 2000,
+                        status: "scheduled",
+                        scheduledAt: targetDate,
+                        repeatDaily: repeatDaily !== false,
+                        timeSlot: timeSlot,
+                        recipients: {
+                            create: recipients.map(jid => ({
+                                jid,
+                                status: "pending"
+                            }))
+                        }
+                    }
+                });
+                createdLogs.push(bLog);
+            }
+
+            return NextResponse.json({
+                status: true,
+                message: `${createdLogs.length} disparo(s) programado(s) com sucesso`,
+                data: { count: createdLogs.length, logs: createdLogs }
+            });
+        }
+
+        // Modo Agendamento de Data/Hora única ou Disparo Imediato
         const logData: any = {
             sessionId,
             message,
@@ -72,14 +123,14 @@ export async function POST(
             data: logData
         });
 
-        // Disparo imediato (sem agendamento) começa a enviar agora.
+        // Disparo imediato (sem agendamento) entra na fila sequencial da sessão
         if (!scheduledAt) {
             void runBroadcast(log.id);
         }
 
         return NextResponse.json({
             status: true,
-            message: "Broadcast started",
+            message: scheduledAt ? "Disparo agendado com sucesso" : "Disparo iniciado na fila sequencial",
             data: { broadcastId: log.id, total: recipients.length }
         });
 
