@@ -5,6 +5,16 @@ import { useSession } from "@/components/dashboard/session-provider";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { Checkbox } from "@/components/ui/checkbox";
+import {
+    Dialog,
+    DialogContent,
+    DialogDescription,
+    DialogFooter,
+    DialogHeader,
+    DialogTitle,
+} from "@/components/ui/dialog";
 import {
     Table,
     TableBody,
@@ -17,12 +27,9 @@ import {
     Pagination,
     PaginationContent,
     PaginationItem,
-    PaginationLink,
-    PaginationNext,
-    PaginationPrevious
 } from "@/components/ui/pagination";
 
-import { Search, Loader2, User } from "lucide-react";
+import { Search, Loader2, User, Sparkles, Trash2, AlertTriangle, CheckCircle2, Ban, Copy } from "lucide-react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import {
     Select,
@@ -32,6 +39,7 @@ import {
     SelectValue,
 } from "@/components/ui/select";
 import { SessionGuard } from "@/components/dashboard/session-guard";
+import { toast } from "sonner";
 
 interface Contact {
     id: string;
@@ -41,6 +49,14 @@ interface Contact {
     verifiedName?: string;
     profilePic?: string;
     remoteJidAlt?: string;
+}
+
+interface CleanupDiagnostic {
+    totalContacts: number;
+    duplicates: Array<{ id: string; jid: string; name: string; phone: string; reason: string }>;
+    invalidNumbers: Array<{ id: string; jid: string; name: string; reason: string }>;
+    failedContacts: Array<{ id: string; jid: string; name: string; phone: string; reason: string }>;
+    allFailedBroadcastJids: string[];
 }
 
 // In-memory client cache for contacts pagination (WhatsApp Web method)
@@ -61,6 +77,16 @@ export default function ContactListPage() {
     const [loading, setLoading] = useState(!initialCached && !!sessionId);
     const [meta, setMeta] = useState(initialCached?.meta || { total: 0, totalPages: 1 });
 
+    // Cleanup Modal State
+    const [cleanupOpen, setCleanupOpen] = useState(false);
+    const [analyzing, setAnalyzing] = useState(false);
+    const [cleaning, setCleaning] = useState(false);
+    const [diagnostic, setDiagnostic] = useState<CleanupDiagnostic | null>(null);
+    const [cleanDuplicates, setCleanDuplicates] = useState(true);
+    const [cleanInvalid, setCleanInvalid] = useState(true);
+    const [cleanFailed, setCleanFailed] = useState(true);
+    const [syncBroadcastExclude, setSyncBroadcastExclude] = useState(true);
+
     // Debounce Search
     useEffect(() => {
         const timer = setTimeout(() => {
@@ -75,9 +101,12 @@ export default function ContactListPage() {
         fetchContacts();
     }, [page, sessionId, limit]);
 
-    const fetchContacts = async () => {
+    const fetchContacts = async (forceRefresh = false) => {
         if (!sessionId) return;
         const key = `${sessionId}:${page}:${limit}:${search}`;
+        if (forceRefresh) {
+            contactsPageCache.clear();
+        }
         if (!contactsPageCache.has(key)) setLoading(true);
         try {
             const params = new URLSearchParams({
@@ -103,6 +132,109 @@ export default function ContactListPage() {
         }
     };
 
+    const handleOpenCleanup = async () => {
+        if (!sessionId) return;
+        setCleanupOpen(true);
+        setAnalyzing(true);
+        try {
+            const res = await fetch(`/api/contacts/${sessionId}`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ action: "analyze" }),
+            });
+            const data = await res.json();
+            if (res.ok && data.status) {
+                setDiagnostic(data.data);
+            } else {
+                toast.error(data.error || "Não foi possível analisar os contatos");
+            }
+        } catch {
+            toast.error("Erro ao analisar base de contatos");
+        } finally {
+            setAnalyzing(false);
+        }
+    };
+
+    const handleExecuteCleanup = async () => {
+        if (!sessionId || !diagnostic) return;
+        setCleaning(true);
+        try {
+            const idsToDelete = new Set<string>();
+            if (cleanDuplicates) diagnostic.duplicates.forEach(d => idsToDelete.add(d.id));
+            if (cleanInvalid) diagnostic.invalidNumbers.forEach(i => idsToDelete.add(i.id));
+            if (cleanFailed) diagnostic.failedContacts.forEach(f => idsToDelete.add(f.id));
+
+            const res = await fetch(`/api/contacts/${sessionId}`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    action: "cleanup",
+                    contactIds: Array.from(idsToDelete)
+                }),
+            });
+            const data = await res.json();
+
+            if (res.ok && data.status) {
+                let blockedCount = 0;
+                if (syncBroadcastExclude && diagnostic.allFailedBroadcastJids.length > 0) {
+                    try {
+                        const storageKey = `zapflow_broadcast_excluded_${sessionId}`;
+                        const raw = localStorage.getItem(storageKey);
+                        const existing: string[] = raw ? JSON.parse(raw) : [];
+                        const merged = new Set(existing);
+                        for (const jid of diagnostic.allFailedBroadcastJids) {
+                            merged.add(jid);
+                            const digits = jid.split("@")[0].replace(/\D/g, "");
+                            if (digits) merged.add(`${digits}@s.whatsapp.net`);
+                        }
+                        localStorage.setItem(storageKey, JSON.stringify(Array.from(merged)));
+                        blockedCount = diagnostic.allFailedBroadcastJids.length;
+                    } catch { /* ignore */ }
+                }
+
+                toast.success(
+                    `${data.data.deletedCount} contato(s) limpo(s) da base` +
+                    (blockedCount > 0 ? ` e ${blockedCount} número(s) com falha bloqueado(s) nos próximos disparos!` : "!")
+                );
+                setCleanupOpen(false);
+                await fetchContacts(true);
+            } else {
+                toast.error(data.error || "Erro ao executar limpeza");
+            }
+        } catch {
+            toast.error("Erro ao executar limpeza de contatos");
+        } finally {
+            setCleaning(false);
+        }
+    };
+
+    const handleDeleteSingleContact = async (contact: Contact) => {
+        if (!sessionId) return;
+        try {
+            const res = await fetch(`/api/contacts/${sessionId}`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ action: "deleteOne", contactId: contact.id }),
+            });
+            if (res.ok) {
+                toast.success(`Contato "${contact.name || contact.notify || contact.jid}" removido`);
+                await fetchContacts(true);
+            } else {
+                toast.error("Não foi possível excluir o contato");
+            }
+        } catch {
+            toast.error("Erro ao excluir contato");
+        }
+    };
+
+    const selectedCleanupCount = diagnostic ? (() => {
+        const ids = new Set<string>();
+        if (cleanDuplicates) diagnostic.duplicates.forEach(d => ids.add(d.id));
+        if (cleanInvalid) diagnostic.invalidNumbers.forEach(i => ids.add(i.id));
+        if (cleanFailed) diagnostic.failedContacts.forEach(f => ids.add(f.id));
+        return ids.size;
+    })() : 0;
+
     return (
         <SessionGuard>
             <div className="space-y-6">
@@ -110,9 +242,17 @@ export default function ContactListPage() {
                     <div>
                         <h2 className="text-3xl font-bold tracking-tight">Contatos</h2>
                         <p className="text-muted-foreground">
-                            Gerencie e visualize seus contatos salvos.
+                            Gerencie, visualize e higienize sua base de contatos salvos.
                         </p>
                     </div>
+                    <Button
+                        onClick={handleOpenCleanup}
+                        variant="outline"
+                        className="border-amber-300 bg-amber-50/70 hover:bg-amber-100/80 text-amber-900 font-medium gap-2"
+                    >
+                        <Sparkles className="h-4 w-4 text-amber-600" />
+                        🧹 Limpeza de Base / Inválidos
+                    </Button>
                 </div>
 
                 <Card>
@@ -159,12 +299,13 @@ export default function ContactListPage() {
                                         <TableHead>Nome / nome exibido</TableHead>
                                         <TableHead className="hidden md:table-cell">JID (ID)</TableHead>
                                         <TableHead className="hidden md:table-cell">Telefone / alternativo</TableHead>
+                                        <TableHead className="w-[70px] text-right">Ações</TableHead>
                                     </TableRow>
                                 </TableHeader>
                                 <TableBody>
                                     {loading ? (
                                         <TableRow>
-                                            <TableCell colSpan={4} className="h-24 text-center">
+                                            <TableCell colSpan={5} className="h-24 text-center">
                                                 <div className="flex justify-center items-center gap-2">
                                                     <Loader2 className="h-4 w-4 animate-spin" />
                                                     Carregando...
@@ -173,7 +314,7 @@ export default function ContactListPage() {
                                         </TableRow>
                                     ) : contacts.length === 0 ? (
                                         <TableRow>
-                                            <TableCell colSpan={4} className="h-24 text-center">
+                                            <TableCell colSpan={5} className="h-24 text-center">
                                                 Nenhum contato encontrado.
                                             </TableCell>
                                         </TableRow>
@@ -201,6 +342,17 @@ export default function ContactListPage() {
                                                 </TableCell>
                                                 <TableCell className="hidden md:table-cell text-sm">
                                                     {contact.remoteJidAlt || "-"}
+                                                </TableCell>
+                                                <TableCell className="text-right">
+                                                    <Button
+                                                        variant="ghost"
+                                                        size="icon"
+                                                        className="h-8 w-8 text-muted-foreground hover:text-red-600"
+                                                        title="Remover contato"
+                                                        onClick={() => handleDeleteSingleContact(contact)}
+                                                    >
+                                                        <Trash2 className="h-4 w-4" />
+                                                    </Button>
                                                 </TableCell>
                                             </TableRow>
                                         ))
@@ -245,6 +397,188 @@ export default function ContactListPage() {
                         )}
                     </CardContent>
                 </Card>
+
+                {/* Modal de Diagnóstico e Limpeza Automática (#11) */}
+                <Dialog open={cleanupOpen} onOpenChange={setCleanupOpen}>
+                    <DialogContent className="sm:max-w-[600px] max-h-[85vh] overflow-y-auto">
+                        <DialogHeader>
+                            <DialogTitle className="flex items-center gap-2">
+                                <Sparkles className="h-5 w-5 text-amber-500" />
+                                Limpeza Inteligente de Contatos e Números Inválidos
+                            </DialogTitle>
+                            <DialogDescription>
+                                Identifique e remova contatos duplicados, registros sem telefone válido e números que falharam em disparos anteriores.
+                            </DialogDescription>
+                        </DialogHeader>
+
+                        {analyzing ? (
+                            <div className="py-10 flex flex-col items-center justify-center gap-3 text-muted-foreground">
+                                <Loader2 className="h-7 w-7 animate-spin text-primary" />
+                                <p className="text-sm">Analisando base de contatos e histórico de falhas de disparo...</p>
+                            </div>
+                        ) : diagnostic ? (
+                            <div className="space-y-4 py-2">
+                                <div className="grid grid-cols-3 gap-2.5">
+                                    <div className="rounded-lg border p-3 bg-amber-50/50 border-amber-200">
+                                        <div className="flex items-center justify-between">
+                                            <span className="text-xs font-medium text-amber-800">Duplicados</span>
+                                            <Copy className="h-3.5 w-3.5 text-amber-600" />
+                                        </div>
+                                        <p className="text-2xl font-bold text-amber-900 mt-1">{diagnostic.duplicates.length}</p>
+                                    </div>
+                                    <div className="rounded-lg border p-3 bg-red-50/50 border-red-200">
+                                        <div className="flex items-center justify-between">
+                                            <span className="text-xs font-medium text-red-800">Falha no Disparo</span>
+                                            <Ban className="h-3.5 w-3.5 text-red-600" />
+                                        </div>
+                                        <p className="text-2xl font-bold text-red-900 mt-1">
+                                            {Math.max(diagnostic.failedContacts.length, diagnostic.allFailedBroadcastJids.length)}
+                                        </p>
+                                    </div>
+                                    <div className="rounded-lg border p-3 bg-slate-50 border-slate-200">
+                                        <div className="flex items-center justify-between">
+                                            <span className="text-xs font-medium text-slate-700">Sem Telefone / LID</span>
+                                            <AlertTriangle className="h-3.5 w-3.5 text-slate-500" />
+                                        </div>
+                                        <p className="text-2xl font-bold text-slate-900 mt-1">{diagnostic.invalidNumbers.length}</p>
+                                    </div>
+                                </div>
+
+                                <div className="space-y-2.5 rounded-xl border p-3.5 bg-muted/20">
+                                    <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                                        Selecione o que deseja higienizar:
+                                    </p>
+
+                                    <label className="flex items-start gap-2.5 cursor-pointer py-1">
+                                        <Checkbox
+                                            checked={cleanDuplicates}
+                                            onCheckedChange={(v) => setCleanDuplicates(!!v)}
+                                            className="mt-0.5"
+                                        />
+                                        <div className="text-xs">
+                                            <span className="font-semibold text-foreground">
+                                                Remover contatos duplicados ({diagnostic.duplicates.length})
+                                            </span>
+                                            <p className="text-muted-foreground">
+                                                Mantém apenas o contato mais completo para cada número de telefone.
+                                            </p>
+                                        </div>
+                                    </label>
+
+                                    <label className="flex items-start gap-2.5 cursor-pointer py-1">
+                                        <Checkbox
+                                            checked={cleanFailed}
+                                            onCheckedChange={(v) => setCleanFailed(!!v)}
+                                            className="mt-0.5"
+                                        />
+                                        <div className="text-xs">
+                                            <span className="font-semibold text-foreground">
+                                                Remover contatos que falharam em disparos ({diagnostic.failedContacts.length})
+                                            </span>
+                                            <p className="text-muted-foreground">
+                                                Exclui da agenda contatos cujo número retornou erro ou não possui WhatsApp ativo.
+                                            </p>
+                                        </div>
+                                    </label>
+
+                                    <label className="flex items-start gap-2.5 cursor-pointer py-1">
+                                        <Checkbox
+                                            checked={cleanInvalid}
+                                            onCheckedChange={(v) => setCleanInvalid(!!v)}
+                                            className="mt-0.5"
+                                        />
+                                        <div className="text-xs">
+                                            <span className="font-semibold text-foreground">
+                                                Remover JIDs internos sem número (@lid órfãos) ({diagnostic.invalidNumbers.length})
+                                            </span>
+                                            <p className="text-muted-foreground">
+                                                Remove registros técnicos sem número de telefone que não podem receber disparos.
+                                            </p>
+                                        </div>
+                                    </label>
+
+                                    <label className="flex items-start gap-2.5 cursor-pointer py-1 pt-2 border-t border-border/60">
+                                        <Checkbox
+                                            checked={syncBroadcastExclude}
+                                            onCheckedChange={(v) => setSyncBroadcastExclude(!!v)}
+                                            className="mt-0.5"
+                                        />
+                                        <div className="text-xs">
+                                            <span className="font-semibold text-red-700">
+                                                🚫 Bloquear todos os números com falha ({diagnostic.allFailedBroadcastJids.length}) nos próximos disparos
+                                            </span>
+                                            <p className="text-muted-foreground">
+                                                Adiciona automaticamente os números que deram erro na lista de exclusão do Disparo em Massa.
+                                            </p>
+                                        </div>
+                                    </label>
+                                </div>
+
+                                {(diagnostic.duplicates.length > 0 || diagnostic.failedContacts.length > 0) && (
+                                    <div className="space-y-1.5">
+                                        <p className="text-xs font-medium text-muted-foreground">
+                                            Prévia de registros detectados:
+                                        </p>
+                                        <div className="max-h-40 overflow-y-auto rounded-lg border bg-background divide-y text-xs">
+                                            {diagnostic.failedContacts.slice(0, 15).map((item) => (
+                                                <div key={`fail-${item.id}`} className="px-3 py-1.5 flex items-center justify-between gap-2">
+                                                    <div className="truncate">
+                                                        <span className="font-medium text-red-700">{item.name}</span>{" "}
+                                                        <span className="font-mono text-muted-foreground">({item.phone})</span>
+                                                    </div>
+                                                    <Badge variant="outline" className="text-[10px] border-red-200 text-red-700 shrink-0">
+                                                        Falha no disparo
+                                                    </Badge>
+                                                </div>
+                                            ))}
+                                            {diagnostic.duplicates.slice(0, 15).map((item) => (
+                                                <div key={`dup-${item.id}`} className="px-3 py-1.5 flex items-center justify-between gap-2">
+                                                    <div className="truncate">
+                                                        <span className="font-medium">{item.name}</span>{" "}
+                                                        <span className="font-mono text-muted-foreground">({item.phone})</span>
+                                                    </div>
+                                                    <Badge variant="outline" className="text-[10px] border-amber-200 text-amber-700 shrink-0">
+                                                        Duplicado
+                                                    </Badge>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
+                                )}
+
+                                {selectedCleanupCount === 0 && (!syncBroadcastExclude || diagnostic.allFailedBroadcastJids.length === 0) && (
+                                    <div className="rounded-lg border border-emerald-200 bg-emerald-50/60 p-3 flex items-center gap-2 text-xs text-emerald-800">
+                                        <CheckCircle2 className="h-4 w-4 text-emerald-600 shrink-0" />
+                                        Sua base de contatos está limpa! Nenhum item pendente para remoção com os filtros atuais.
+                                    </div>
+                                )}
+                            </div>
+                        ) : null}
+
+                        <DialogFooter className="gap-2">
+                            <Button variant="outline" onClick={() => setCleanupOpen(false)}>
+                                Cancelar
+                            </Button>
+                            <Button
+                                onClick={handleExecuteCleanup}
+                                disabled={cleaning || analyzing || (!selectedCleanupCount && (!syncBroadcastExclude || !diagnostic?.allFailedBroadcastJids.length))}
+                                className="bg-amber-600 hover:bg-amber-700 text-white"
+                            >
+                                {cleaning ? (
+                                    <>
+                                        <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                                        Limpando...
+                                    </>
+                                ) : (
+                                    <>
+                                        <Sparkles className="h-4 w-4 mr-2" />
+                                        Executar Limpeza ({selectedCleanupCount} contatos)
+                                    </>
+                                )}
+                            </Button>
+                        </DialogFooter>
+                    </DialogContent>
+                </Dialog>
             </div>
         </SessionGuard>
     );

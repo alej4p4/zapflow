@@ -26,7 +26,7 @@ export async function getSystemConfigCached(): Promise<SystemConfigData> {
             logoUrl: config?.logoUrl || "",
             faviconUrl: config?.faviconUrl || "/favicon.ico",
             timezone: config?.timezone || "America/Sao_Paulo",
-            enableRegistration: config?.enableRegistration ?? true,
+            enableRegistration: config?.enableRegistration ?? false,
         };
         lastFetchTime = now;
         return cachedConfig;
@@ -36,7 +36,7 @@ export async function getSystemConfigCached(): Promise<SystemConfigData> {
             appName: "WA-AKG",
             faviconUrl: "/favicon.ico",
             timezone: "America/Sao_Paulo",
-            enableRegistration: true,
+            enableRegistration: false,
         };
     }
 }

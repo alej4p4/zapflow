@@ -7,8 +7,9 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { Switch } from "@/components/ui/switch";
 import { toast } from "sonner";
-import { BotMessageSquare, Loader2, Plus, Trash2, MessageCircleReply, Image as ImageIcon, Pencil } from "lucide-react";
+import { BotMessageSquare, Loader2, Plus, Trash2, Image as ImageIcon, Pencil, Clock, Save, CheckCircle2 } from "lucide-react";
 import {
     Dialog,
     DialogContent,
@@ -34,6 +35,18 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { getAutoReplies, createAutoReply, deleteAutoReply, updateAutoReply } from "./actions";
 import { SessionGuard } from "@/components/dashboard/session-guard";
 
+const AWAY_SCHEDULE_KEYWORD = "__AWAY_SCHEDULE__";
+
+const WEEK_DAYS = [
+    { day: 1, label: "Seg" },
+    { day: 2, label: "Ter" },
+    { day: 3, label: "Qua" },
+    { day: 4, label: "Qui" },
+    { day: 5, label: "Sex" },
+    { day: 6, label: "Sáb" },
+    { day: 0, label: "Dom" },
+];
+
 interface AutoReply {
     id: string;
     keyword: string;
@@ -50,6 +63,18 @@ export default function AutoReplyPage() {
     const { sessionId } = useSession();
     const [rules, setRules] = useState<AutoReply[]>([]);
     const [loading, setLoading] = useState(false);
+
+    // Away / Business Hours Schedule state (#14)
+    const [awayRuleId, setAwayRuleId] = useState<string | null>(null);
+    const [awayEnabled, setAwayEnabled] = useState(false);
+    const [startTime, setStartTime] = useState("07:30");
+    const [endTime, setEndTime] = useState("18:00");
+    const [workDays, setWorkDays] = useState<number[]>([1, 2, 3, 4, 5]);
+    const [cooldownMinutes, setCooldownMinutes] = useState("120");
+    const [awayMessage, setAwayMessage] = useState(
+        "{saudacao}! Recebemos sua mensagem, porém nosso horário de atendimento é de segunda a sexta, das 07:30 às 18:00. Assim que retornarmos, responderemos você!"
+    );
+    const [savingAway, setSavingAway] = useState(false);
     
     // Form states
     const [isCreateOpen, setIsCreateOpen] = useState(false);
@@ -82,14 +107,85 @@ export default function AutoReplyPage() {
         if (!sessionId) return;
         setLoading(true);
         try {
-            // Using direct Server Action instead of API route
-            const data = await getAutoReplies(sessionId);
-            setRules(data as unknown as AutoReply[]);
+            const data = (await getAutoReplies(sessionId)) as unknown as AutoReply[];
+            const awayRule = data.find(r => r.keyword === AWAY_SCHEDULE_KEYWORD);
+            if (awayRule) {
+                setAwayRuleId(awayRule.id);
+                try {
+                    const parsed = JSON.parse(awayRule.response || "{}");
+                    setAwayEnabled(!!parsed.enabled);
+                    if (parsed.startTime) setStartTime(parsed.startTime);
+                    if (parsed.endTime) setEndTime(parsed.endTime);
+                    if (Array.isArray(parsed.workDays)) setWorkDays(parsed.workDays);
+                    if (parsed.cooldownMinutes) setCooldownMinutes(String(parsed.cooldownMinutes));
+                    if (parsed.message) setAwayMessage(parsed.message);
+                } catch { /* ignore */ }
+            } else {
+                setAwayRuleId(null);
+            }
+            setRules(data.filter(r => r.keyword !== AWAY_SCHEDULE_KEYWORD));
         } catch (error: any) {
             console.error(error);
             toast.error(error.message || "Erro ao carregar respostas automáticas");
         } finally {
             setLoading(false);
+        }
+    };
+
+    const toggleWorkDay = (day: number) => {
+        setWorkDays(prev =>
+            prev.includes(day) ? prev.filter(d => d !== day) : [...prev, day]
+        );
+    };
+
+    const handleSaveAwaySchedule = async () => {
+        if (!sessionId) return;
+        if (!awayMessage.trim()) {
+            toast.error("Informe a mensagem de ausência automática");
+            return;
+        }
+        setSavingAway(true);
+        try {
+            const payloadJson = JSON.stringify({
+                enabled: awayEnabled,
+                startTime,
+                endTime,
+                workDays,
+                cooldownMinutes: parseInt(cooldownMinutes, 10) || 120,
+                message: awayMessage.trim(),
+            });
+
+            if (awayRuleId) {
+                await updateAutoReply(sessionId, awayRuleId, {
+                    keyword: AWAY_SCHEDULE_KEYWORD,
+                    response: payloadJson,
+                    matchType: "EXACT",
+                    triggerType: "PRIVATE",
+                    isMedia: false,
+                    mediaUrl: null,
+                    mediaType: null,
+                });
+            } else {
+                const created = await createAutoReply(sessionId, {
+                    keyword: AWAY_SCHEDULE_KEYWORD,
+                    response: payloadJson,
+                    matchType: "EXACT",
+                    triggerType: "PRIVATE",
+                    isMedia: false,
+                    mediaUrl: null,
+                    mediaType: null,
+                });
+                setAwayRuleId(created.id);
+            }
+            toast.success(
+                awayEnabled
+                    ? "Horário de funcionamento e mensagem de ausência ativados!"
+                    : "Configuração de horário salva (desativada)."
+            );
+        } catch (error: any) {
+            toast.error(error.message || "Erro ao salvar horário de funcionamento");
+        } finally {
+            setSavingAway(false);
         }
     };
 
@@ -102,7 +198,6 @@ export default function AutoReplyPage() {
 
         setSubmitting(true);
         try {
-            // Using direct Server Action instead of API route
             await createAutoReply(sessionId, {
                 keyword: keyword.trim(),
                 response: response.trim(),
@@ -128,7 +223,6 @@ export default function AutoReplyPage() {
     const handleDelete = async (ruleId: string) => {
         if (!sessionId) return;
         try {
-            // Using direct Server Action
             await deleteAutoReply(sessionId, ruleId);
             toast.success("Resposta automática excluída");
             fetchRules();
@@ -194,7 +288,7 @@ export default function AutoReplyPage() {
             <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
                 <div>
                     <h1 className="text-2xl font-bold tracking-tight">Respostas automáticas</h1>
-                    <p className="text-muted-foreground">Configure regras para responder automaticamente às mensagens recebidas.</p>
+                    <p className="text-muted-foreground">Configure horário de expediente, mensagem de ausência e regras por palavra-chave.</p>
                 </div>
 
                 <Dialog open={isCreateOpen} onOpenChange={(open) => {
@@ -204,7 +298,7 @@ export default function AutoReplyPage() {
                     <DialogTrigger asChild>
                         <Button>
                             <Plus className="w-4 h-4 mr-2" />
-                            Nova regra
+                            Nova regra por palavra-chave
                         </Button>
                     </DialogTrigger>
                     <DialogContent className="sm:max-w-[500px]">
@@ -219,7 +313,7 @@ export default function AutoReplyPage() {
                                     <Input 
                                         value={keyword} 
                                         onChange={(e) => setKeyword(e.target.value)} 
-                                        placeholder="e.g. !help, ping" 
+                                        placeholder="e.g. !help, tabela, frete" 
                                     />
                                 </div>
                                 <div className="space-y-2">
@@ -257,7 +351,7 @@ export default function AutoReplyPage() {
                                 <Textarea 
                                     value={response} 
                                     onChange={(e) => setResponse(e.target.value)} 
-                                        placeholder="Obrigado pela mensagem! Nossa equipe responderá em breve." 
+                                    placeholder="Obrigado pela mensagem! Nossa equipe responderá em breve." 
                                     className="min-h-[120px]"
                                 />
                                 <p className="text-xs text-muted-foreground">Você pode usar a formatação padrão do WhatsApp (*negrito*, _itálico_, ~tachado~).</p>
@@ -297,6 +391,132 @@ export default function AutoReplyPage() {
                 </Dialog>
             </div>
 
+            {/* Card #14: Horário de Funcionamento / Ausência Automática */}
+            <Card className="border-primary/20 shadow-sm">
+                <CardHeader className="pb-3 border-b bg-muted/20">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                        <div className="flex items-start gap-3">
+                            <div className="p-2 rounded-lg bg-primary/10 text-primary mt-0.5">
+                                <Clock className="w-5 h-5" />
+                            </div>
+                            <div>
+                                <CardTitle className="text-base flex items-center gap-2">
+                                    🕒 Horário de Funcionamento & Ausência Automática
+                                    {awayEnabled ? (
+                                        <Badge className="bg-emerald-600 text-white text-[10px]">Ativo</Badge>
+                                    ) : (
+                                        <Badge variant="outline" className="text-[10px]">Desativado</Badge>
+                                    )}
+                                </CardTitle>
+                                <CardDescription className="text-xs mt-0.5">
+                                    Responde automaticamente no privado quando alguém envia mensagem fora do horário comercial (nunca dispara em grupos).
+                                </CardDescription>
+                            </div>
+                        </div>
+                        <div className="flex items-center gap-2 shrink-0">
+                            <Label htmlFor="away-switch" className="text-xs font-medium cursor-pointer">
+                                {awayEnabled ? "Ativado" : "Desativado"}
+                            </Label>
+                            <Switch
+                                id="away-switch"
+                                checked={awayEnabled}
+                                onCheckedChange={setAwayEnabled}
+                            />
+                        </div>
+                    </div>
+                </CardHeader>
+                <CardContent className="pt-4 space-y-4">
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                        <div className="space-y-1.5">
+                            <Label className="text-xs">Início do expediente</Label>
+                            <Input
+                                type="time"
+                                value={startTime}
+                                onChange={(e) => setStartTime(e.target.value)}
+                                className="h-9"
+                            />
+                        </div>
+                        <div className="space-y-1.5">
+                            <Label className="text-xs">Fim do expediente</Label>
+                            <Input
+                                type="time"
+                                value={endTime}
+                                onChange={(e) => setEndTime(e.target.value)}
+                                className="h-9"
+                            />
+                        </div>
+                        <div className="space-y-1.5">
+                            <Label className="text-xs">Intervalo mínimo por contato</Label>
+                            <Select value={cooldownMinutes} onValueChange={setCooldownMinutes}>
+                                <SelectTrigger className="h-9">
+                                    <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                    <SelectItem value="60">A cada 1 hora</SelectItem>
+                                    <SelectItem value="120">A cada 2 horas (Recomendado)</SelectItem>
+                                    <SelectItem value="360">A cada 6 horas</SelectItem>
+                                    <SelectItem value="720">1 vez a cada 12 horas</SelectItem>
+                                </SelectContent>
+                            </Select>
+                        </div>
+                    </div>
+
+                    <div className="space-y-1.5">
+                        <Label className="text-xs">Dias de atendimento normal</Label>
+                        <div className="flex flex-wrap gap-1.5">
+                            {WEEK_DAYS.map((d) => {
+                                const active = workDays.includes(d.day);
+                                return (
+                                    <button
+                                        key={d.day}
+                                        type="button"
+                                        onClick={() => toggleWorkDay(d.day)}
+                                        className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors ${
+                                            active
+                                                ? "bg-primary text-primary-foreground border-primary shadow-sm"
+                                                : "bg-muted/40 text-muted-foreground border-border hover:bg-muted"
+                                        }`}
+                                    >
+                                        {d.label}
+                                    </button>
+                                );
+                            })}
+                        </div>
+                    </div>
+
+                    <div className="space-y-1.5">
+                        <div className="flex items-center justify-between">
+                            <Label className="text-xs">Mensagem de ausência (fora do expediente)</Label>
+                            <span className="text-[11px] text-muted-foreground">
+                                Variáveis: <code className="bg-muted px-1 rounded">{"{saudacao}"}</code>, <code className="bg-muted px-1 rounded">{"{primeiro_nome}"}</code>
+                            </span>
+                        </div>
+                        <Textarea
+                            value={awayMessage}
+                            onChange={(e) => setAwayMessage(e.target.value)}
+                            className="min-h-[80px] text-sm"
+                            placeholder="Digite a mensagem que será enviada fora do horário comercial..."
+                        />
+                    </div>
+
+                    <div className="flex justify-end">
+                        <Button onClick={handleSaveAwaySchedule} disabled={savingAway} size="sm" className="gap-1.5">
+                            {savingAway ? (
+                                <>
+                                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                    Salvando...
+                                </>
+                            ) : (
+                                <>
+                                    <Save className="w-3.5 h-3.5" />
+                                    Salvar Horário de Atendimento
+                                </>
+                            )}
+                        </Button>
+                    </div>
+                </CardContent>
+            </Card>
+
             {loading ? (
                 <div className="flex items-center justify-center p-12">
                     <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
@@ -305,9 +525,9 @@ export default function AutoReplyPage() {
                 <Card className="border-dashed shadow-none bg-muted/30">
                     <CardContent className="flex flex-col items-center justify-center py-12 text-center">
                         <BotMessageSquare className="w-12 h-12 text-muted-foreground/50 mb-4" />
-                        <h3 className="text-lg font-semibold">Nenhuma resposta automática configurada</h3>
-                        <p className="text-muted-foreground mb-4">Você ainda não configurou respostas automáticas.</p>
-                        <Button variant="outline" onClick={() => setIsCreateOpen(true)}>Crie sua primeira regra</Button>
+                        <h3 className="text-lg font-semibold">Nenhuma regra por palavra-chave configurada</h3>
+                        <p className="text-muted-foreground mb-4">Crie regras para responder automaticamente a palavras específicas.</p>
+                        <Button variant="outline" onClick={() => setIsCreateOpen(true)}>Criar regra por palavra-chave</Button>
                     </CardContent>
                 </Card>
             ) : (

@@ -17,7 +17,7 @@ export default async function DashboardLayout({
     const session = await auth();
     const systemConfig = await getSystemConfigCached();
     const appName = systemConfig?.appName || "WA-AKG";
-    const registrationEnabled = systemConfig?.enableRegistration ?? true;
+    const registrationEnabled = systemConfig?.enableRegistration ?? false;
 
     return (
         <SessionProvider>

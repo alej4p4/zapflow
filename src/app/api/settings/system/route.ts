@@ -15,7 +15,11 @@ export async function GET(request: NextRequest) {
             where: { id: "default" }
         });
 
-        return NextResponse.json({ status: true, message: "System config fetched", data: config || { appName: "WA-AKG", faviconUrl: "/favicon.ico" } });
+        return NextResponse.json({
+            status: true,
+            message: "System config fetched",
+            data: config || { appName: "WA-AKG", faviconUrl: "/favicon.ico", enableRegistration: false }
+        });
     } catch (error) {
         return NextResponse.json({ status: false, message: "Failed to fetch settings", error: "Failed to fetch settings" }, { status: 500 });
     }
@@ -33,10 +37,26 @@ export async function POST(req: Request) {
         const { appName, logoUrl, faviconUrl, timezone, enableRegistration } = body;
 
         // @ts-ignore
+        const existing = await prisma.systemConfig.findUnique({ where: { id: "default" } });
+
+        // @ts-ignore
         const config = await prisma.systemConfig.upsert({
             where: { id: "default" },
-            update: { appName, logoUrl, faviconUrl, timezone, enableRegistration: enableRegistration ?? true },
-            create: { id: "default", appName, logoUrl: logoUrl || "", faviconUrl: faviconUrl || "/favicon.ico", timezone: timezone || "America/Sao_Paulo", enableRegistration: enableRegistration ?? true }
+            update: {
+                ...(appName !== undefined ? { appName } : {}),
+                ...(logoUrl !== undefined ? { logoUrl } : {}),
+                ...(faviconUrl !== undefined ? { faviconUrl } : {}),
+                ...(timezone !== undefined ? { timezone } : {}),
+                enableRegistration: enableRegistration ?? existing?.enableRegistration ?? false,
+            },
+            create: {
+                id: "default",
+                appName: appName || "WA-AKG",
+                logoUrl: logoUrl || "",
+                faviconUrl: faviconUrl || "/favicon.ico",
+                timezone: timezone || "America/Sao_Paulo",
+                enableRegistration: enableRegistration ?? false,
+            }
         });
 
         invalidateSystemConfigCache();

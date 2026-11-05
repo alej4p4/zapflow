@@ -3,32 +3,75 @@ import type { WASocket } from "@whiskeysockets/baileys";
 import { normalizeMessageContent } from "@whiskeysockets/baileys";
 import { logger } from "@/lib/logger";
 
-// Helper for permission check (Deduplicate from command-handler if possible, but keep simple here)
+export const AWAY_SCHEDULE_KEYWORD = "__AWAY_SCHEDULE__";
+
+interface AwayScheduleConfig {
+    enabled: boolean;
+    startTime: string; // "07:30"
+    endTime: string;   // "18:00"
+    workDays: number[]; // [1, 2, 3, 4, 5] (0=Sun .. 6=Sat)
+    message: string;
+    cooldownMinutes: number;
+}
+
+// Cooldown map: `${sessionId}:${remoteJid}` -> timestamp (ms)
+const awayCooldownMap = new Map<string, number>();
+
+function getNowInSaoPaulo(): { dayOfWeek: number; timeHHMM: string; greeting: string } {
+    const now = new Date();
+    const parts = new Intl.DateTimeFormat("en-US", {
+        timeZone: "America/Sao_Paulo",
+        weekday: "short",
+        hour: "2-digit",
+        minute: "2-digit",
+        hour12: false,
+    }).formatToParts(now);
+
+    const weekdayStr = parts.find(p => p.type === "weekday")?.value || "Mon";
+    const hourStr = parts.find(p => p.type === "hour")?.value || "12";
+    const minuteStr = parts.find(p => p.type === "minute")?.value || "00";
+
+    const dayMap: Record<string, number> = {
+        Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6,
+    };
+    const dayOfWeek = dayMap[weekdayStr] ?? now.getDay();
+    const hourNum = parseInt(hourStr, 10) % 24;
+    const timeHHMM = `${String(hourNum).padStart(2, "0")}:${minuteStr}`;
+
+    const greeting = hourNum < 12 ? "Bom dia" : hourNum < 18 ? "Boa tarde" : "Boa noite";
+    return { dayOfWeek, timeHHMM, greeting };
+}
+
+function isOutsideBusinessHours(cfg: AwayScheduleConfig): { isOutside: boolean; greeting: string } {
+    const { dayOfWeek, timeHHMM, greeting } = getNowInSaoPaulo();
+    const workDays = Array.isArray(cfg.workDays) ? cfg.workDays : [1, 2, 3, 4, 5];
+
+    if (!workDays.includes(dayOfWeek)) {
+        return { isOutside: true, greeting };
+    }
+
+    const start = cfg.startTime || "07:30";
+    const end = cfg.endTime || "18:00";
+
+    if (timeHHMM < start || timeHHMM > end) {
+        return { isOutside: true, greeting };
+    }
+
+    return { isOutside: false, greeting };
+}
+
+// Helper for permission check
 function canAutoReply(config: any, fromMe: boolean, senderJid: string): boolean {
     if (!config || !config.enabled) return false;
 
-    // Auto Reply Specific Mode
     const mode = config.autoReplyMode || 'ALL';
 
     if (fromMe) {
-        // If mode is OWNER, it triggers for ME? 
-        // Auto Reply usually replies TO someone. 
-        // If I send a message, and mode is OWNER, should it reply to me? 
-        // User requested "Self Mode" -> Use case: Snippets.
-        // So yes, if fromMe checks out.
-
-        // However, standard auto-reply logic (replying to incoming) should be blocked if fromMe is true AND mode is ALL?
-        // No, typically Auto Reply doesn't trigger on own messages to prevent unexpected loops.
-        // But for "Self Mode" (Macros), it MUST trigger on own messages.
-
         if (mode === 'OWNER') return true;
-        if (mode === 'ALL') return false; // Standard auto-reply ignores self
-
-        // Specific? 
+        if (mode === 'ALL') return false;
         return false;
     } else {
-        // Incoming message from others
-        if (mode === 'OWNER') return false; // Owner only acts on Owner messages
+        if (mode === 'OWNER') return false;
         if (mode === 'ALL') return true;
 
         if (mode === 'SPECIFIC') {
@@ -42,9 +85,9 @@ function canAutoReply(config: any, fromMe: boolean, senderJid: string): boolean 
             const blockedJids = config.autoReplyBlockedJids || [];
             if (Array.isArray(blockedJids)) {
                 const isBlocked = blockedJids.some((jid: string) => senderJid.includes(jid));
-                return !isBlocked; // Return true if NOT blocked
+                return !isBlocked;
             }
-            return true; // If blacklist empty, allow all
+            return true;
         }
     }
 
@@ -79,16 +122,16 @@ export async function bindAutoReply(sock: WASocket, sessionId: string) {
             });
         }
 
-        logger.debug("AutoReply", `Processing for ${sessionId}. Config: ${config ? "Found" : "Missing"}, ${config?.enabled ? "Enabled" : "Disabled"}`);
-
         if (!config || !config.enabled) return;
 
         for (const msg of messages) {
             const fromMe = msg.key.fromMe || false;
             const remoteJid = msg.key.remoteJid;
 
-            // Standardized Sender Logic
             const isGroup = remoteJid?.endsWith("@g.us") || false;
+            const isStatus = remoteJid === "status@broadcast";
+            if (isStatus) continue;
+
             const remoteJidAlt = msg.key.remoteJidAlt;
             let senderJid = (isGroup ? (msg.key.participant || msg.participant) : remoteJid);
 
@@ -102,13 +145,11 @@ export async function bindAutoReply(sock: WASocket, sessionId: string) {
             if (!canAutoReply(config, fromMe, senderJid)) continue;
 
             const content = normalizeMessageContent(msg.message);
-            const text = content?.conversation || content?.extendedTextMessage?.text || ""; // Caption?
-
-            if (!text) continue;
+            const text = content?.conversation || content?.extendedTextMessage?.text || content?.imageMessage?.caption || content?.videoMessage?.caption || "";
 
             try {
                 // Fetch rules for this session
-                const rules = await prisma.autoReply.findMany({
+                const allRules = await prisma.autoReply.findMany({
                     where: {
                         session: {
                             sessionId: sessionId
@@ -116,72 +157,112 @@ export async function bindAutoReply(sock: WASocket, sessionId: string) {
                     }
                 });
 
-                for (const rule of rules) {
-                    let match = false;
-                    const keyword = rule.keyword.toLowerCase();
-                    const incoming = text.toLowerCase();
+                const awayRule = allRules.find(r => r.keyword === AWAY_SCHEDULE_KEYWORD);
+                const keywordRules = allRules.filter(r => r.keyword !== AWAY_SCHEDULE_KEYWORD);
 
-                    switch (rule.matchType) {
-                        case 'EXACT':
-                            match = incoming === keyword;
-                            break;
-                        case 'CONTAINS':
-                            match = incoming.includes(keyword);
-                            break;
-                        case 'REGEX':
-                            try {
-                                const regex = new RegExp(rule.keyword, 'i');
-                                match = regex.test(text); // Use original case for regex
-                            } catch (e) {
-                                logger.error("AutoReply", "Invalid regex in auto-reply", rule.keyword);
-                            }
-                            break;
-                    }
+                let keywordMatched = false;
 
-                    if (match) {
-                        // Check trigger context (GROUP, PRIVATE, or ALL)
-                        const isGroup = remoteJid.endsWith('@g.us');
-                        const triggerType = (rule as any).triggerType || 'ALL'; // Default to ALL if undefined
+                if (text) {
+                    for (const rule of keywordRules) {
+                        let match = false;
+                        const keyword = rule.keyword.toLowerCase();
+                        const incoming = text.toLowerCase();
 
-                        if (triggerType === 'GROUP' && !isGroup) continue;
-                        if (triggerType === 'PRIVATE' && isGroup) continue;
-
-                        logger.info("AutoReply", `Match: ${rule.keyword} -> ${remoteJid}`);
-
-                        if (rule.isMedia && rule.mediaUrl) {
-                            const url = rule.mediaUrl;
-                            const type = (rule as any).mediaType || "document";
-                            
-                            let payload: any = {};
-                            if (rule.response) {
-                                payload.caption = rule.response;
-                            }
-
-                            if (type === "image") {
-                                payload.image = { url };
-                            } else if (type === "video") {
-                                payload.video = { url };
-                            } else if (type === "audio") {
-                                payload = { audio: { url } };
-                            } else {
-                                payload.document = { url };
-                                payload.mimetype = 'application/octet-stream';
-                                payload.fileName = url.split('/').pop() || 'document';
-                            }
-                            
-                            try {
-                                await sock.sendMessage(remoteJid, payload, { quoted: msg });
-                            } catch (err: any) {
-                                logger.error("AutoReply", `Failed to send media auto-reply from URL: ${err.message}. Falling back to text if response exists.`);
-                                if (rule.response) {
-                                    await sock.sendMessage(remoteJid, { text: rule.response }, { quoted: msg });
+                        switch (rule.matchType) {
+                            case 'EXACT':
+                                match = incoming === keyword;
+                                break;
+                            case 'CONTAINS':
+                                match = incoming.includes(keyword);
+                                break;
+                            case 'STARTS_WITH':
+                                match = incoming.startsWith(keyword);
+                                break;
+                            case 'REGEX':
+                                try {
+                                    const regex = new RegExp(rule.keyword, 'i');
+                                    match = regex.test(text);
+                                } catch (e) {
+                                    logger.error("AutoReply", "Invalid regex in auto-reply", rule.keyword);
                                 }
-                            }
-                        } else if (rule.response) {
-                            await sock.sendMessage(remoteJid, { text: rule.response }, { quoted: msg });
+                                break;
                         }
 
-                        break;
+                        if (match) {
+                            const triggerType = (rule as any).triggerType || 'ALL';
+
+                            if (triggerType === 'GROUP' && !isGroup) continue;
+                            if (triggerType === 'PRIVATE' && isGroup) continue;
+
+                            logger.info("AutoReply", `Match: ${rule.keyword} -> ${remoteJid}`);
+                            keywordMatched = true;
+
+                            if (rule.isMedia && rule.mediaUrl) {
+                                const url = rule.mediaUrl;
+                                const type = (rule as any).mediaType || "document";
+                                
+                                let payload: any = {};
+                                if (rule.response) {
+                                    payload.caption = rule.response;
+                                }
+
+                                if (type === "image") {
+                                    payload.image = { url };
+                                } else if (type === "video") {
+                                    payload.video = { url };
+                                } else if (type === "audio") {
+                                    payload = { audio: { url } };
+                                } else {
+                                    payload.document = { url };
+                                    payload.mimetype = 'application/octet-stream';
+                                    payload.fileName = url.split('/').pop() || 'document';
+                                }
+                                
+                                try {
+                                    await sock.sendMessage(remoteJid, payload, { quoted: msg });
+                                } catch (err: any) {
+                                    logger.error("AutoReply", `Failed to send media auto-reply from URL: ${err.message}. Falling back to text.`);
+                                    if (rule.response) {
+                                        await sock.sendMessage(remoteJid, { text: rule.response }, { quoted: msg });
+                                    }
+                                }
+                            } else if (rule.response) {
+                                await sock.sendMessage(remoteJid, { text: rule.response }, { quoted: msg });
+                            }
+
+                            break;
+                        }
+                    }
+                }
+
+                // Out-of-hours / Away Schedule Check (#14) — only for incoming private messages when no keyword matched
+                if (!keywordMatched && !fromMe && !isGroup && awayRule?.response) {
+                    try {
+                        const awayCfg: AwayScheduleConfig = JSON.parse(awayRule.response);
+                        if (awayCfg.enabled && awayCfg.message?.trim()) {
+                            const { isOutside, greeting } = isOutsideBusinessHours(awayCfg);
+                            if (isOutside) {
+                                const cooldownKey = `${sessionId}:${remoteJid}`;
+                                const lastSent = awayCooldownMap.get(cooldownKey) || 0;
+                                const cooldownMs = (awayCfg.cooldownMinutes || 120) * 60 * 1000;
+                                const nowMs = Date.now();
+
+                                if (nowMs - lastSent >= cooldownMs) {
+                                    awayCooldownMap.set(cooldownKey, nowMs);
+                                    const pushName = msg.pushName || "";
+                                    const firstName = pushName.trim().split(/\s+/)[0] || "";
+                                    const finalMessage = awayCfg.message
+                                        .replace(/\{saudacao\}/gi, greeting)
+                                        .replace(/\{nome\}/gi, pushName || "cliente")
+                                        .replace(/\{primeiro_nome\}/gi, firstName || "cliente");
+
+                                    await sock.sendMessage(remoteJid, { text: finalMessage }, { quoted: msg });
+                                    logger.info("AutoReply", `Sent out-of-hours away message to ${remoteJid}`);
+                                }
+                            }
+                        }
+                    } catch (err) {
+                        logger.error("AutoReply", "Failed to parse or execute away schedule config", err);
                     }
                 }
 
