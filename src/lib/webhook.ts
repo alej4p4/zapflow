@@ -7,6 +7,7 @@ import pino from "pino";
 import { resolveToPhoneJidBySessionId as resolveToPhoneJid, isLidJid } from "./jid-utils";
 import { logger } from "./logger";
 import { mediaDir } from "./paths";
+import { enforceMediaQuota } from "@/modules/maintenance/cleanup";
 import { waManager } from "@/modules/whatsapp/manager";
 
 // Event types that can trigger webhooks
@@ -411,15 +412,30 @@ export function extractMediaMessage(messageProto: any): { type: string; media: a
  * Helper to download and save media
  */
 export async function downloadAndSaveMedia(message: WAMessage, sessionId: string): Promise<string | null> {
+    const mediaInfo = extractMediaMessage(message.message);
+    if (!mediaInfo) {
+        return null;
+    }
+
     try {
-        const mediaInfo = extractMediaMessage(message.message);
-        if (!mediaInfo) {
-            return null;
-        }
 
         const { type: messageType, media: mediaObj } = mediaInfo;
 
         logger.info("Media", `Attempting to download ${messageType}...`);
+
+        // Extract thumbnail if available as early fallback
+        const thumbBuffer: Buffer | null = mediaObj?.jpegThumbnail
+            ? (Buffer.isBuffer(mediaObj.jpegThumbnail) ? mediaObj.jpegThumbnail : Buffer.from(mediaObj.jpegThumbnail))
+            : null;
+
+        // Skip massive video downloads in background for group chats to prevent ENOSPC on 500MB volumes
+        const declaredLength = Number(mediaObj?.fileLength || 0);
+        if (messageType === 'videoMessage' && declaredLength > 5 * 1024 * 1024) {
+            logger.info("Media", `Large video detected (${(declaredLength / 1024 / 1024).toFixed(1)}MB). Saving thumbnail preview to conserve volume disk.`);
+            if (thumbBuffer) {
+                return `data:image/jpeg;base64,${thumbBuffer.toString('base64')}`;
+            }
+        }
 
         let buffer: Buffer | null = null;
 
@@ -476,6 +492,9 @@ export async function downloadAndSaveMedia(message: WAMessage, sessionId: string
         }
 
         if (!buffer) {
+            if (thumbBuffer) {
+                return `data:image/jpeg;base64,${thumbBuffer.toString('base64')}`;
+            }
             logger.warn("Media", "Buffer is empty/null");
             return null;
         }
@@ -503,10 +522,32 @@ export async function downloadAndSaveMedia(message: WAMessage, sessionId: string
         const filename = `${sessionId}-${message.key.id}.${ext}`;
         const filePath = path.join(mediaDir, filename);
 
-        // Ensure directory exists (redundant if handled by OS, but safe)
+        // Ensure directory exists
         await mkdir(path.dirname(filePath), { recursive: true });
 
-        await writeFile(filePath, buffer);
+        // Try writing to disk with ENOSPC handling and auto-recovery
+        try {
+            await writeFile(filePath, buffer);
+        } catch (writeErr: any) {
+            if (writeErr?.code === 'ENOSPC') {
+                logger.warn("Media", "ENOSPC on disk write! Triggering emergency media quota purge...");
+                enforceMediaQuota();
+                try {
+                    await writeFile(filePath, buffer);
+                } catch (retryErr) {
+                    logger.warn("Media", "Retry write failed. Using Data URI fallback to guarantee image visibility...");
+                    if (thumbBuffer) {
+                        return `data:image/jpeg;base64,${thumbBuffer.toString('base64')}`;
+                    }
+                    if (messageType === 'imageMessage' && buffer.length < 500 * 1024) {
+                        return `data:image/jpeg;base64,${buffer.toString('base64')}`;
+                    }
+                    return null;
+                }
+            } else {
+                throw writeErr;
+            }
+        }
 
         // Return URL path using API route for reliable serving
         const fileUrl = `/api/media/${filename}`;
@@ -515,6 +556,10 @@ export async function downloadAndSaveMedia(message: WAMessage, sessionId: string
 
     } catch (e) {
         logger.error("Media", "Failed to download media:", e);
+        if (mediaInfo?.media?.jpegThumbnail) {
+            const tb = Buffer.isBuffer(mediaInfo.media.jpegThumbnail) ? mediaInfo.media.jpegThumbnail : Buffer.from(mediaInfo.media.jpegThumbnail);
+            return `data:image/jpeg;base64,${tb.toString('base64')}`;
+        }
         return null;
     }
 }

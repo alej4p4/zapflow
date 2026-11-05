@@ -326,6 +326,22 @@ export class ChatService {
             }
         }
 
+        // Add pushNames from messages as fast fallback for participants without saved contacts
+        for (const m of messages) {
+            if (m.pushName && m.senderJid) {
+                const bare = m.senderJid.split('@')[0];
+                if (!contactMap[m.senderJid]) contactMap[m.senderJid] = m.pushName;
+                if (!contactMap[bare]) contactMap[bare] = m.pushName;
+            }
+        }
+        for (const q of quotedMsgs) {
+            if (q.pushName && q.senderJid) {
+                const bare = q.senderJid.split('@')[0];
+                if (!contactMap[q.senderJid]) contactMap[q.senderJid] = q.pushName;
+                if (!contactMap[bare]) contactMap[bare] = q.pushName;
+            }
+        }
+
         // Link group participant LIDs to phone numbers if resolved
         if (isGroup && groupParticipants.length > 0) {
             for (const p of groupParticipants) {
@@ -343,7 +359,10 @@ export class ChatService {
                     if (p.phoneNumber) contactMap[p.phoneNumber] = name;
                     participantNamesSet.add(name);
                 } else if (phoneNum) {
-                    participantNamesSet.add(`+${phoneNum}`);
+                    const formattedPhone = `+${phoneNum}`;
+                    if (lidNum && !contactMap[lidNum]) contactMap[lidNum] = formattedPhone;
+                    if (p.id && !contactMap[p.id]) contactMap[p.id] = formattedPhone;
+                    participantNamesSet.add(formattedPhone);
                 }
             }
         }

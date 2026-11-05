@@ -28,7 +28,7 @@ export class AvatarService {
 
     // Maximum concurrent requests to Baileys socket to avoid burst throttling
     private activeRequests = 0;
-    private readonly MAX_CONCURRENT = 3;
+    private readonly MAX_CONCURRENT = 10;
     private queue: Array<() => void> = [];
 
     public static getInstance(): AvatarService {

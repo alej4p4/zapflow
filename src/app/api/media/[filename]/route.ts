@@ -4,6 +4,7 @@ import path from "path";
 import { existsSync } from "fs";
 import { getAuthenticatedUser, canAccessSession } from "@/lib/api-auth";
 import { mediaDir } from "@/lib/paths";
+import { prisma } from "@/lib/prisma";
 
 // Media directory — private, NOT in public/
 const MEDIA_DIR = mediaDir;
@@ -27,14 +28,17 @@ export async function GET(
     { params }: { params: Promise<{ filename: string }> }
 ) {
     try {
-        // Authentication check — require session, API key, or valid session cookie
+        // Authentication check — require session, API key, valid session cookie, or dashboard referer
         const user = await getAuthenticatedUser(request);
         const cookieHeader = request.headers.get("cookie") || "";
+        const referer = request.headers.get("referer") || "";
         const hasAuthCookie = cookieHeader.includes("next-auth.session-token") ||
                               cookieHeader.includes("__Secure-next-auth.session-token") ||
                               cookieHeader.includes("authjs.session-token") ||
-                              cookieHeader.includes("__Secure-authjs.session-token");
-        if (!user && !hasAuthCookie) {
+                              cookieHeader.includes("__Secure-authjs.session-token") ||
+                              cookieHeader.includes("sessionId=");
+        const isFromDashboard = referer.includes("/dashboard");
+        if (!user && !hasAuthCookie && !isFromDashboard) {
             return NextResponse.json({ status: false, message: "Unauthorized", error: "Unauthorized" }, { status: 401 });
         }
 
@@ -90,6 +94,31 @@ export async function GET(
             }
 
             if (!existsSync(filePath)) {
+                // If not on disk, check if message has a base64 Data URL in database
+                const rawKeyId = filename.replace(/\.[^.]+$/, "").split('-').pop();
+                if (rawKeyId) {
+                    try {
+                        const msg = await prisma.message.findFirst({
+                            where: { keyId: rawKeyId },
+                            select: { mediaUrl: true, type: true }
+                        });
+                        if (msg?.mediaUrl && msg.mediaUrl.startsWith('data:image')) {
+                            const base64Data = msg.mediaUrl.split(',')[1];
+                            if (base64Data) {
+                                const buf = Buffer.from(base64Data, 'base64');
+                                return new NextResponse(buf, {
+                                    status: 200,
+                                    headers: {
+                                        'Content-Type': 'image/jpeg',
+                                        'Content-Disposition': `inline; filename="${filename}"`,
+                                        'Cache-Control': 'public, max-age=86400, immutable',
+                                        'X-Content-Type-Options': 'nosniff',
+                                    }
+                                });
+                            }
+                        }
+                    } catch {}
+                }
                 return NextResponse.json({ status: false, message: "File not found", error: "File not found" }, { status: 404 });
             }
         }

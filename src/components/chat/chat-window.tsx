@@ -93,8 +93,22 @@ function MessageStatusCheck({ status }: { status: string }) {
 function renderMessageContent(content: string | null | undefined, contactMap?: Record<string, string>) {
     if (!content) return null;
 
-    // Matches URLs or @(8 to 25 digits)
-    const tokenRegex = /(https?:\/\/[^\s]+)|@(\d{8,25})/g;
+    // Build pattern for URLs and @mentions (digits or known contact names)
+    const escapedNames = contactMap
+        ? Array.from(new Set(Object.values(contactMap)))
+              .filter(n => n && n.trim().length >= 3)
+              .sort((a, b) => b.length - a.length)
+              .map(n => n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+        : [];
+
+    let tokenRegex: RegExp;
+    if (escapedNames.length > 0) {
+        // Matches URL, or @(digits), or @(knownName)
+        tokenRegex = new RegExp(`(https?:\\/\\/[^\\s]+)|@(\\d{8,25})|@(${escapedNames.join('|')})`, 'g');
+    } else {
+        tokenRegex = /(https?:\/\/[^\s]+)|@(\d{8,25})|@([A-Za-z0-9_\-\.\+]+)/g;
+    }
+
     const parts: (string | React.ReactNode)[] = [];
     let lastIndex = 0;
     let match: RegExpExecArray | null;
@@ -106,6 +120,7 @@ function renderMessageContent(content: string | null | undefined, contactMap?: R
         }
 
         if (match[1]) {
+            // URL
             const url = match[1];
             parts.push(
                 <a
@@ -120,6 +135,7 @@ function renderMessageContent(content: string | null | undefined, contactMap?: R
                 </a>
             );
         } else if (match[2]) {
+            // @(digits) - resolve via contactMap
             const id = match[2];
             const resolvedName = contactMap ? (
                 contactMap[id] ||
@@ -130,11 +146,22 @@ function renderMessageContent(content: string | null | undefined, contactMap?: R
 
             parts.push(
                 <span
-                    key={`mention-${matchIndex}-${id}`}
-                    className="font-medium text-[#00a884] dark:text-[#25d366] inline"
+                    key={`mention-id-${matchIndex}-${id}`}
+                    className="font-semibold text-[#00a884] dark:text-[#25d366] inline cursor-pointer hover:underline"
                     title={resolvedName ? `ID: ${id}` : undefined}
                 >
                     {displayText}
+                </span>
+            );
+        } else if (match[3]) {
+            // @(name) - already named mention
+            const named = match[3];
+            parts.push(
+                <span
+                    key={`mention-name-${matchIndex}-${named}`}
+                    className="font-semibold text-[#00a884] dark:text-[#25d366] inline cursor-pointer hover:underline"
+                >
+                    @{named}
                 </span>
             );
         }
@@ -927,7 +954,32 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
                                         </span>
                                     </div>
                                 )}
-                                <div className={cn("flex gap-1 group", msg.fromMe ? "justify-end" : "justify-start")}>
+                                <div className={cn("flex gap-2 group items-start", msg.fromMe ? "justify-end" : "justify-start")}>
+                                    {/* Sender Avatar for incoming group messages on left (WhatsApp Web style) */}
+                                    {!msg.fromMe && isGroup && (() => {
+                                        const sJid = msg.senderJid || "";
+                                        const bare = sJid.split('@')[0];
+                                        const resolved = (sJid && contactMap[sJid]) ||
+                                                         (bare && contactMap[bare]) ||
+                                                         msg.pushName ||
+                                                         bare ||
+                                                         "Membro";
+                                        return (
+                                            <Avatar className="h-7 w-7 mt-0.5 shrink-0 select-none shadow-xs">
+                                                <AvatarImage
+                                                    src={`/api/avatar/${sessionId}/${encodeURIComponent(sJid || '')}`}
+                                                    referrerPolicy="no-referrer"
+                                                />
+                                                <AvatarFallback
+                                                    className="text-[9.5px] font-bold text-white uppercase"
+                                                    style={{ backgroundColor: getParticipantColor(resolved) }}
+                                                >
+                                                    {resolved.slice(0, 2)}
+                                                </AvatarFallback>
+                                            </Avatar>
+                                        );
+                                    })()}
+
                                     {/* Reply button for my messages (on left) */}
                                     {msg.fromMe && (
                                         <button
