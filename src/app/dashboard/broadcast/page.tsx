@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
@@ -377,19 +377,33 @@ export default function BroadcastPage() {
         })();
     }, [sessionId]);
 
-    // Filtro local: nome sem acento ou número
-    const filteredContacts = (() => {
+    // Filtro local: nome sem acento ou número (sem limite arbitrário de 50 para suportar 80+ contatos)
+    const filteredContacts = useMemo(() => {
         const query = normalizeSearch(pickerSearch);
         const digits = pickerSearch.replace(/\D/g, "");
-        if (!query && !digits) return pickerContacts.slice(0, 50);
+        if (!query && !digits) return pickerContacts;
 
-        return pickerContacts
-            .filter(c =>
-                normalizeSearch(contactLabel(c)).includes(query) ||
-                (digits.length > 0 && contactNumber(c).includes(digits))
-            )
-            .slice(0, 50);
-    })();
+        return pickerContacts.filter(c =>
+            normalizeSearch(contactLabel(c)).includes(query) ||
+            (digits.length > 0 && contactNumber(c).includes(digits))
+        );
+    }, [pickerContacts, pickerSearch]);
+
+    const isAllFilteredContactsSelected = filteredContacts.length > 0 &&
+        filteredContacts.every(c => selectedContacts.includes(c.id));
+
+    const toggleSelectAllContacts = () => {
+        if (isAllFilteredContactsSelected) {
+            const filteredIds = new Set(filteredContacts.map(c => c.id));
+            setSelectedContacts(prev => prev.filter(id => !filteredIds.has(id)));
+        } else {
+            setSelectedContacts(prev => {
+                const next = new Set(prev);
+                filteredContacts.forEach(c => next.add(c.id));
+                return Array.from(next);
+            });
+        }
+    };
 
     const toggleContact = (id: string) => {
         setSelectedContacts(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
@@ -398,9 +412,10 @@ export default function BroadcastPage() {
     const addSelectedContacts = () => {
         setContacts(prev => {
             const numbers = new Set(prev.split(/[\n,]+/).map(s => s.trim()).filter(Boolean));
+            const selectedSet = new Set(selectedContacts);
             for (const contact of pickerContacts) {
                 const number = contactNumber(contact);
-                if (number && selectedContacts.includes(contact.id)) numbers.add(number);
+                if (number && selectedSet.has(contact.id)) numbers.add(number);
             }
             return Array.from(numbers).join("\n");
         });
@@ -421,11 +436,34 @@ export default function BroadcastPage() {
         })();
     }, [sessionId]);
 
+    const filteredGroups = useMemo(() => {
+        const query = normalizeSearch(groupSearch);
+        if (!query) return groups;
+        return groups.filter(g => normalizeSearch(g.subject).includes(query));
+    }, [groups, groupSearch]);
+
+    const isAllFilteredGroupsSelected = filteredGroups.length > 0 &&
+        filteredGroups.every(g => selectedGroups.includes(g.jid));
+
+    const toggleSelectAllGroups = () => {
+        if (isAllFilteredGroupsSelected) {
+            const groupJids = new Set(filteredGroups.map(g => g.jid));
+            setSelectedGroups(prev => prev.filter(jid => !groupJids.has(jid)));
+        } else {
+            setSelectedGroups(prev => {
+                const next = new Set(prev);
+                filteredGroups.forEach(g => next.add(g.jid));
+                return Array.from(next);
+            });
+        }
+    };
+
     const addSelectedGroups = () => {
         setContacts(prev => {
             const numbers = new Set(prev.split(/[\n,]+/).map(s => s.trim()).filter(Boolean));
+            const selectedSet = new Set(selectedGroups);
             for (const group of groups) {
-                if (selectedGroups.includes(group.jid)) numbers.add(group.jid);
+                if (selectedSet.has(group.jid)) numbers.add(group.jid);
             }
             return Array.from(numbers).join("\n");
         });
@@ -732,16 +770,28 @@ export default function BroadcastPage() {
                                     </div>
 
                                     <div className="space-y-2 rounded-lg border p-3">
-                                        <Label className="flex items-center gap-2">
-                                            <Users className="h-4 w-4" /> Buscar contatos do celular
-                                        </Label>
+                                        <div className="flex items-center justify-between">
+                                            <Label className="flex items-center gap-2">
+                                                <Users className="h-4 w-4" /> Buscar contatos do celular
+                                            </Label>
+                                            {filteredContacts.length > 0 && (
+                                                <button
+                                                    type="button"
+                                                    onClick={toggleSelectAllContacts}
+                                                    disabled={isBroadcasting}
+                                                    className="text-xs font-semibold text-primary hover:underline disabled:opacity-50 transition-colors"
+                                                >
+                                                    {isAllFilteredContactsSelected ? "Desmarcar todos" : `Selecionar todos (${filteredContacts.length})`}
+                                                </button>
+                                            )}
+                                        </div>
                                         <Input
                                             placeholder="Pesquisar por nome ou número..."
                                             value={pickerSearch}
                                             onChange={e => setPickerSearch(e.target.value)}
                                             disabled={isBroadcasting}
                                         />
-                                        <div className="max-h-48 overflow-y-auto divide-y rounded-md border">
+                                        <div className="max-h-52 overflow-y-auto divide-y rounded-md border">
                                             {pickerLoading ? (
                                                 <p className="p-3 text-sm text-muted-foreground">Carregando contatos...</p>
                                             ) : filteredContacts.length === 0 ? (
@@ -778,35 +828,46 @@ export default function BroadcastPage() {
                                     </div>
 
                                     <div className="space-y-2 rounded-lg border p-3">
-                                        <Label className="flex items-center gap-2">
-                                            <Users className="h-4 w-4" /> Buscar grupos
-                                        </Label>
+                                        <div className="flex items-center justify-between">
+                                            <Label className="flex items-center gap-2">
+                                                <Users className="h-4 w-4" /> Buscar grupos
+                                            </Label>
+                                            {filteredGroups.length > 0 && (
+                                                <button
+                                                    type="button"
+                                                    onClick={toggleSelectAllGroups}
+                                                    disabled={isBroadcasting}
+                                                    className="text-xs font-semibold text-primary hover:underline disabled:opacity-50 transition-colors"
+                                                >
+                                                    {isAllFilteredGroupsSelected ? "Desmarcar todos" : `Selecionar todos (${filteredGroups.length})`}
+                                                </button>
+                                            )}
+                                        </div>
                                         <Input
                                             placeholder="Pesquisar grupo pelo nome..."
                                             value={groupSearch}
                                             onChange={e => setGroupSearch(e.target.value)}
                                             disabled={isBroadcasting}
                                         />
-                                        <div className="max-h-48 overflow-y-auto divide-y rounded-md border">
+                                        <div className="max-h-52 overflow-y-auto divide-y rounded-md border">
                                             {groups.length === 0 ? (
                                                 <p className="p-3 text-sm text-muted-foreground">Nenhum grupo carregado.</p>
+                                            ) : filteredGroups.length === 0 ? (
+                                                <p className="p-3 text-sm text-muted-foreground">Nenhum grupo encontrado na pesquisa.</p>
                                             ) : (
-                                                groups
-                                                    .filter(g => normalizeSearch(g.subject).includes(normalizeSearch(groupSearch)))
-                                                    .slice(0, 50)
-                                                    .map(group => (
-                                                        <label key={group.id} className="flex cursor-pointer items-center gap-3 p-2 hover:bg-muted/50">
-                                                            <Checkbox
-                                                                checked={selectedGroups.includes(group.jid)}
-                                                                onCheckedChange={() => setSelectedGroups(prev => prev.includes(group.jid) ? prev.filter(x => x !== group.jid) : [...prev, group.jid])}
-                                                                disabled={isBroadcasting}
-                                                            />
-                                                            <span className="min-w-0 flex-1">
-                                                                <span className="block truncate text-sm font-medium">{group.subject || group.jid}</span>
-                                                                <span className="block truncate font-mono text-xs text-muted-foreground">{group.jid}</span>
-                                                            </span>
-                                                        </label>
-                                                    ))
+                                                filteredGroups.map(group => (
+                                                    <label key={group.id} className="flex cursor-pointer items-center gap-3 p-2 hover:bg-muted/50">
+                                                        <Checkbox
+                                                            checked={selectedGroups.includes(group.jid)}
+                                                            onCheckedChange={() => setSelectedGroups(prev => prev.includes(group.jid) ? prev.filter(x => x !== group.jid) : [...prev, group.jid])}
+                                                            disabled={isBroadcasting}
+                                                        />
+                                                        <span className="min-w-0 flex-1">
+                                                            <span className="block truncate text-sm font-medium">{group.subject || group.jid}</span>
+                                                            <span className="block truncate font-mono text-xs text-muted-foreground">{group.jid}</span>
+                                                        </span>
+                                                    </label>
+                                                ))
                                             )}
                                         </div>
                                         <Button

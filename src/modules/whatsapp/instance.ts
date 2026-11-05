@@ -93,8 +93,12 @@ export class WhatsAppInstance {
         const originalSendMessage = this.socket.sendMessage.bind(this.socket);
         const sessionId = this.sessionId;
         this.socket.sendMessage = async function (jid: string, content: any, options?: any) {
-            await antispam.enqueue(sessionId, jid, content);
-            return originalSendMessage(jid, content, options);
+            // Disparos em massa gerenciam seu próprio delay e fluxo, ignorando a fila do antispam para não travar
+            if (!options?.skipAntiSpam) {
+                await antispam.enqueue(sessionId, jid, content);
+            }
+            const { skipAntiSpam, ...baileysOptions } = options || {};
+            return originalSendMessage(jid, content, baileysOptions);
         } as any;
 
         // Bind Store for DB Sync

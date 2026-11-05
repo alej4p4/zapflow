@@ -183,14 +183,12 @@ async function executeBroadcast(logId: string): Promise<void> {
 
             let current: { jid: string; error: string } | null = null;
             try {
-                let target = recipient.jid;
-                if (target.endsWith("@s.whatsapp.net")) {
-                    const number = target.split("@")[0];
-                    const [info] = (await instance.socket!.onWhatsApp(number)) || [];
-                    if (!info?.exists || !info.jid) {
-                        throw new Error("Número não está no WhatsApp");
-                    }
-                    target = info.jid;
+                let target = recipient.jid.trim();
+                // Garante formato de JID sem travar o loop de envio com checagens USync do WhatsApp
+                if (!target.includes("@")) {
+                    const digits = target.replace(/\D/g, "");
+                    const withCountry = digits.length <= 11 ? `55${digits}` : digits;
+                    target = `${withCountry}@s.whatsapp.net`;
                 }
 
                 // Lookup contact name for dynamic variables
@@ -227,14 +225,18 @@ async function executeBroadcast(logId: string): Promise<void> {
                     .replace(/\{saudacao\}/gi, saudacao)
                     .replace(/\{telefone\}/gi, phoneFormatted || cleanNumber);
 
-                // Simulação de digitação humana anti-banimento (400-800ms)
-                try {
-                    await instance.socket!.sendPresenceUpdate("composing", target);
-                    await new Promise(r => setTimeout(r, 400 + Math.floor(Math.random() * 400)));
-                    await instance.socket!.sendPresenceUpdate("paused", target);
-                } catch {}
+                // Presença de digitação: apenas para modo seguro / delays longos (>= 1000ms)
+                // Para velocidades rápidas e turbo (< 1000ms), dispara direto um atrás do outro sem travar
+                if (baseDelay >= 1000) {
+                    try {
+                        await instance.socket!.sendPresenceUpdate("composing", target);
+                        await new Promise(r => setTimeout(r, 200));
+                        await instance.socket!.sendPresenceUpdate("paused", target);
+                    } catch {}
+                }
 
-                await instance.socket!.sendMessage(target, { text: personalizedText });
+                // Disparo com skipAntiSpam para não entrar na fila do antispam e não travar após 15 mensagens
+                await instance.socket!.sendMessage(target, { text: personalizedText }, { skipAntiSpam: true } as any);
 
                 const wasFailed = recipient.status === "failed";
                 sent++;
@@ -276,7 +278,8 @@ async function executeBroadcast(logId: string): Promise<void> {
             if (cancelled.has(logId)) { stopReason = "cancelled"; break; }
 
             if (baseDelay > 0) {
-                const jitter = baseDelay >= 1000 ? Math.floor(Math.random() * (baseDelay * 0.2)) : 0;
+                // Para delays rápidos (< 1500ms), dispara exatamente no tempo configurado sem jitter alto
+                const jitter = baseDelay >= 1500 ? Math.floor(Math.random() * (baseDelay * 0.15)) : 0;
                 const actualDelay = Math.max(30, baseDelay + jitter);
                 await new Promise(r => setTimeout(r, actualDelay));
             }
