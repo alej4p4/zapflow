@@ -1382,9 +1382,16 @@ function ChatInputBar({
                             Respondendo a {replyingTo.fromMe ? "Você" : (replyingTo.pushName || jid.split('@')[0])}
                         </span>
                         <span className="text-xs text-muted-foreground truncate block">
-                            {replyingTo.content || `[${replyingTo.type}]`}
+                            {replyingTo.type === 'IMAGE' && <Camera className="h-3 w-3 inline mr-1 opacity-70" />}
+                            {replyingTo.type === 'VIDEO' && <Video className="h-3 w-3 inline mr-1 opacity-70" />}
+                            {replyingTo.content || (replyingTo.type === 'IMAGE' ? "Foto" : (replyingTo.type === 'VIDEO' ? "Vídeo" : `[${replyingTo.type}]`))}
                         </span>
                     </div>
+                    {(replyingTo.type === 'IMAGE' || replyingTo.type === 'VIDEO') && replyingTo.mediaUrl && (
+                        <div className="h-9 w-9 shrink-0 rounded overflow-hidden mr-2 bg-black/10">
+                            <img src={replyingTo.mediaUrl} alt="Thumbnail" className="h-full w-full object-cover" />
+                        </div>
+                    )}
                     <button
                         onClick={onCancelReply}
                         className="p-1 text-muted-foreground hover:text-foreground rounded-full cursor-pointer"
@@ -1842,6 +1849,19 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
         };
         socket.on("message.reaction", reactionHandler);
 
+        const editHandler = (data: { keyId: string; newContent: string; isEdited?: boolean }) => {
+            if (!data?.keyId) return;
+            setMessages(prev => prev.map(m => {
+                if (m.keyId !== data.keyId) return m;
+                return {
+                    ...m,
+                    content: data.newContent,
+                    isEdited: true
+                };
+            }));
+        };
+        socket.on("message.edit", editHandler);
+
         const presenceHandler = (data: { id: string; presences: Record<string, { lastKnownPresence?: string }> }) => {
             if (!data?.id || !data?.presences) return;
             const targetJid = jid.endsWith("@c.us") ? jid.replace("@c.us", "@s.whatsapp.net") : jid;
@@ -1879,6 +1899,7 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
             socket.off("connect", onConnect);
             socket.off("message.update", handler);
             socket.off("message.reaction", reactionHandler);
+            socket.off("message.edit", editHandler);
             socket.off("presence.update", presenceHandler);
         };
     }, [sessionId, jid, getSocket, joinSession]);
@@ -2749,12 +2770,13 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
                                                     </span>
                                                     <span className="line-clamp-2 block break-all text-xs opacity-80">
                                                         {msg.quoted.type === 'IMAGE' && <Camera className="h-3 w-3 inline mr-1 opacity-70" />}
-                                                        {renderMessageContent(msg.quoted.content || (msg.quoted.type === 'IMAGE' ? "Foto" : "Mídia"), contactMap)}
+                                                        {msg.quoted.type === 'VIDEO' && <Video className="h-3 w-3 inline mr-1 opacity-70" />}
+                                                        {renderMessageContent(msg.quoted.content || (msg.quoted.type === 'IMAGE' ? "Foto" : (msg.quoted.type === 'VIDEO' ? "Vídeo" : (msg.quoted.type === 'AUDIO' ? "Áudio" : "Mídia"))), contactMap)}
                                                     </span>
                                                 </div>
-                                                {msg.quoted.type === 'IMAGE' && msg.quoted.mediaUrl && (
-                                                    <div className="h-10 w-10 shrink-0 rounded overflow-hidden bg-muted">
-                                                        <img src={msg.quoted.mediaUrl} alt="Thumbnail" className="h-full w-full object-cover" />
+                                                {msg.quoted && (msg.quoted.type === 'IMAGE' || msg.quoted.type === 'VIDEO' || msg.quoted.type === 'STICKER') && msg.quoted.mediaUrl && (
+                                                    <div className="h-10 w-10 shrink-0 rounded-md overflow-hidden bg-black/10 dark:bg-white/10 border border-black/5 dark:border-white/10 shadow-xs">
+                                                        <img src={msg.quoted.mediaUrl} alt="Thumbnail" className="h-full w-full object-cover" loading="lazy" />
                                                     </div>
                                                 )}
                                             </div>
@@ -2840,6 +2862,11 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
                                                 {renderMessageContent(msg.content, contactMap, searchQuery)}
                                             </span>
                                             <div className="inline-flex items-center gap-1 shrink-0 ml-auto select-none pt-0.5">
+                                                {msg.isEdited && (
+                                                    <span className="text-[10px] italic text-[#667781] dark:text-[#8696a0] select-none mr-0.5">
+                                                        editada
+                                                    </span>
+                                                )}
                                                 <span className="text-[11px] leading-none text-[#667781] dark:text-[#8696a0]">
                                                     {new Date(msg.timestamp).toLocaleTimeString("pt-BR", { hour: '2-digit', minute: '2-digit' })}
                                                 </span>

@@ -322,6 +322,18 @@ async function processAndSaveMessage(
                     data: { content: newText } // Note: we don't update timestamp of original
                 });
 
+                // Emit real-time edit to frontend socket
+                try {
+                    const io = (global as any).io;
+                    if (io) {
+                        io.to(sessionId).emit("message.edit", {
+                            keyId: targetKeyId,
+                            newContent: newText,
+                            isEdited: true
+                        });
+                    }
+                } catch {}
+
                 // Trigger Webhook
                 if (triggerWebhook) {
                     dispatchWebhook(sessionId, "message.edited", {
@@ -516,22 +528,66 @@ async function processAndSaveMessage(
                 const contextInfo = (inner as any).contextInfo;
                 if (contextInfo?.stanzaId) {
                     quoteId = contextInfo.stanzaId;
-                    if (contextInfo.quotedMessage?.imageMessage?.jpegThumbnail) {
-                        try {
-                            const thumb = contextInfo.quotedMessage.imageMessage.jpegThumbnail;
-                            const buf = Buffer.isBuffer(thumb) ? thumb : Buffer.from(thumb);
-                            quotedThumbnail = `data:image/jpeg;base64,${buf.toString('base64')}`;
-                            if (dbSessionId && quoteId) {
-                                prisma.message.updateMany({
-                                    where: {
+                    const qMsg = contextInfo.quotedMessage;
+                    if (qMsg) {
+                        const thumb = qMsg.imageMessage?.jpegThumbnail ||
+                                      qMsg.videoMessage?.jpegThumbnail ||
+                                      qMsg.documentMessage?.jpegThumbnail;
+                        if (thumb) {
+                            try {
+                                const buf = Buffer.isBuffer(thumb) ? thumb : Buffer.from(thumb);
+                                quotedThumbnail = `data:image/jpeg;base64,${buf.toString('base64')}`;
+                            } catch {}
+                        }
+
+                        let qType = "TEXT";
+                        let qContent: string | null = null;
+                        if (qMsg.imageMessage) {
+                            qType = "IMAGE";
+                            qContent = qMsg.imageMessage.caption || null;
+                        } else if (qMsg.videoMessage) {
+                            qType = "VIDEO";
+                            qContent = qMsg.videoMessage.caption || null;
+                        } else if (qMsg.documentMessage) {
+                            qType = "DOCUMENT";
+                            qContent = qMsg.documentMessage.fileName || qMsg.documentMessage.caption || null;
+                        } else if (qMsg.stickerMessage) {
+                            qType = "STICKER";
+                        } else if (qMsg.audioMessage) {
+                            qType = "AUDIO";
+                        } else if (qMsg.conversation) {
+                            qContent = qMsg.conversation;
+                        } else if (qMsg.extendedTextMessage) {
+                            qContent = qMsg.extendedTextMessage.text || null;
+                        }
+
+                        if (dbSessionId && quoteId) {
+                            // Upsert: se a mensagem citada já existe, garante thumbnail; se não existia, cria registro histórico
+                            prisma.message.upsert({
+                                where: {
+                                    sessionId_keyId: {
                                         sessionId: dbSessionId,
-                                        keyId: quoteId,
-                                        OR: [{ mediaUrl: null }, { mediaUrl: { startsWith: '/api/media' } }]
-                                    },
-                                    data: { mediaUrl: quotedThumbnail }
-                                }).catch(() => {});
-                            }
-                        } catch {}
+                                        keyId: quoteId
+                                    }
+                                },
+                                update: {
+                                    ...(quotedThumbnail ? { mediaUrl: quotedThumbnail } : {})
+                                },
+                                create: {
+                                    sessionId: dbSessionId,
+                                    remoteJid: normalizeJid(normalizedRemoteJid),
+                                    senderJid: contextInfo.participant || null,
+                                    fromMe: Boolean(contextInfo.participant && (contextInfo.participant.includes(sessionId) || contextInfo.participant.includes("me"))),
+                                    keyId: quoteId,
+                                    pushName: null,
+                                    type: qType as any,
+                                    content: qContent,
+                                    mediaUrl: quotedThumbnail,
+                                    status: "SENT",
+                                    timestamp: new Date()
+                                }
+                            }).catch(() => {});
+                        }
                     }
                     break;
                 }

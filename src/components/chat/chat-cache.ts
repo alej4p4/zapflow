@@ -15,6 +15,7 @@ export interface Message {
     quoteId?: string | null;
     reactions?: Record<string, number>;
     userReaction?: string;
+    isEdited?: boolean;
     quoted?: {
         keyId: string;
         content: string | null;
