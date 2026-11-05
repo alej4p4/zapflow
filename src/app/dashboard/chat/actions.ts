@@ -4,6 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { ChatService } from "@/modules/whatsapp/chat.service";
 import { getAuthenticatedUserForAction } from "@/lib/server-action-auth";
 import { canAccessSession } from "@/lib/api-auth";
+import { waManager } from "@/modules/whatsapp/manager";
 
 const CHAT_PAGE_SIZE = parseInt(process.env.NEXT_PUBLIC_CHAT_PAGE_SIZE || "300", 10);
 
@@ -171,5 +172,35 @@ export async function sendMediaMessage(formData: FormData) {
     } catch (error: any) {
         console.error("Media send error:", error);
         throw new Error(`Failed to send media: ${error.message}`);
+    }
+}
+
+// React to chat message
+export async function reactToChatMessage(sessionId: string, jid: string, messageId: string, emoji: string, fromMe?: boolean, participant?: string) {
+    const user = await getAuthenticatedUserForAction();
+    if (!user) throw new Error("Unauthorized");
+
+    const canAccess = await canAccessSession(user.id, user.role, sessionId);
+    if (!canAccess) throw new Error("Forbidden");
+
+    try {
+        const instance = waManager.getInstance(sessionId);
+        if (!instance?.socket) throw new Error("WhatsApp session not connected");
+
+        const isGroup = jid.endsWith("@g.us");
+        await instance.socket.sendMessage(jid, {
+            react: {
+                text: emoji,
+                key: {
+                    remoteJid: jid,
+                    fromMe: fromMe ?? false,
+                    id: messageId,
+                    ...(isGroup && participant ? { participant } : {})
+                }
+            }
+        });
+        return { success: true };
+    } catch (e: any) {
+        throw new Error(`Failed to send reaction: ${e.message}`);
     }
 }

@@ -549,6 +549,14 @@ export async function downloadAndSaveMedia(message: WAMessage, sessionId: string
             }
         }
 
+        // Return persistent data URL for images and stickers under 450KB to guarantee 0ms rendering and zero 404s
+        if ((messageType === 'imageMessage' || messageType === 'stickerMessage') && buffer.length <= 450 * 1024) {
+            const mimeType = ext === 'webp' ? 'image/webp' : 'image/jpeg';
+            const dataUrl = `data:${mimeType};base64,${buffer.toString('base64')}`;
+            logger.success("Media", `Persisted image to database Data URL (${Math.round(buffer.length / 1024)} KB).`);
+            return dataUrl;
+        }
+
         // Return URL path using API route for reliable serving
         const fileUrl = `/api/media/${filename}`;
         logger.success("Media", `Success. URL: ${fileUrl}`);
@@ -905,6 +913,15 @@ async function extractQuotedMessageAsync(msg: any, sessionId: string): Promise<a
             } catch (e) {
                 logger.error("Media", "Failed to lookup quoted media url", e);
             }
+        }
+
+        // If not in DB, fallback to jpegThumbnail embedded in quotedMessage
+        if (!fileUrl && quotedMsg.imageMessage?.jpegThumbnail) {
+            try {
+                const thumb = quotedMsg.imageMessage.jpegThumbnail;
+                const buf = Buffer.isBuffer(thumb) ? thumb : Buffer.from(thumb);
+                fileUrl = `data:image/jpeg;base64,${buf.toString('base64')}`;
+            } catch {}
         }
 
         return {

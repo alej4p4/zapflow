@@ -153,6 +153,18 @@ export default function BroadcastPage() {
 
     const { getSocket, joinSession } = useSocket();
 
+    // Check for drafted group recipients from chat window
+    useEffect(() => {
+        if (typeof window !== "undefined") {
+            const draft = sessionStorage.getItem("zapflow_broadcast_draft_recipients");
+            if (draft) {
+                setContacts(draft);
+                sessionStorage.removeItem("zapflow_broadcast_draft_recipients");
+                toast.success("Contatos importados do grupo com sucesso!");
+            }
+        }
+    }, []);
+
     // Socket for progress updates
     useEffect(() => {
         const socket = getSocket();

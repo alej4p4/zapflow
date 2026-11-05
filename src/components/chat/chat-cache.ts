@@ -13,6 +13,8 @@ export interface Message {
     mediaUrl?: string;
     remoteJid?: string;
     quoteId?: string | null;
+    reactions?: Record<string, number>;
+    userReaction?: string;
     quoted?: {
         keyId: string;
         content: string | null;

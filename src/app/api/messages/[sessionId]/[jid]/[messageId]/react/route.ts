@@ -1,6 +1,7 @@
 import { NextResponse, NextRequest } from "next/server";
 import { waManager } from "@/modules/whatsapp/manager";
 import { getAuthenticatedUser, canAccessSession } from "@/lib/api-auth";
+import { prisma } from "@/lib/prisma";
 
 // POST: Send reaction to message
 export async function POST(
@@ -34,16 +35,37 @@ export async function POST(
         }
 
         const decodedJid = decodeURIComponent(jid);
+        const isGroup = decodedJid.endsWith("@g.us");
+
+        let targetFromMe = body.fromMe;
+        let targetParticipant = body.participant;
+
+        if (targetFromMe === undefined) {
+            const session = await prisma.session.findUnique({
+                where: { sessionId },
+                select: { id: true }
+            });
+            if (session) {
+                const dbMsg = await prisma.message.findUnique({
+                    where: { sessionId_keyId: { sessionId: session.id, keyId: messageId } },
+                    select: { fromMe: true, senderJid: true }
+                });
+                if (dbMsg) {
+                    targetFromMe = dbMsg.fromMe;
+                    targetParticipant = dbMsg.senderJid;
+                }
+            }
+        }
 
         // Send reaction (empty string removes reaction)
-        // Note: fromMe is hardcoded to false as per previous implementation
         await instance.socket.sendMessage(decodedJid, {
             react: {
                 text: emoji,
                 key: {
                     remoteJid: decodedJid,
-                    fromMe: false,
-                    id: messageId
+                    fromMe: targetFromMe ?? false,
+                    id: messageId,
+                    ...(isGroup && targetParticipant ? { participant: targetParticipant } : {})
                 }
             }
         });

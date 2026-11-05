@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import {
@@ -29,7 +30,9 @@ import {
     Users,
     Play,
     Pause,
-    AtSign
+    AtSign,
+    FileDown,
+    Zap
 } from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import {
@@ -44,7 +47,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
-import { sendChatMessage, sendMediaMessage } from "@/app/dashboard/chat/actions";
+import { sendChatMessage, sendMediaMessage, reactToChatMessage } from "@/app/dashboard/chat/actions";
 import { useSocket } from "./socket-context";
 import { chatCache, fetchOrGetChatMessages, type Message, type GroupParticipant } from "./chat-cache";
 
@@ -450,6 +453,35 @@ function ContextMenu({
 }
 
 
+const DEFAULT_QUICK_REPLIES = [
+    { shortcut: "/ola", label: "Saudação inicial", text: "Olá! Tudo bem? Como posso te ajudar hoje?" },
+    { shortcut: "/pix", label: "Dados do PIX", text: "Segue nossa chave PIX para pagamento: [chave]. Por gentileza, nos envie o comprovante após a transferência." },
+    { shortcut: "/horario", label: "Horário de atendimento", text: "Nosso horário de funcionamento é de segunda a sexta, das 08h às 18h." },
+    { shortcut: "/obrigado", label: "Agradecimento", text: "Muito obrigado pelo contato! Qualquer dúvida estamos à total disposição." },
+    { shortcut: "/contrato", label: "Envio de contrato", text: "Segue o contrato para conferência e assinatura. Favor acusar o recebimento." },
+    { shortcut: "/embarque", label: "Liberação de embarque", text: "🚨 Atenção: Lote liberado e pronto para embarque. Favor alinhar com os motoristas para seguirem viagem." }
+];
+
+function playNotificationChime() {
+    if (typeof window === "undefined") return;
+    try {
+        const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+        if (!AudioCtx) return;
+        const ctx = new AudioCtx();
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.type = "sine";
+        osc.frequency.setValueAtTime(800, ctx.currentTime);
+        osc.frequency.exponentialRampToValueAtTime(1200, ctx.currentTime + 0.08);
+        gain.gain.setValueAtTime(0.12, ctx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.25);
+        osc.start(ctx.currentTime);
+        osc.stop(ctx.currentTime + 0.25);
+    } catch {}
+}
+
 // ─── Isolated Chat Input Bar (Local state = 120 FPS typing with zero message re-renders) ───
 function ChatInputBar({
     onSend,
@@ -486,6 +518,39 @@ function ChatInputBar({
     const [mentionQuery, setMentionQuery] = useState<string | null>(null);
     const [mentionCursorIdx, setMentionCursorIdx] = useState<number>(-1);
     const [selectedMentionIdx, setSelectedMentionIdx] = useState(0);
+
+    // Quick Replies state (/)
+    const [quickReplyQuery, setQuickReplyQuery] = useState<string | null>(null);
+    const [quickReplyCursorIdx, setQuickReplyCursorIdx] = useState<number>(-1);
+    const [selectedQuickReplyIdx, setSelectedQuickReplyIdx] = useState(0);
+
+    const filteredQuickReplies = useMemo(() => {
+        if (quickReplyQuery === null) return [];
+        const q = quickReplyQuery.toLowerCase().trim();
+        if (!q) return DEFAULT_QUICK_REPLIES;
+        return DEFAULT_QUICK_REPLIES.filter(r =>
+            r.shortcut.toLowerCase().includes(q) || r.label.toLowerCase().includes(q) || r.text.toLowerCase().includes(q)
+        );
+    }, [quickReplyQuery]);
+
+    const handleSelectQuickReply = (r: typeof DEFAULT_QUICK_REPLIES[0]) => {
+        if (quickReplyCursorIdx === -1) return;
+        const before = input.slice(0, quickReplyCursorIdx);
+        const queryLen = quickReplyQuery ? quickReplyQuery.length : 0;
+        const after = input.slice(quickReplyCursorIdx + 1 + queryLen);
+        const nextInput = `${before}${r.text}${after}`;
+        setInput(nextInput);
+        setQuickReplyQuery(null);
+        setQuickReplyCursorIdx(-1);
+
+        setTimeout(() => {
+            if (inputRef.current) {
+                inputRef.current.focus();
+                const pos = before.length + r.text.length;
+                inputRef.current.setSelectionRange(pos, pos);
+            }
+        }, 10);
+    };
 
     const startRecording = async () => {
         try {
@@ -628,6 +693,7 @@ function ChatInputBar({
     useEffect(() => {
         inputRef.current?.focus();
         setMentionQuery(null);
+        setQuickReplyQuery(null);
         cancelRecording();
     }, [jid]);
 
@@ -638,9 +704,20 @@ function ChatInputBar({
         el.style.height = "auto";
         el.style.height = Math.min(el.scrollHeight, 120) + "px";
 
+        const cursor = el.selectionStart || 0;
+        const textBefore = val.slice(0, cursor);
+
+        // Quick replies trigger (/)
+        const slashMatch = textBefore.match(/\/([a-zA-Z0-9_\u00C0-\u00FF]*)$/);
+        if (slashMatch) {
+            setQuickReplyQuery(slashMatch[1]);
+            setQuickReplyCursorIdx(slashMatch.index!);
+            setSelectedQuickReplyIdx(0);
+        } else {
+            setQuickReplyQuery(null);
+        }
+
         if (isGroup) {
-            const cursor = el.selectionStart || 0;
-            const textBefore = val.slice(0, cursor);
             const atMatch = textBefore.match(/@([a-zA-Z0-9_\u00C0-\u00FF]*)$/);
             if (atMatch) {
                 setMentionQuery(atMatch[1]);
@@ -675,6 +752,7 @@ function ChatInputBar({
 
         setInput("");
         setMentionQuery(null);
+        setQuickReplyQuery(null);
         if (inputRef.current) {
             inputRef.current.style.height = "auto";
         }
@@ -682,6 +760,31 @@ function ChatInputBar({
     };
 
     const handleKeyDown = (e: React.KeyboardEvent) => {
+        // Quick replies keyboard navigation
+        if (quickReplyQuery !== null && filteredQuickReplies.length > 0) {
+            if (e.key === "ArrowDown") {
+                e.preventDefault();
+                setSelectedQuickReplyIdx(prev => (prev + 1) % filteredQuickReplies.length);
+                return;
+            }
+            if (e.key === "ArrowUp") {
+                e.preventDefault();
+                setSelectedQuickReplyIdx(prev => (prev - 1 + filteredQuickReplies.length) % filteredQuickReplies.length);
+                return;
+            }
+            if (e.key === "Enter" || e.key === "Tab") {
+                e.preventDefault();
+                const chosen = filteredQuickReplies[selectedQuickReplyIdx] || filteredQuickReplies[0];
+                if (chosen) handleSelectQuickReply(chosen);
+                return;
+            }
+            if (e.key === "Escape") {
+                e.preventDefault();
+                setQuickReplyQuery(null);
+                return;
+            }
+        }
+
         if (mentionQuery !== null && filteredParticipants.length > 0) {
             if (e.key === "ArrowDown") {
                 e.preventDefault();
@@ -714,6 +817,40 @@ function ChatInputBar({
 
     return (
         <div className="shrink-0 px-3.5 py-2.5 bg-[#f0f2f5] dark:bg-[#202c33] border-t border-border/15 relative">
+            {/* Quick Replies Autocomplete Popover (/) */}
+            {quickReplyQuery !== null && filteredQuickReplies.length > 0 && (
+                <div className="mb-2 p-1.5 rounded-2xl bg-white dark:bg-[#233138] border border-border/40 shadow-2xl animate-in slide-in-from-bottom-2 duration-150 max-h-56 overflow-y-auto no-scrollbar max-w-md">
+                    <div className="px-3 py-1.5 text-[11px] font-semibold text-amber-500 uppercase tracking-wider flex items-center justify-between border-b border-border/10 mb-1">
+                        <span className="flex items-center gap-1.5">
+                            <Zap className="h-3.5 w-3.5" />
+                            <span>Respostas Rápidas ({filteredQuickReplies.length})</span>
+                        </span>
+                        <span className="text-[10px] text-muted-foreground lowercase">↑↓ Enter</span>
+                    </div>
+                    <div className="flex flex-col gap-0.5">
+                        {filteredQuickReplies.map((r, idx) => (
+                            <button
+                                key={r.shortcut}
+                                type="button"
+                                onClick={() => handleSelectQuickReply(r)}
+                                className={cn(
+                                    "w-full px-3 py-2 rounded-xl text-left transition-colors cursor-pointer select-none flex flex-col gap-0.5",
+                                    idx === selectedQuickReplyIdx
+                                        ? "bg-amber-500/15 dark:bg-amber-500/25 text-foreground"
+                                        : "hover:bg-black/5 dark:hover:bg-white/5 text-foreground"
+                                )}
+                            >
+                                <div className="flex items-center justify-between">
+                                    <span className="font-mono text-xs font-semibold text-amber-600 dark:text-amber-400">{r.shortcut}</span>
+                                    <span className="text-[11px] font-medium text-muted-foreground">{r.label}</span>
+                                </div>
+                                <p className="text-xs text-muted-foreground truncate">{r.text}</p>
+                            </button>
+                        ))}
+                    </div>
+                </div>
+            )}
+
             {/* WhatsApp Group Mentions Autocomplete Popover */}
             {mentionQuery !== null && filteredParticipants.length > 0 && (
                 <div className="mb-2 p-1.5 rounded-2xl bg-white dark:bg-[#233138] border border-border/40 shadow-2xl animate-in slide-in-from-bottom-2 duration-150 max-h-56 overflow-y-auto no-scrollbar">
@@ -906,6 +1043,7 @@ function ChatInputBar({
 
 // ─── Main Component ─────────────────
 export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWindowProps) {
+    const router = useRouter();
     const [messages, setMessages] = useState<Message[]>([]);
     const scrollRef = useRef<HTMLDivElement>(null);
     const bottomRef = useRef<HTMLDivElement>(null);
@@ -1028,6 +1166,12 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
                 const relevant = newMessages.filter(m => m.remoteJid === normalizedJid || prev.some(p => p.remoteJid === m.remoteJid));
                 if (relevant.length === 0) return prev;
 
+                // Play chime if there are incoming messages from someone else
+                const incomingFromOthers = relevant.some(m => !m.fromMe && !m.keyId.startsWith("temp-"));
+                if (incomingFromOthers) {
+                    playNotificationChime();
+                }
+
                 // Remove optimistic temp- messages that match incoming messages fromMe
                 let filtered = prev;
                 for (const nm of relevant) {
@@ -1054,9 +1198,28 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
             });
         };
         socket.on("message.update", handler);
+
+        const reactionHandler = (data: { keyId: string; emoji: string; fromMe?: boolean }) => {
+            if (!data?.keyId) return;
+            setMessages(prev => prev.map(m => {
+                if (m.keyId !== data.keyId) return m;
+                const nextReactions = { ...(m.reactions || {}) };
+                if (data.emoji) {
+                    nextReactions[data.emoji] = (nextReactions[data.emoji] || 0) + 1;
+                }
+                return {
+                    ...m,
+                    userReaction: data.fromMe ? (data.emoji || undefined) : m.userReaction,
+                    reactions: Object.keys(nextReactions).length > 0 ? nextReactions : undefined
+                };
+            }));
+        };
+        socket.on("message.reaction", reactionHandler);
+
         return () => {
             socket.off("connect", onConnect);
             socket.off("message.update", handler);
+            socket.off("message.reaction", reactionHandler);
         };
     }, [sessionId, jid, getSocket, joinSession]);
 
@@ -1242,6 +1405,92 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
         setContextMenu({ x: e.clientX, y: e.clientY, msg });
     }, []);
 
+    const handleReaction = async (msg: Message, emoji: string) => {
+        const isRemoving = msg.userReaction === emoji;
+        const targetEmoji = isRemoving ? "" : emoji;
+
+        // 0ms Optimistic reaction update
+        setMessages(prev => prev.map(m => {
+            if (m.keyId !== msg.keyId) return m;
+            const nextReactions = { ...(m.reactions || {}) };
+            if (msg.userReaction) {
+                const count = (nextReactions[msg.userReaction] || 1) - 1;
+                if (count <= 0) delete nextReactions[msg.userReaction];
+                else nextReactions[msg.userReaction] = count;
+            }
+            if (!isRemoving) {
+                nextReactions[emoji] = (nextReactions[emoji] || 0) + 1;
+            }
+            return {
+                ...m,
+                userReaction: isRemoving ? undefined : emoji,
+                reactions: Object.keys(nextReactions).length > 0 ? nextReactions : undefined
+            };
+        }));
+
+        try {
+            await reactToChatMessage(
+                sessionId,
+                jid,
+                msg.keyId,
+                targetEmoji,
+                msg.fromMe,
+                msg.senderJid || undefined
+            );
+        } catch (err: any) {
+            console.error("Erro ao enviar reação:", err);
+            toast.error(err?.message || "Falha ao reagir à mensagem");
+        }
+    };
+
+    const exportGroupParticipants = () => {
+        if (!participantsList || participantsList.length === 0) {
+            toast.error("Nenhum participante encontrado para exportar");
+            return;
+        }
+
+        const cleanGroupName = (name || "grupo").replace(/[/\\?%*:|"<>]/g, "_");
+        const header = "Nome,Telefone,JID\n";
+        const rows = participantsList.map(p => {
+            const safeName = `"${(p.name || '').replace(/"/g, '""')}"`;
+            const safePhone = `"${(p.phoneNumber || p.id || '').replace(/"/g, '""')}"`;
+            const safeJid = `"${(p.id || '').replace(/"/g, '""')}"`;
+            return `${safeName},${safePhone},${safeJid}`;
+        }).join("\n");
+
+        const csvContent = "\uFEFF" + header + rows;
+        const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        link.href = url;
+        link.download = `participantes_${cleanGroupName}.csv`;
+        link.click();
+        URL.revokeObjectURL(url);
+        toast.success(`${participantsList.length} participantes exportados para CSV!`);
+    };
+
+    const sendBroadcastToGroupMembers = () => {
+        if (!participantsList || participantsList.length === 0) {
+            toast.error("Nenhum participante disponível para disparo");
+            return;
+        }
+
+        const validNumbers = participantsList
+            .map(p => p.phoneNumber || p.id)
+            .filter((num): num is string => Boolean(num && !num.includes("@g.us")));
+
+        if (validNumbers.length === 0) {
+            toast.error("Nenhum número válido encontrado nos membros");
+            return;
+        }
+
+        if (typeof window !== "undefined") {
+            sessionStorage.setItem("zapflow_broadcast_draft_recipients", JSON.stringify(validNumbers));
+        }
+        toast.success(`${validNumbers.length} membros carregados para novo disparo!`);
+        router.push("/dashboard/broadcast");
+    };
+
     const displayName = name || jid.split('@')[0];
 
     return (
@@ -1356,9 +1605,44 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
                     <Button variant="ghost" size="icon" className="h-9 w-9 rounded-full hover:bg-black/5 dark:hover:bg-white/10" title="Pesquisar">
                         <Search className="h-4.5 w-4.5" />
                     </Button>
-                    <Button variant="ghost" size="icon" className="h-9 w-9 rounded-full hover:bg-black/5 dark:hover:bg-white/10" title="Mais opções">
-                        <MoreVertical className="h-4.5 w-4.5" />
-                    </Button>
+                    <Popover>
+                        <PopoverTrigger asChild>
+                            <Button variant="ghost" size="icon" className="h-9 w-9 rounded-full hover:bg-black/5 dark:hover:bg-white/10 cursor-pointer" title="Mais opções">
+                                <MoreVertical className="h-4.5 w-4.5" />
+                            </Button>
+                        </PopoverTrigger>
+                        <PopoverContent align="end" className="w-56 p-1.5 rounded-2xl shadow-2xl bg-white dark:bg-[#233138] border border-border/30 z-50 animate-in fade-in zoom-in-95 duration-100">
+                            {isGroup && (
+                                <>
+                                    <button
+                                        type="button"
+                                        onClick={exportGroupParticipants}
+                                        className="w-full flex items-center gap-2.5 px-3 py-2 text-xs font-medium text-foreground rounded-xl hover:bg-black/5 dark:hover:bg-white/10 transition-colors text-left cursor-pointer"
+                                    >
+                                        <FileDown className="h-4 w-4 text-[#00a884]" />
+                                        <span>Exportar membros (CSV)</span>
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={sendBroadcastToGroupMembers}
+                                        className="w-full flex items-center gap-2.5 px-3 py-2 text-xs font-medium text-foreground rounded-xl hover:bg-black/5 dark:hover:bg-white/10 transition-colors text-left cursor-pointer"
+                                    >
+                                        <Zap className="h-4 w-4 text-amber-500" />
+                                        <span>Criar disparo com membros</span>
+                                    </button>
+                                    <div className="h-px bg-border/15 my-1" />
+                                </>
+                            )}
+                            <button
+                                type="button"
+                                onClick={() => toast.info(`Conversa: ${displayName}`)}
+                                className="w-full flex items-center gap-2.5 px-3 py-2 text-xs font-medium text-foreground rounded-xl hover:bg-black/5 dark:hover:bg-white/10 transition-colors text-left cursor-pointer"
+                            >
+                                <Info className="h-4 w-4 text-muted-foreground" />
+                                <span>Dados do {isGroup ? "grupo" : "contato"}</span>
+                            </button>
+                        </PopoverContent>
+                    </Popover>
                 </div>
             </div>
 
@@ -1432,15 +1716,44 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
                                         );
                                     })()}
 
-                                    {/* Reply button for my messages (on left) */}
+                                    {/* Action buttons (Reply & React) for my messages (on left) */}
                                     {msg.fromMe && (
-                                        <button
-                                            onClick={() => { setReplyingTo(msg); scrollToBottom(true); }}
-                                            className="self-center p-1.5 text-muted-foreground/50 hover:text-[#00a884] hover:bg-black/5 dark:hover:bg-white/10 rounded-full transition-all opacity-0 group-hover:opacity-100 cursor-pointer shrink-0 order-first"
-                                            title="Responder"
-                                        >
-                                            <CornerUpLeft className="h-3.5 w-3.5" />
-                                        </button>
+                                        <div className="flex items-center self-center opacity-0 group-hover:opacity-100 transition-opacity order-first">
+                                            <Popover>
+                                                <PopoverTrigger asChild>
+                                                    <button
+                                                        type="button"
+                                                        className="p-1.5 text-muted-foreground/50 hover:text-[#00a884] hover:bg-black/5 dark:hover:bg-white/10 rounded-full cursor-pointer"
+                                                        title="Reagir"
+                                                    >
+                                                        <Smile className="h-3.5 w-3.5" />
+                                                    </button>
+                                                </PopoverTrigger>
+                                                <PopoverContent side="top" align="end" className="p-1.5 w-auto rounded-full bg-white dark:bg-[#233138] shadow-2xl border border-border/30 flex items-center gap-1 z-50 animate-in fade-in zoom-in-95 duration-100">
+                                                    {["👍", "❤️", "😂", "😮", "😢", "🙏"].map(emoji => (
+                                                        <button
+                                                            key={emoji}
+                                                            type="button"
+                                                            onClick={() => handleReaction(msg, emoji)}
+                                                            className={cn(
+                                                                "h-8 w-8 flex items-center justify-center text-lg rounded-full hover:scale-125 transition-transform hover:bg-black/5 dark:hover:bg-white/10 cursor-pointer",
+                                                                msg.userReaction === emoji && "bg-[#00a884]/20 scale-110"
+                                                            )}
+                                                        >
+                                                            {emoji}
+                                                        </button>
+                                                    ))}
+                                                </PopoverContent>
+                                            </Popover>
+                                            <button
+                                                type="button"
+                                                onClick={() => { setReplyingTo(msg); scrollToBottom(true); }}
+                                                className="p-1.5 text-muted-foreground/50 hover:text-[#00a884] hover:bg-black/5 dark:hover:bg-white/10 rounded-full cursor-pointer"
+                                                title="Responder"
+                                            >
+                                                <CornerUpLeft className="h-3.5 w-3.5" />
+                                            </button>
+                                        </div>
                                     )}
 
                                     {/* Authentic WhatsApp Bubble */}
@@ -1607,17 +1920,61 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
                                                 {msg.fromMe && <MessageStatusCheck status={msg.status} />}
                                             </div>
                                         </div>
+
+                                        {/* Floating reaction pills at bottom corner of bubble */}
+                                        {msg.reactions && Object.keys(msg.reactions).length > 0 && (
+                                            <div className={cn(
+                                                "absolute -bottom-2.5 z-10 flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-white dark:bg-[#202c33] shadow-[0_1px_3px_rgba(0,0,0,0.25)] border border-border/25 text-[11px] select-none",
+                                                msg.fromMe ? "right-2" : "left-2"
+                                            )}>
+                                                {Object.entries(msg.reactions).map(([emoji, count]) => (
+                                                    <span key={emoji} className="flex items-center gap-0.5 cursor-pointer" onClick={() => handleReaction(msg, emoji)}>
+                                                        <span>{emoji}</span>
+                                                        {count > 1 && <span className="text-[10px] text-muted-foreground font-semibold">{count}</span>}
+                                                    </span>
+                                                ))}
+                                            </div>
+                                        )}
                                     </div>
 
-                                    {/* Reply button for incoming messages (on right) */}
+                                    {/* Action buttons (Reply & React) for incoming messages (on right) */}
                                     {!msg.fromMe && (
-                                        <button
-                                            onClick={() => { setReplyingTo(msg); scrollToBottom(true); }}
-                                            className="self-center p-1.5 text-muted-foreground/50 hover:text-[#00a884] hover:bg-black/5 dark:hover:bg-white/10 rounded-full transition-all opacity-0 group-hover:opacity-100 cursor-pointer shrink-0"
-                                            title="Responder"
-                                        >
-                                            <CornerUpLeft className="h-3.5 w-3.5" />
-                                        </button>
+                                        <div className="flex items-center self-center opacity-0 group-hover:opacity-100 transition-opacity">
+                                            <Popover>
+                                                <PopoverTrigger asChild>
+                                                    <button
+                                                        type="button"
+                                                        className="p-1.5 text-muted-foreground/50 hover:text-[#00a884] hover:bg-black/5 dark:hover:bg-white/10 rounded-full cursor-pointer"
+                                                        title="Reagir"
+                                                    >
+                                                        <Smile className="h-3.5 w-3.5" />
+                                                    </button>
+                                                </PopoverTrigger>
+                                                <PopoverContent side="top" align="start" className="p-1.5 w-auto rounded-full bg-white dark:bg-[#233138] shadow-2xl border border-border/30 flex items-center gap-1 z-50 animate-in fade-in zoom-in-95 duration-100">
+                                                    {["👍", "❤️", "😂", "😮", "😢", "🙏"].map(emoji => (
+                                                        <button
+                                                            key={emoji}
+                                                            type="button"
+                                                            onClick={() => handleReaction(msg, emoji)}
+                                                            className={cn(
+                                                                "h-8 w-8 flex items-center justify-center text-lg rounded-full hover:scale-125 transition-transform hover:bg-black/5 dark:hover:bg-white/10 cursor-pointer",
+                                                                msg.userReaction === emoji && "bg-[#00a884]/20 scale-110"
+                                                            )}
+                                                        >
+                                                            {emoji}
+                                                        </button>
+                                                    ))}
+                                                </PopoverContent>
+                                            </Popover>
+                                            <button
+                                                type="button"
+                                                onClick={() => { setReplyingTo(msg); scrollToBottom(true); }}
+                                                className="p-1.5 text-muted-foreground/50 hover:text-[#00a884] hover:bg-black/5 dark:hover:bg-white/10 rounded-full cursor-pointer"
+                                                title="Responder"
+                                            >
+                                                <CornerUpLeft className="h-3.5 w-3.5" />
+                                            </button>
+                                        </div>
                                     )}
                                 </div>
                             </div>

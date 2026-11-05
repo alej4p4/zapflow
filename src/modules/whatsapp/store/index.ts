@@ -498,6 +498,7 @@ async function processAndSaveMessage(
 
     // Extract contextInfo (quoted message ID)
     let quoteId: string | null = null;
+    let quotedThumbnail: string | null = null;
     if (msg.message) {
         const msgObj = msg.message as any;
         for (const key of Object.keys(msgObj)) {
@@ -506,6 +507,23 @@ async function processAndSaveMessage(
                 const contextInfo = (inner as any).contextInfo;
                 if (contextInfo?.stanzaId) {
                     quoteId = contextInfo.stanzaId;
+                    if (contextInfo.quotedMessage?.imageMessage?.jpegThumbnail) {
+                        try {
+                            const thumb = contextInfo.quotedMessage.imageMessage.jpegThumbnail;
+                            const buf = Buffer.isBuffer(thumb) ? thumb : Buffer.from(thumb);
+                            quotedThumbnail = `data:image/jpeg;base64,${buf.toString('base64')}`;
+                            if (dbSessionId && quoteId) {
+                                prisma.message.updateMany({
+                                    where: {
+                                        sessionId: dbSessionId,
+                                        keyId: quoteId,
+                                        OR: [{ mediaUrl: null }, { mediaUrl: { startsWith: '/api/media' } }]
+                                    },
+                                    data: { mediaUrl: quotedThumbnail }
+                                }).catch(() => {});
+                            }
+                        } catch {}
+                    }
                     break;
                 }
             }
@@ -529,6 +547,18 @@ async function processAndSaveMessage(
                 quoteId
             }
         });
+
+        // If this message quotes an image and carries a thumbnail, backfill the original message
+        if (quoteId && quotedThumbnail) {
+            void prisma.message.updateMany({
+                where: {
+                    sessionId: dbSessionId,
+                    keyId: quoteId,
+                    mediaUrl: null
+                },
+                data: { mediaUrl: quotedThumbnail }
+            }).catch(() => {});
+        }
         
         // Ensure contact exists (Upsert Contact)
         const finalRemoteJid = normalizeJid(normalizedRemoteJid);
