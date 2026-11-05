@@ -108,9 +108,17 @@ function parseBroadcastMessage(msg: string): { text: string; media?: { type: str
     return { text: msg || "" };
 }
 
+interface ExcludedRecipient {
+    jid: string;
+    name: string;
+    excludedAt: string;
+}
+
 /** Chaves de armazenamento persistente por sessão */
 const DRAFT_KEY = (sid: string) => `zapflow_broadcast_draft_${sid}`;
 const ACTIVE_KEY = (sid: string) => `zapflow_broadcast_active_${sid}`;
+const EXCLUDED_KEY = (sid: string) => `zapflow_broadcast_excluded_${sid}`;
+const NAME_MAP_KEY = (sid: string) => `zapflow_broadcast_namemap_${sid}`;
 
 /** Número canônico do contato (o JID já vem com 55 + DDD). */
 function contactNumber(contact: PhoneContact): string {
@@ -189,6 +197,13 @@ export default function BroadcastPage() {
     const [detailOpen, setDetailOpen] = useState(false);
     const [detailLoading, setDetailLoading] = useState(false);
 
+    // Destinatários excluídos dos próximos disparos e seleção de erros
+    const [excludedRecipients, setExcludedRecipients] = useState<ExcludedRecipient[]>([]);
+    const [excludedModalOpen, setExcludedModalOpen] = useState(false);
+    const [selectedErrorJids, setSelectedErrorJids] = useState<string[]>([]);
+    const [selectedDetailErrorJids, setSelectedDetailErrorJids] = useState<string[]>([]);
+    const [customNameMap, setCustomNameMap] = useState<Record<string, string>>({});
+
     const { getSocket, joinSession } = useSocket();
 
     // Refs para controle seguro de hidratação de armazenamento
@@ -255,6 +270,31 @@ export default function BroadcastPage() {
             }
         } catch (e) {
             console.error("Falha ao restaurar progresso ativo do disparo", e);
+        }
+
+        // Restaura lista de excluídos e mapa de nomes personalizados da sessão
+        try {
+            const rawExcluded = localStorage.getItem(EXCLUDED_KEY(sessionId));
+            if (rawExcluded) {
+                const parsedEx = JSON.parse(rawExcluded);
+                if (Array.isArray(parsedEx)) setExcludedRecipients(parsedEx);
+            } else {
+                setExcludedRecipients([]);
+            }
+        } catch {
+            setExcludedRecipients([]);
+        }
+
+        try {
+            const rawNameMap = localStorage.getItem(NAME_MAP_KEY(sessionId));
+            if (rawNameMap) {
+                const parsedMap = JSON.parse(rawNameMap);
+                if (parsedMap && typeof parsedMap === "object") setCustomNameMap(parsedMap);
+            } else {
+                setCustomNameMap({});
+            }
+        } catch {
+            setCustomNameMap({});
         }
 
         isLoadedRef.current = true;
@@ -424,17 +464,163 @@ export default function BroadcastPage() {
         })();
     }, [sessionId]);
 
-    // Filtro local: nome sem acento ou número (sem limite arbitrário de 50 para suportar 80+ contatos)
+    // Conjunto rápido de JIDs e números excluídos dos próximos disparos
+    const excludedSet = useMemo(() => {
+        const set = new Set<string>();
+        excludedRecipients.forEach(item => {
+            const jid = item.jid.trim().toLowerCase();
+            set.add(jid);
+            const bare = jid.split("@")[0].replace(/\D/g, "");
+            if (bare) {
+                set.add(bare);
+                if (bare.startsWith("55") && bare.length >= 12) {
+                    set.add(bare.slice(2));
+                }
+            }
+        });
+        return set;
+    }, [excludedRecipients]);
+
+    const isJidExcluded = useCallback((jidOrNum: string): boolean => {
+        if (!jidOrNum) return false;
+        const clean = jidOrNum.trim().toLowerCase();
+        if (excludedSet.has(clean)) return true;
+        if (!clean.endsWith("@g.us")) {
+            const digits = clean.split("@")[0].replace(/\D/g, "");
+            if (digits && excludedSet.has(digits)) return true;
+            if (digits.startsWith("55") && digits.length >= 12 && excludedSet.has(digits.slice(2))) return true;
+        }
+        return false;
+    }, [excludedSet]);
+
+    // Mapas bidirecionais entre Nome (grupo/contato) <-> JID real
+    const { nameToJidMap, jidToNameMap, groupDisplayNames, contactDisplayNames } = useMemo(() => {
+        const n2j = new Map<string, string>();
+        const j2n = new Map<string, string>();
+        const gNames = new Map<string, string>();
+        const cNames = new Map<string, string>();
+
+        // 1. Nomes customizados salvos anteriormente
+        Object.entries(customNameMap).forEach(([name, jid]) => {
+            if (name && jid) {
+                n2j.set(name.toLowerCase(), jid);
+                n2j.set(normalizeSearch(name), jid);
+                j2n.set(jid, name);
+                j2n.set(jid.toLowerCase(), name);
+                const bare = jid.split("@")[0];
+                if (bare) j2n.set(bare, name);
+            }
+        });
+
+        // 2. Contatos do celular
+        const usedContactNames = new Map<string, number>();
+        pickerContacts.forEach(c => {
+            const num = contactNumber(c);
+            if (!num) return;
+            const jid = toWhatsAppJid(num);
+            const rawLabel = contactLabel(c).trim();
+            if (!rawLabel) {
+                cNames.set(c.id, num);
+                return;
+            }
+            const key = rawLabel.toLowerCase();
+            const count = (usedContactNames.get(key) || 0) + 1;
+            usedContactNames.set(key, count);
+            const displayName = count > 1 ? `${rawLabel} #${count}` : rawLabel;
+
+            cNames.set(c.id, displayName);
+            n2j.set(displayName.toLowerCase(), jid);
+            n2j.set(normalizeSearch(displayName), jid);
+            if (count === 1) {
+                n2j.set(key, jid);
+                n2j.set(normalizeSearch(rawLabel), jid);
+            }
+            j2n.set(jid, displayName);
+            j2n.set(num, displayName);
+            if (num.startsWith("55") && num.length >= 12) {
+                j2n.set(num.slice(2), displayName);
+            }
+        });
+
+        // 3. Grupos da sessão
+        const usedGroupNames = new Map<string, number>();
+        groups.forEach(g => {
+            if (!g.jid) return;
+            const rawSubject = (g.subject || "Grupo").trim();
+            const key = rawSubject.toLowerCase();
+            const count = (usedGroupNames.get(key) || 0) + 1;
+            usedGroupNames.set(key, count);
+            const displayName = count > 1 ? `${rawSubject} #${count}` : rawSubject;
+
+            gNames.set(g.jid, displayName);
+            n2j.set(displayName.toLowerCase(), g.jid);
+            n2j.set(normalizeSearch(displayName), g.jid);
+            if (count === 1) {
+                n2j.set(key, g.jid);
+                n2j.set(normalizeSearch(rawSubject), g.jid);
+            }
+            j2n.set(g.jid, displayName);
+            j2n.set(g.jid.toLowerCase(), displayName);
+        });
+
+        return { nameToJidMap: n2j, jidToNameMap: j2n, groupDisplayNames: gNames, contactDisplayNames: cNames };
+    }, [groups, pickerContacts, customNameMap]);
+
+    // Interpreta linhas do campo Destinatários (suporta nomes com vírgula sem quebrar!)
+    const parseRecipientLines = useCallback((text: string): string[] => {
+        if (!text) return [];
+        // Primeiro une linhas que quebraram apenas com "(120363...@g.us)" na linha de baixo
+        const mergedText = text.replace(/\n\s*(\([0-9\-_]+@g\.us\))/gi, " $1");
+        const rawLines = mergedText.split(/\n+/);
+        const result: string[] = [];
+        for (const line of rawLines) {
+            const trimmed = line.trim();
+            if (!trimmed) continue;
+            // Se a linha contém apenas números/vírgulas (sem letras), separa por vírgula
+            if (!/[a-zA-Z]/.test(trimmed) && trimmed.includes(",")) {
+                trimmed.split(",").map(s => s.trim()).filter(Boolean).forEach(s => result.push(s));
+            } else {
+                result.push(trimmed);
+            }
+        }
+        return result;
+    }, []);
+
+    // Converte uma linha (nome do grupo, nome do contato ou número/JID) para o JID real do WhatsApp
+    const resolveLineToJid = useCallback((line: string): string => {
+        const trimmed = line.trim();
+        if (!trimmed) return "";
+
+        const explicit = toWhatsAppJid(trimmed);
+        if (explicit) return explicit;
+
+        const lower = trimmed.toLowerCase();
+        const norm = normalizeSearch(trimmed);
+        const withoutHash = trimmed.replace(/\s+#\d+$/, "").trim();
+
+        return (
+            nameToJidMap.get(lower) ||
+            nameToJidMap.get(norm) ||
+            nameToJidMap.get(withoutHash.toLowerCase()) ||
+            nameToJidMap.get(normalizeSearch(withoutHash)) ||
+            ""
+        );
+    }, [nameToJidMap]);
+
+    // Filtro local de contatos (oculta contatos excluídos dos próximos disparos)
     const filteredContacts = useMemo(() => {
         const query = normalizeSearch(pickerSearch);
         const digits = pickerSearch.replace(/\D/g, "");
-        if (!query && !digits) return pickerContacts;
-
-        return pickerContacts.filter(c =>
-            normalizeSearch(contactLabel(c)).includes(query) ||
-            (digits.length > 0 && contactNumber(c).includes(digits))
-        );
-    }, [pickerContacts, pickerSearch]);
+        return pickerContacts.filter(c => {
+            const num = contactNumber(c);
+            if (!num || isJidExcluded(num)) return false;
+            if (!query && !digits) return true;
+            return (
+                normalizeSearch(contactLabel(c)).includes(query) ||
+                (digits.length > 0 && num.includes(digits))
+            );
+        });
+    }, [pickerContacts, pickerSearch, isJidExcluded]);
 
     const isAllFilteredContactsSelected = filteredContacts.length > 0 &&
         filteredContacts.every(c => selectedContacts.includes(c.id));
@@ -457,23 +643,34 @@ export default function BroadcastPage() {
     };
 
     const addSelectedContacts = () => {
+        const newMapEntries: Record<string, string> = {};
         setContacts(prev => {
-            const lines = prev.split(/[\n,]+/).map(s => s.trim()).filter(Boolean);
-            const existingTargets = new Set(lines.map(extractRecipientTarget));
+            const lines = parseRecipientLines(prev);
+            const existingJids = new Set(lines.map(resolveLineToJid).filter(Boolean));
             const selectedSet = new Set(selectedContacts);
             const toAdd: string[] = [];
             for (const contact of pickerContacts) {
                 const number = contactNumber(contact);
-                if (number && selectedSet.has(contact.id) && !existingTargets.has(number)) {
-                    const label = contactLabel(contact);
-                    toAdd.push(label ? `${label} (${number})` : number);
-                    existingTargets.add(number);
+                if (!number || !selectedSet.has(contact.id) || isJidExcluded(number)) continue;
+                const jid = toWhatsAppJid(number);
+                if (!existingJids.has(jid)) {
+                    const displayName = contactDisplayNames.get(contact.id) || contactLabel(contact).trim() || number;
+                    toAdd.push(displayName);
+                    existingJids.add(jid);
+                    newMapEntries[displayName] = jid;
                 }
             }
             return [...lines, ...toAdd].join("\n");
         });
+        if (Object.keys(newMapEntries).length > 0 && sessionId) {
+            setCustomNameMap(prev => {
+                const updated = { ...prev, ...newMapEntries };
+                try { localStorage.setItem(NAME_MAP_KEY(sessionId), JSON.stringify(updated)); } catch {}
+                return updated;
+            });
+        }
         setSelectedContacts([]);
-        toast.success("Contatos adicionados com nome aos destinatários");
+        toast.success("Contatos adicionados (somente nome) aos destinatários");
     };
 
     // Grupos da sessão: em cache na memória (método WhatsApp Web)
@@ -491,9 +688,12 @@ export default function BroadcastPage() {
 
     const filteredGroups = useMemo(() => {
         const query = normalizeSearch(groupSearch);
-        if (!query) return groups;
-        return groups.filter(g => normalizeSearch(g.subject).includes(query));
-    }, [groups, groupSearch]);
+        return groups.filter(g => {
+            if (!g.jid || isJidExcluded(g.jid)) return false;
+            if (!query) return true;
+            return normalizeSearch(g.subject).includes(query);
+        });
+    }, [groups, groupSearch, isJidExcluded]);
 
     const isAllFilteredGroupsSelected = filteredGroups.length > 0 &&
         filteredGroups.every(g => selectedGroups.includes(g.jid));
@@ -512,21 +712,31 @@ export default function BroadcastPage() {
     };
 
     const addSelectedGroups = () => {
+        const newMapEntries: Record<string, string> = {};
         setContacts(prev => {
-            const lines = prev.split(/[\n,]+/).map(s => s.trim()).filter(Boolean);
-            const existingTargets = new Set(lines.map(extractRecipientTarget));
+            const lines = parseRecipientLines(prev);
+            const existingJids = new Set(lines.map(resolveLineToJid).filter(Boolean));
             const selectedSet = new Set(selectedGroups);
             const toAdd: string[] = [];
             for (const group of groups) {
-                if (selectedSet.has(group.jid) && !existingTargets.has(group.jid)) {
-                    toAdd.push(`${group.subject || "Grupo"} (${group.jid})`);
-                    existingTargets.add(group.jid);
+                if (selectedSet.has(group.jid) && !existingJids.has(group.jid) && !isJidExcluded(group.jid)) {
+                    const displayName = groupDisplayNames.get(group.jid) || (group.subject || "Grupo").trim();
+                    toAdd.push(displayName);
+                    existingJids.add(group.jid);
+                    newMapEntries[displayName] = group.jid;
                 }
             }
             return [...lines, ...toAdd].join("\n");
         });
+        if (Object.keys(newMapEntries).length > 0 && sessionId) {
+            setCustomNameMap(prev => {
+                const updated = { ...prev, ...newMapEntries };
+                try { localStorage.setItem(NAME_MAP_KEY(sessionId), JSON.stringify(updated)); } catch {}
+                return updated;
+            });
+        }
         setSelectedGroups([]);
-        toast.success("Grupos adicionados com nome aos destinatários");
+        toast.success("Grupos adicionados (somente nome) aos destinatários");
     };
 
     // Handlers para anexo de mídia / documento no disparo
@@ -572,63 +782,144 @@ export default function BroadcastPage() {
         if (fileInputRef.current) fileInputRef.current.value = "";
     };
 
-    // Resolve nomes de grupos e contatos para JIDs ou números crus na lista
+    // Deixa SOMENTE o nome do grupo ou nome do contato (e remove parênteses com JID/número e itens excluídos)
     const resolveRecipientNames = useCallback((text: string) => {
-        if (!text || (!groups.length && !pickerContacts.length)) return text;
-        const groupMap = new Map<string, string>();
-        groups.forEach(g => {
-            if (g.jid) {
-                groupMap.set(g.jid.trim().toLowerCase(), g.subject || "Grupo");
-                groupMap.set(g.jid.trim(), g.subject || "Grupo");
-            }
-        });
-
-        const contactMap = new Map<string, string>();
-        pickerContacts.forEach(c => {
-            const num = contactNumber(c);
-            const lbl = contactLabel(c);
-            if (num && lbl) {
-                contactMap.set(num.trim(), lbl);
-            }
-        });
-
-        const lines = text.split("\n");
+        if (!text) return text;
+        const lines = parseRecipientLines(text);
         let changed = false;
-        const resolvedLines = lines.map(line => {
+        const discoveredMap: Record<string, string> = {};
+        const outputLines: string[] = [];
+
+        for (const line of lines) {
             const trimmed = line.trim();
-            if (!trimmed) return line;
-            if (trimmed.includes("(") || trimmed.includes("<")) return line;
+            if (!trimmed) continue;
 
-            // Grupo
-            const lower = trimmed.toLowerCase();
-            if (groupMap.has(lower)) {
-                changed = true;
-                return `${groupMap.get(lower) || "Grupo"} (${trimmed})`;
+            // Caso 1: Linha no formato "NOME DO GRUPO (120363...@g.us)" ou "Nome Contato (5566...)"
+            const parenMatch = trimmed.match(/^(.+?)\s*[<(]\s*([0-9\-_]+@g\.us|\d+@s\.whatsapp\.net|[0-9+\-\s]{8,20})\s*[>)]$/i);
+            if (parenMatch) {
+                const cleanName = parenMatch[1].trim();
+                const rawTarget = parenMatch[2].trim();
+                const jid = toWhatsAppJid(rawTarget);
+                if (jid && isJidExcluded(jid)) {
+                    changed = true;
+                    continue;
+                }
+                if (cleanName && jid) {
+                    discoveredMap[cleanName] = jid;
+                    const mappedName = jidToNameMap.get(jid) || cleanName;
+                    outputLines.push(mappedName);
+                    changed = true;
+                    continue;
+                }
             }
 
-            // Contato
-            const digits = trimmed.replace(/\D/g, "");
-            const clean11 = digits.startsWith("55") && digits.length >= 12 ? digits.slice(2) : digits;
-            if (digits && contactMap.has(digits)) {
-                changed = true;
-                return `${contactMap.get(digits)} (${digits})`;
-            } else if (clean11 && contactMap.has(clean11)) {
-                changed = true;
-                return `${contactMap.get(clean11)} (${digits})`;
+            // Caso 2: Linha é um JID cru (ex: 120363...@g.us) ou número cru
+            const directJid = toWhatsAppJid(trimmed);
+            if (directJid) {
+                if (isJidExcluded(directJid)) {
+                    changed = true;
+                    continue;
+                }
+                const bareNum = directJid.split("@")[0];
+                const knownName = jidToNameMap.get(directJid) || jidToNameMap.get(trimmed.toLowerCase()) || jidToNameMap.get(bareNum);
+                if (knownName) {
+                    outputLines.push(knownName);
+                    changed = true;
+                    continue;
+                }
+                outputLines.push(trimmed);
+                continue;
             }
 
-            return line;
-        });
+            // Caso 3: Linha já é somente o nome do grupo ou contato
+            const resolvedJid = resolveLineToJid(trimmed);
+            if (resolvedJid && isJidExcluded(resolvedJid)) {
+                changed = true;
+                continue;
+            }
+            outputLines.push(trimmed);
+        }
 
-        return changed ? resolvedLines.join("\n") : text;
-    }, [groups, pickerContacts]);
+        if (Object.keys(discoveredMap).length > 0 && sessionId) {
+            setCustomNameMap(prev => {
+                const next = { ...prev, ...discoveredMap };
+                try { localStorage.setItem(NAME_MAP_KEY(sessionId), JSON.stringify(next)); } catch {}
+                return next;
+            });
+        }
 
-    // Auto-resolve nomes ao carregar grupos e contatos
+        const joined = outputLines.join("\n");
+        return changed || joined !== text ? joined : text;
+    }, [parseRecipientLines, jidToNameMap, resolveLineToJid, isJidExcluded, sessionId]);
+
+    // Auto-resolve para deixar somente o nome assim que carregar grupos, contatos ou lista de excluídos
     useEffect(() => {
-        if (groups.length > 0 || pickerContacts.length > 0) {
+        if (groups.length > 0 || pickerContacts.length > 0 || excludedRecipients.length > 0) {
             setContacts(prev => resolveRecipientNames(prev));
         }
-    }, [groups, pickerContacts, resolveRecipientNames]);
+    }, [groups, pickerContacts, excludedRecipients, resolveRecipientNames]);
+
+    // Exclui destinatários selecionados (com erro) dos próximos disparos
+    const handleExcludeRecipients = useCallback((jidsToExclude: string[]) => {
+        if (!sessionId || jidsToExclude.length === 0) return;
+        const now = new Date().toISOString();
+
+        setExcludedRecipients(prev => {
+            const existing = new Set(prev.map(e => e.jid.toLowerCase()));
+            const added: ExcludedRecipient[] = [];
+            for (const rawJid of jidsToExclude) {
+                const clean = rawJid.trim();
+                if (!clean || existing.has(clean.toLowerCase())) continue;
+                existing.add(clean.toLowerCase());
+                const bare = clean.split("@")[0];
+                const readableName = jidToNameMap.get(clean) || jidToNameMap.get(clean.toLowerCase()) || jidToNameMap.get(bare) || bare;
+                added.push({
+                    jid: clean,
+                    name: readableName,
+                    excludedAt: now
+                });
+            }
+            const updated = [...prev, ...added];
+            try { localStorage.setItem(EXCLUDED_KEY(sessionId), JSON.stringify(updated)); } catch {}
+            return updated;
+        });
+
+        // Limpa também dos últimos destinatários salvos na sessão
+        try {
+            const lastStored = sessionStorage.getItem("zapflow_last_broadcast_recipients");
+            if (lastStored) {
+                const dropSet = new Set(jidsToExclude.flatMap(j => [j.toLowerCase(), j.split("@")[0]]));
+                const kept = parseRecipientLines(lastStored).filter(line => {
+                    const rJid = resolveLineToJid(line);
+                    if (!rJid) return true;
+                    return !dropSet.has(rJid.toLowerCase()) && !dropSet.has(rJid.split("@")[0]);
+                });
+                sessionStorage.setItem("zapflow_last_broadcast_recipients", kept.join("\n"));
+            }
+        } catch {}
+
+        setSelectedErrorJids([]);
+        setSelectedDetailErrorJids([]);
+        toast.success(`${jidsToExclude.length} destinatário(s) excluído(s) dos próximos disparos!`);
+    }, [sessionId, jidToNameMap, parseRecipientLines, resolveLineToJid]);
+
+    const handleRestoreExcluded = useCallback((jidToRestore: string) => {
+        if (!sessionId) return;
+        setExcludedRecipients(prev => {
+            const updated = prev.filter(e => e.jid !== jidToRestore);
+            try { localStorage.setItem(EXCLUDED_KEY(sessionId), JSON.stringify(updated)); } catch {}
+            return updated;
+        });
+        toast.success("Destinatário restaurado para futuros disparos");
+    }, [sessionId]);
+
+    const handleRestoreAllExcluded = useCallback(() => {
+        if (!sessionId) return;
+        setExcludedRecipients([]);
+        try { localStorage.removeItem(EXCLUDED_KEY(sessionId)); } catch {}
+        setExcludedModalOpen(false);
+        toast.success("Todos os destinatários foram restaurados");
+    }, [sessionId]);
 
     const handleReuseLastRecipients = () => {
         try {
@@ -752,12 +1043,9 @@ export default function BroadcastPage() {
             return toast.error("Digite uma mensagem ou anexe uma mídia/documento para o disparo");
         }
 
-        const recipients = contacts
-            .split(/[\n,]+/)
-            .map(s => s.trim())
-            .filter(Boolean)
-            .map(toWhatsAppJid)
-            .filter(Boolean);
+        const recipients = parseRecipientLines(contacts)
+            .map(line => resolveLineToJid(line) || line.trim())
+            .filter(r => Boolean(r) && !isJidExcluded(r));
 
         if (recipients.length === 0) {
             return toast.error("Nenhum destinatário informado");
@@ -853,10 +1141,16 @@ export default function BroadcastPage() {
         }
     };
 
-    const recipientCount = contacts.split(/[\n,]+/).map(s => s.trim()).filter(Boolean).length;
+    const recipientCount = parseRecipientLines(contacts).length;
     const formatJid = (jid: string) => {
         if (!jid) return "-";
-        return jid.replace("@s.whatsapp.net", "").replace("@g.us", " (Grupo)");
+        const bare = jid.split("@")[0];
+        const knownName = jidToNameMap.get(jid) || jidToNameMap.get(jid.toLowerCase()) || jidToNameMap.get(bare);
+        const cleanJid = jid.replace("@s.whatsapp.net", "").replace("@g.us", " (Grupo)");
+        if (knownName && knownName !== bare && knownName !== jid) {
+            return `${knownName} (${cleanJid})`;
+        }
+        return cleanJid;
     };
 
     const formatTime = (ts: string) => {
@@ -954,10 +1248,23 @@ export default function BroadcastPage() {
                                             )}
                                         </CardTitle>
                                         <CardDescription>
-                                            Nome do grupo ou contato seguido do número/JID entre parênteses.
+                                            Exibe somente o nome do grupo ou nome do contato (um por linha).
                                         </CardDescription>
                                     </div>
-                                    <div className="flex items-center gap-1">
+                                    <div className="flex flex-wrap items-center gap-1">
+                                        {excludedRecipients.length > 0 && (
+                                            <Button
+                                                type="button"
+                                                variant="outline"
+                                                size="sm"
+                                                onClick={() => setExcludedModalOpen(true)}
+                                                className="text-xs text-red-600 border-red-200 hover:bg-red-50 dark:border-red-900/50 dark:hover:bg-red-950/30 h-7 px-2 font-medium cursor-pointer"
+                                                title="Ver ou restaurar destinatários excluídos dos próximos disparos"
+                                            >
+                                                <Ban className="h-3 w-3 mr-1" />
+                                                Excluídos ({excludedRecipients.length})
+                                            </Button>
+                                        )}
                                         {contacts.trim().length > 0 && (
                                             <Button
                                                 type="button"
@@ -966,13 +1273,13 @@ export default function BroadcastPage() {
                                                 onClick={() => {
                                                     const res = resolveRecipientNames(contacts);
                                                     setContacts(res);
-                                                    toast.success("Nomes de grupos e contatos identificados!");
+                                                    toast.success("Lista limpa somente com os nomes dos grupos e contatos!");
                                                 }}
-                                                className="text-xs text-[#00a884] hover:bg-[#00a884]/10 h-7 px-2 font-medium"
-                                                title="Identificar e preencher nomes dos grupos e contatos"
+                                                className="text-xs text-[#00a884] hover:bg-[#00a884]/10 h-7 px-2 font-medium cursor-pointer"
+                                                title="Deixar somente o nome do grupo ou contato"
                                             >
                                                 <Sparkles className="h-3 w-3 mr-1" />
-                                                Identificar nomes
+                                                Somente nomes
                                             </Button>
                                         )}
                                         {(contacts.trim().length > 0 || message.trim().length > 0) && (
@@ -981,7 +1288,7 @@ export default function BroadcastPage() {
                                                 variant="ghost"
                                                 size="sm"
                                                 onClick={handleClearForm}
-                                                className="text-xs text-muted-foreground hover:text-destructive h-7 px-2"
+                                                className="text-xs text-muted-foreground hover:text-destructive h-7 px-2 cursor-pointer"
                                                 title="Limpar campos para configurar próximo disparo"
                                             >
                                                 <RotateCcw className="h-3 w-3 mr-1" />
@@ -992,9 +1299,9 @@ export default function BroadcastPage() {
                                 </CardHeader>
                                 <CardContent className="space-y-4">
                                     <div className="space-y-2">
-                                        <Label>Números de destino (ex.: 5511999999999)</Label>
+                                        <Label>Grupos ou contatos de destino (somente nome ou número)</Label>
                                         <Textarea
-                                            placeholder={"Grupo Cotações (120363377785922974@g.us)\nJoão Silva (5566999999999)\n5511999999999"}
+                                            placeholder={"BOTUVERA X COFCO\nCENTRAL X COFCO\nJoão Silva\n5511999999999"}
                                             className="h-44 max-h-56 [field-sizing:fixed] overflow-y-auto font-mono text-sm resize-y"
                                             style={{ fieldSizing: "fixed", maxHeight: "220px", height: "180px", overflowY: "auto" }}
                                             value={contacts}
@@ -1118,8 +1425,7 @@ export default function BroadcastPage() {
                                                             disabled={isSubmitting}
                                                         />
                                                         <span className="min-w-0 flex-1">
-                                                            <span className="block truncate text-sm font-medium">{group.subject || group.jid}</span>
-                                                            <span className="block truncate font-mono text-xs text-muted-foreground">{group.jid}</span>
+                                                            <span className="block truncate text-sm font-medium">{groupDisplayNames.get(group.jid) || group.subject || group.jid}</span>
                                                         </span>
                                                     </label>
                                                 ))
@@ -1486,7 +1792,7 @@ export default function BroadcastPage() {
                                         <Button
                                             className="w-full bg-[#00a884] hover:bg-[#00a884]/90 text-white font-medium"
                                             onClick={handleSend}
-                                            disabled={isSubmitting || !sessionId || recipientCount === 0 || !message.trim()}
+                                            disabled={isSubmitting || !sessionId || recipientCount === 0 || (!message.trim() && !attachment)}
                                         >
                                             {isSubmitting ? (
                                                 <>
@@ -1620,18 +1926,116 @@ export default function BroadcastPage() {
                                         </div>
                                     )}
 
-                                    {broadcastProgress.status === "completed" && broadcastProgress.errors && broadcastProgress.errors.length > 0 && (
-                                        <div className="space-y-2">
-                                            <h4 className="text-sm font-semibold text-red-600 flex items-center gap-1.5">
-                                                <XCircle className="h-4 w-4" /> Erros de envio ({broadcastProgress.errors.length})
-                                            </h4>
-                                            <div className="max-h-40 overflow-y-auto bg-red-50 dark:bg-red-950/30 rounded-lg p-2 space-y-1">
-                                                {broadcastProgress.errors.map((err, i) => (
-                                                    <div key={i} className="flex justify-between items-center text-xs py-1 px-2 bg-background/60 rounded">
-                                                        <span className="font-mono">{formatJid(err.jid)}</span>
-                                                        <span className="text-red-500 truncate ml-2 max-w-[200px]">{err.error}</span>
-                                                    </div>
-                                                ))}
+                                    {broadcastProgress.errors && broadcastProgress.errors.length > 0 && (
+                                        <div className="space-y-2.5 pt-1">
+                                            <div className="flex flex-wrap items-center justify-between gap-2">
+                                                <div className="flex items-center gap-3">
+                                                    <h4 className="text-sm font-semibold text-red-600 flex items-center gap-1.5">
+                                                        <XCircle className="h-4 w-4" /> Erros de envio ({broadcastProgress.errors.length})
+                                                    </h4>
+                                                    {(() => {
+                                                        const selectableJids = broadcastProgress.errors
+                                                            .map(e => e.jid)
+                                                            .filter(jid => !isJidExcluded(jid));
+                                                        if (selectableJids.length === 0) return null;
+                                                        const allSelected = selectableJids.every(jid => selectedErrorJids.includes(jid));
+                                                        return (
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => {
+                                                                    if (allSelected) {
+                                                                        setSelectedErrorJids([]);
+                                                                    } else {
+                                                                        setSelectedErrorJids(Array.from(new Set(selectableJids)));
+                                                                    }
+                                                                }}
+                                                                className="text-xs font-semibold text-red-600 hover:underline cursor-pointer"
+                                                            >
+                                                                {allSelected ? "Desmarcar todos" : `Selecionar todos (${selectableJids.length})`}
+                                                            </button>
+                                                        );
+                                                    })()}
+                                                </div>
+
+                                                <div className="flex items-center gap-2">
+                                                    {selectedErrorJids.length > 0 ? (
+                                                        <Button
+                                                            type="button"
+                                                            variant="destructive"
+                                                            size="sm"
+                                                            onClick={() => handleExcludeRecipients(selectedErrorJids)}
+                                                            className="h-7 text-xs px-2.5 gap-1.5 cursor-pointer"
+                                                        >
+                                                            <Ban className="h-3.5 w-3.5" />
+                                                            Excluir selecionados dos próximos disparos ({selectedErrorJids.length})
+                                                        </Button>
+                                                    ) : (
+                                                        broadcastProgress.errors.some(e => !isJidExcluded(e.jid)) && (
+                                                            <Button
+                                                                type="button"
+                                                                variant="outline"
+                                                                size="sm"
+                                                                onClick={() => {
+                                                                    const allErrJids = broadcastProgress.errors!
+                                                                        .map(e => e.jid)
+                                                                        .filter(jid => !isJidExcluded(jid));
+                                                                    handleExcludeRecipients(allErrJids);
+                                                                }}
+                                                                className="h-7 text-xs px-2.5 gap-1.5 text-red-600 border-red-300 hover:bg-red-50 dark:hover:bg-red-950/30 cursor-pointer"
+                                                            >
+                                                                <Ban className="h-3.5 w-3.5" />
+                                                                Excluir todos com erro dos próximos disparos
+                                                            </Button>
+                                                        )
+                                                    )}
+                                                </div>
+                                            </div>
+
+                                            <p className="text-[11px] text-muted-foreground">
+                                                Selecione os números/grupos com erro abaixo para excluí-los automaticamente dos seus próximos disparos.
+                                            </p>
+
+                                            <div className="max-h-52 overflow-y-auto bg-red-50/80 dark:bg-red-950/30 rounded-lg p-2 space-y-1 border border-red-200/60 dark:border-red-900/40">
+                                                {broadcastProgress.errors.map((err, i) => {
+                                                    const excluded = isJidExcluded(err.jid);
+                                                    const checked = selectedErrorJids.includes(err.jid);
+                                                    return (
+                                                        <label
+                                                            key={i}
+                                                            className={`flex justify-between items-center text-xs py-1.5 px-2.5 rounded transition-colors ${
+                                                                excluded
+                                                                    ? "bg-muted/60 opacity-60 cursor-default"
+                                                                    : checked
+                                                                        ? "bg-red-100/90 dark:bg-red-900/40 cursor-pointer"
+                                                                        : "bg-background/80 hover:bg-background cursor-pointer"
+                                                            }`}
+                                                        >
+                                                            <div className="flex items-center gap-2.5 min-w-0">
+                                                                <Checkbox
+                                                                    checked={excluded || checked}
+                                                                    disabled={excluded}
+                                                                    onCheckedChange={() => {
+                                                                        if (excluded) return;
+                                                                        setSelectedErrorJids(prev =>
+                                                                            prev.includes(err.jid)
+                                                                                ? prev.filter(x => x !== err.jid)
+                                                                                : [...prev, err.jid]
+                                                                        );
+                                                                    }}
+                                                                />
+                                                                <span className="font-mono font-medium truncate">{formatJid(err.jid)}</span>
+                                                                {excluded && (
+                                                                    <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-red-500/10 text-red-600 border border-red-500/20 shrink-0">
+                                                                        Excluído dos próximos
+                                                                    </span>
+                                                                )}
+                                                            </div>
+                                                            <span className="text-red-500 truncate ml-2 max-w-[240px]" title={err.error}>
+                                                                {err.error}
+                                                            </span>
+                                                        </label>
+                                                    );
+                                                })}
                                             </div>
                                         </div>
                                     )}
@@ -1842,35 +2246,158 @@ export default function BroadcastPage() {
 
                                 {/* Recipients list */}
                                 {selectedLog.recipients && selectedLog.recipients.length > 0 && (
-                                    <div className="flex-1 overflow-y-auto min-h-0">
-                                        <h4 className="text-sm font-semibold mb-2">Destinatários ({selectedLog.recipients.length})</h4>
-                                        <div className="space-y-1">
-                                            {selectedLog.recipients.map(r => (
-                                                <div key={r.id}
-                                                    className={`flex items-center justify-between gap-2 text-xs py-1.5 px-2 rounded ${
-                                                        r.status === "sent" ? "bg-green-500/5" :
-                                                        r.status === "failed" ? "bg-red-500/5" : "bg-muted/30"
-                                                    }`}
-                                                >
-                                                    <span className="font-mono truncate">{formatJid(r.jid)}</span>
-                                                    <div className="flex items-center gap-2 shrink-0">
-                                                        <span className={`px-1.5 py-0.5 rounded font-medium ${
-                                                            r.status === "sent" ? "text-green-600 bg-green-500/10" :
-                                                            r.status === "failed" ? "text-red-500 bg-red-500/10" : "text-muted-foreground bg-muted/50"
-                                                        }`}>
-                                                            {r.status}
-                                                        </span>
-                                                        {r.error && (
-                                                            <span className="text-red-500 max-w-[200px] truncate" title={r.error}>{r.error}</span>
+                                    <div className="flex-1 overflow-y-auto min-h-0 space-y-2">
+                                        <div className="flex flex-wrap items-center justify-between gap-2">
+                                            <h4 className="text-sm font-semibold">Destinatários ({selectedLog.recipients.length})</h4>
+                                            {(() => {
+                                                const failedList = selectedLog.recipients!.filter(r => r.status === "failed" && !isJidExcluded(r.jid));
+                                                if (failedList.length === 0) return null;
+                                                const allFailedSelected = failedList.every(r => selectedDetailErrorJids.includes(r.jid));
+                                                return (
+                                                    <div className="flex items-center gap-2">
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => {
+                                                                if (allFailedSelected) {
+                                                                    setSelectedDetailErrorJids([]);
+                                                                } else {
+                                                                    setSelectedDetailErrorJids(failedList.map(r => r.jid));
+                                                                }
+                                                            }}
+                                                            className="text-xs font-semibold text-red-600 hover:underline cursor-pointer"
+                                                        >
+                                                            {allFailedSelected ? "Desmarcar erros" : `Selecionar erros (${failedList.length})`}
+                                                        </button>
+                                                        {selectedDetailErrorJids.length > 0 && (
+                                                            <Button
+                                                                type="button"
+                                                                variant="destructive"
+                                                                size="sm"
+                                                                onClick={() => handleExcludeRecipients(selectedDetailErrorJids)}
+                                                                className="h-7 text-xs px-2.5 gap-1 cursor-pointer"
+                                                            >
+                                                                <Ban className="h-3 w-3" />
+                                                                Excluir dos próximos ({selectedDetailErrorJids.length})
+                                                            </Button>
                                                         )}
                                                     </div>
-                                                </div>
-                                            ))}
+                                                );
+                                            })()}
+                                        </div>
+                                        <div className="space-y-1">
+                                            {selectedLog.recipients.map(r => {
+                                                const isFailed = r.status === "failed";
+                                                const excluded = isJidExcluded(r.jid);
+                                                const checked = selectedDetailErrorJids.includes(r.jid);
+                                                return (
+                                                    <div key={r.id}
+                                                        className={`flex items-center justify-between gap-2 text-xs py-1.5 px-2 rounded ${
+                                                            r.status === "sent" ? "bg-green-500/5" :
+                                                            isFailed ? "bg-red-500/5" : "bg-muted/30"
+                                                        }`}
+                                                    >
+                                                        <div className="flex items-center gap-2 min-w-0">
+                                                            {isFailed && (
+                                                                <Checkbox
+                                                                    checked={excluded || checked}
+                                                                    disabled={excluded}
+                                                                    onCheckedChange={() => {
+                                                                        if (excluded) return;
+                                                                        setSelectedDetailErrorJids(prev =>
+                                                                            prev.includes(r.jid)
+                                                                                ? prev.filter(x => x !== r.jid)
+                                                                                : [...prev, r.jid]
+                                                                        );
+                                                                    }}
+                                                                />
+                                                            )}
+                                                            <span className="font-mono truncate">{formatJid(r.jid)}</span>
+                                                            {excluded && (
+                                                                <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-red-500/10 text-red-600 border border-red-500/20 shrink-0">
+                                                                    Excluído dos próximos
+                                                                </span>
+                                                            )}
+                                                        </div>
+                                                        <div className="flex items-center gap-2 shrink-0">
+                                                            <span className={`px-1.5 py-0.5 rounded font-medium ${
+                                                                r.status === "sent" ? "text-green-600 bg-green-500/10" :
+                                                                isFailed ? "text-red-500 bg-red-500/10" : "text-muted-foreground bg-muted/50"
+                                                            }`}>
+                                                                {r.status}
+                                                            </span>
+                                                            {r.error && (
+                                                                <span className="text-red-500 max-w-[200px] truncate" title={r.error}>{r.error}</span>
+                                                            )}
+                                                        </div>
+                                                    </div>
+                                                );
+                                            })}
                                         </div>
                                     </div>
                                 )}
                             </div>
                         ) : null}
+                    </DialogContent>
+                </Dialog>
+
+                {/* Modal de Destinatários Excluídos dos Próximos Disparos */}
+                <Dialog open={excludedModalOpen} onOpenChange={setExcludedModalOpen}>
+                    <DialogContent className="max-w-lg max-h-[80vh] overflow-hidden flex flex-col">
+                        <DialogHeader>
+                            <DialogTitle className="flex items-center gap-2 text-red-600">
+                                <Ban className="h-5 w-5" />
+                                Destinatários Excluídos ({excludedRecipients.length})
+                            </DialogTitle>
+                        </DialogHeader>
+                        <p className="text-xs text-muted-foreground">
+                            Estes contatos ou grupos apresentaram erro e foram marcados para serem ignorados automaticamente nos próximos disparos.
+                        </p>
+                        <div className="flex-1 overflow-y-auto min-h-0 divide-y border rounded-lg my-2">
+                            {excludedRecipients.length === 0 ? (
+                                <p className="p-4 text-sm text-center text-muted-foreground">Nenhum destinatário excluído.</p>
+                            ) : (
+                                excludedRecipients.map(item => (
+                                    <div key={item.jid} className="flex items-center justify-between gap-3 p-2.5 text-xs hover:bg-muted/30">
+                                        <div className="min-w-0">
+                                            <p className="font-semibold text-sm truncate">{item.name}</p>
+                                            <p className="font-mono text-muted-foreground truncate">{item.jid.replace("@s.whatsapp.net", "").replace("@g.us", " (Grupo)")}</p>
+                                        </div>
+                                        <Button
+                                            type="button"
+                                            variant="outline"
+                                            size="sm"
+                                            onClick={() => handleRestoreExcluded(item.jid)}
+                                            className="h-7 text-xs shrink-0 cursor-pointer"
+                                        >
+                                            <RotateCcw className="h-3 w-3 mr-1" />
+                                            Restaurar
+                                        </Button>
+                                    </div>
+                                ))
+                            )}
+                        </div>
+                        {excludedRecipients.length > 0 && (
+                            <div className="flex justify-end gap-2 pt-2">
+                                <Button
+                                    type="button"
+                                    variant="ghost"
+                                    size="sm"
+                                    onClick={handleRestoreAllExcluded}
+                                    className="text-xs text-muted-foreground hover:text-foreground cursor-pointer"
+                                >
+                                    Restaurar todos
+                                </Button>
+                                <Button
+                                    type="button"
+                                    variant="secondary"
+                                    size="sm"
+                                    onClick={() => setExcludedModalOpen(false)}
+                                    className="text-xs cursor-pointer"
+                                >
+                                    Fechar
+                                </Button>
+                            </div>
+                        )}
                     </DialogContent>
                 </Dialog>
             </div>

@@ -288,8 +288,38 @@ async function executeBroadcast(logId: string): Promise<void> {
                     contentToSend = { text: personalizedText };
                 }
 
+                // Obtém socket atualizado (resiliente a reconexões rápidas)
+                let liveSocket: typeof instance.socket | null = waManager.getInstance(log.sessionId)?.socket || instance.socket || null;
+                if (!liveSocket) {
+                    for (let retryWait = 0; retryWait < 6; retryWait++) {
+                        await new Promise(r => setTimeout(r, 500));
+                        liveSocket = waManager.getInstance(log.sessionId)?.socket || null;
+                        if (liveSocket) break;
+                    }
+                }
+                if (!liveSocket) {
+                    throw new Error("Sessão desconectada temporariamente");
+                }
+
                 // Disparo com skipAntiSpam para não entrar na fila do antispam e não travar após 15 mensagens
-                await instance.socket!.sendMessage(target, contentToSend, { skipAntiSpam: true } as any);
+                try {
+                    await liveSocket.sendMessage(target, contentToSend, { skipAntiSpam: true } as any);
+                } catch (sendErr: any) {
+                    const errMsg = String(sendErr?.message || "");
+                    if (target.endsWith("@s.whatsapp.net") && errMsg.includes("Cannot read properties of null")) {
+                        // Resolve LID / canonical JID via onWhatsApp quando o contato não possui mapeamento LID prévio
+                        const checkRes = await liveSocket.onWhatsApp(target).catch(() => null);
+                        const validEntry = Array.isArray(checkRes) ? checkRes[0] : null;
+                        if (validEntry?.exists && validEntry?.jid) {
+                            target = validEntry.jid;
+                            await liveSocket.sendMessage(target, contentToSend, { skipAntiSpam: true } as any);
+                        } else {
+                            throw new Error("Número sem WhatsApp ativo ou inválido");
+                        }
+                    } else {
+                        throw sendErr;
+                    }
+                }
 
                 const wasFailed = recipient.status === "failed";
                 sent++;

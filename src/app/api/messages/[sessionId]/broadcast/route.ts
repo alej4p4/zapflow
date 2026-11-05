@@ -3,7 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { waManager } from "@/modules/whatsapp/manager";
 import { runBroadcast } from "@/modules/whatsapp/broadcast-runner";
 import { getAuthenticatedUser, canAccessSession } from "@/lib/api-auth";
-import { toWhatsAppJid } from "@/lib/phone";
+import { toWhatsAppJid, normalizeSearch } from "@/lib/phone";
 import { z } from "zod";
 
 const broadcastBodySchema = z.object({
@@ -47,15 +47,62 @@ export async function POST(
             return NextResponse.json({ status: false, message: "A mensagem ou mídia deve ser informada", error: "Empty message and media" }, { status: 400 });
         }
 
-        // Normaliza e remove duplicados (mesmo número digitado duas vezes)
-        const recipients = [...new Set(parseResult.data.recipients.map(toWhatsAppJid).filter(Boolean))];
-        if (recipients.length === 0) {
-            return NextResponse.json({ status: false, message: "Nenhum destinatário válido", error: "Nenhum destinatário válido" }, { status: 400 });
-        }
-
         const canAccess = await canAccessSession(user.id, user.role, sessionId);
         if (!canAccess) {
             return NextResponse.json({ status: false, message: "Forbidden", error: "Forbidden" }, { status: 403 });
+        }
+
+        // Resolve destinatários (aceita JIDs, números ou nomes puros de grupos/contatos)
+        const rawList = parseResult.data.recipients.map(r => r.trim()).filter(Boolean);
+        const needsNameLookup = rawList.some(r => !toWhatsAppJid(r));
+
+        let nameMap = new Map<string, string>();
+        if (needsNameLookup) {
+            const sessionRecord = await prisma.session.findUnique({
+                where: { sessionId },
+                select: { id: true }
+            });
+            if (sessionRecord) {
+                const [dbGroups, dbContacts] = await Promise.all([
+                    prisma.group.findMany({
+                        where: { sessionId: sessionRecord.id },
+                        select: { jid: true, subject: true }
+                    }),
+                    prisma.contact.findMany({
+                        where: { sessionId },
+                        select: { jid: true, name: true, notify: true, verifiedName: true, remoteJidAlt: true }
+                    })
+                ]);
+                for (const c of dbContacts) {
+                    const cJid = c.jid.endsWith("@s.whatsapp.net") ? c.jid : (c.remoteJidAlt?.endsWith("@s.whatsapp.net") ? c.remoteJidAlt : "");
+                    if (!cJid) continue;
+                    const label = (c.name || c.verifiedName || c.notify || "").trim();
+                    if (label) {
+                        nameMap.set(label.toLowerCase(), cJid);
+                        nameMap.set(normalizeSearch(label), cJid);
+                    }
+                }
+                for (const g of dbGroups) {
+                    if (g.subject && g.jid) {
+                        const s = g.subject.trim();
+                        nameMap.set(s.toLowerCase(), g.jid);
+                        nameMap.set(normalizeSearch(s), g.jid);
+                    }
+                }
+            }
+        }
+
+        const resolvedRecipients = rawList.map(raw => {
+            const direct = toWhatsAppJid(raw);
+            if (direct) return direct;
+            const cleaned = raw.replace(/\s+#\d+$/, "").trim();
+            return nameMap.get(cleaned.toLowerCase()) || nameMap.get(normalizeSearch(cleaned)) || "";
+        }).filter(Boolean);
+
+        // Normaliza e remove duplicados
+        const recipients = [...new Set(resolvedRecipients)];
+        if (recipients.length === 0) {
+            return NextResponse.json({ status: false, message: "Nenhum destinatário válido", error: "Nenhum destinatário válido" }, { status: 400 });
         }
 
         const instance = waManager.getInstance(sessionId);
