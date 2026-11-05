@@ -139,3 +139,89 @@ export async function POST(
         return NextResponse.json({ status: false, message: "Failed to start broadcast", error: "Failed to start broadcast" }, { status: 500 });
     }
 }
+
+export async function GET(
+    request: NextRequest,
+    { params }: { params: Promise<{ sessionId: string }> }
+) {
+    try {
+        const user = await getAuthenticatedUser(request);
+        if (!user) {
+            return NextResponse.json({ status: false, message: "Unauthorized", error: "Unauthorized" }, { status: 401 });
+        }
+
+        const { sessionId } = await params;
+        const canAccess = await canAccessSession(user.id, user.role, sessionId);
+        if (!canAccess) {
+            return NextResponse.json({ status: false, message: "Forbidden", error: "Forbidden" }, { status: 403 });
+        }
+
+        // 1. Procura se existe um disparo ativo em andamento ou na fila
+        const activeLog = await prisma.broadcastLog.findFirst({
+            where: {
+                sessionId,
+                status: { in: ["running", "queued"] }
+            },
+            orderBy: { startedAt: "desc" },
+            include: {
+                recipients: {
+                    where: { status: "failed" },
+                    take: 50,
+                    select: { jid: true, error: true }
+                }
+            }
+        });
+
+        if (activeLog) {
+            return NextResponse.json({
+                status: true,
+                hasActive: true,
+                broadcast: {
+                    id: activeLog.id,
+                    status: activeLog.status,
+                    total: activeLog.total,
+                    sent: activeLog.sent,
+                    failed: activeLog.failed,
+                    message: activeLog.message,
+                    delay: activeLog.delay,
+                    startedAt: activeLog.startedAt.toISOString(),
+                    errors: activeLog.recipients.map(r => ({ jid: r.jid, error: r.error || "Falha no envio" }))
+                }
+            });
+        }
+
+        // 2. Retorna o último disparo recente (se houver)
+        const latestLog = await prisma.broadcastLog.findFirst({
+            where: { sessionId },
+            orderBy: { startedAt: "desc" },
+            include: {
+                recipients: {
+                    where: { status: "failed" },
+                    take: 50,
+                    select: { jid: true, error: true }
+                }
+            }
+        });
+
+        return NextResponse.json({
+            status: true,
+            hasActive: false,
+            broadcast: latestLog ? {
+                id: latestLog.id,
+                status: latestLog.status,
+                total: latestLog.total,
+                sent: latestLog.sent,
+                failed: latestLog.failed,
+                message: latestLog.message,
+                delay: latestLog.delay,
+                startedAt: latestLog.startedAt.toISOString(),
+                completedAt: latestLog.completedAt?.toISOString() || null,
+                errors: latestLog.recipients.map(r => ({ jid: r.jid, error: r.error || "Falha no envio" }))
+            } : null
+        });
+    } catch (e) {
+        console.error("Broadcast GET status error", e);
+        return NextResponse.json({ status: false, message: "Failed to get broadcast status", error: "Failed to get broadcast status" }, { status: 500 });
+    }
+}
+

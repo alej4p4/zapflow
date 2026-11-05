@@ -9,8 +9,8 @@ import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Slider } from "@/components/ui/slider";
 import { Progress } from "@/components/ui/progress";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogClose } from "@/components/ui/dialog";
-import { RefreshCw, Send, CheckCircle2, XCircle, Radio, Clock, AlertTriangle, History, Eye, Calendar, Users, Ban, RotateCcw } from "lucide-react";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { RefreshCw, Send, CheckCircle2, XCircle, Radio, Clock, AlertTriangle, History, Eye, Calendar, Users, Ban, RotateCcw, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { useSession } from "@/components/dashboard/session-provider";
 import { SessionGuard } from "@/components/dashboard/session-guard";
@@ -74,6 +74,10 @@ interface PhoneGroup {
     subject: string | null;
 }
 
+/** Chaves de armazenamento persistente por sessão */
+const DRAFT_KEY = (sid: string) => `zapflow_broadcast_draft_${sid}`;
+const ACTIVE_KEY = (sid: string) => `zapflow_broadcast_active_${sid}`;
+
 /** Número canônico do contato (o JID já vem com 55 + DDD). */
 function contactNumber(contact: PhoneContact): string {
     const jid = contact.jid.endsWith("@s.whatsapp.net")
@@ -90,13 +94,11 @@ function contactLabel(contact: PhoneContact): string {
 /** Interpreta horários como "12h00, 15h00, 18h00" ou "12:00, 15:00, 18:00" */
 function parseProgrammedTimes(input: string): { hour: number; minute: number; timeStr: string }[] {
     if (!input || !input.trim()) return [];
-    // Match tokens separated by comma, space, semicolon, newline
     const tokens = input.split(/[,;\s\n]+/).map(s => s.trim()).filter(Boolean);
     const results: { hour: number; minute: number; timeStr: string }[] = [];
     const seen = new Set<string>();
 
     for (const token of tokens) {
-        // Match 12h00, 12:00, 12h, 12
         const m = token.match(/^(\d{1,2})(?:[hH:](\d{1,2})?)?$/);
         if (m) {
             const h = parseInt(m[1], 10);
@@ -153,19 +155,141 @@ export default function BroadcastPage() {
 
     const { getSocket, joinSession } = useSocket();
 
-    // Check for drafted group recipients from chat window
+    // Refs para controle seguro de hidratação de armazenamento
+    const isLoadedRef = useRef(false);
+    const prevSessionIdRef = useRef<string | null>(null);
+
+    // Broadcast ativo calculado
+    const isBroadcasting = loading || broadcastProgress?.status === "running" || broadcastProgress?.status === "queued";
+
+    // 1. Restaura rascunho e estado ativo de localStorage e sincroniza com backend
     useEffect(() => {
-        if (typeof window !== "undefined") {
-            const draft = sessionStorage.getItem("zapflow_broadcast_draft_recipients");
-            if (draft) {
-                setContacts(draft);
-                sessionStorage.removeItem("zapflow_broadcast_draft_recipients");
-                toast.success("Contatos importados do grupo com sucesso!");
+        if (!sessionId || typeof window === "undefined") return;
+
+        if (prevSessionIdRef.current !== sessionId) {
+            isLoadedRef.current = false;
+            prevSessionIdRef.current = sessionId;
+        }
+
+        // A. Importação de rascunho de grupo via chat
+        const draftGroup = sessionStorage.getItem("zapflow_broadcast_draft_recipients");
+        if (draftGroup) {
+            setContacts(draftGroup);
+            sessionStorage.removeItem("zapflow_broadcast_draft_recipients");
+            toast.success("Contatos importados do grupo com sucesso!");
+        } else {
+            // Restaura formulário salvo no localStorage
+            try {
+                const rawDraft = localStorage.getItem(DRAFT_KEY(sessionId));
+                if (rawDraft) {
+                    const draft = JSON.parse(rawDraft);
+                    if (typeof draft.contacts === "string") setContacts(draft.contacts);
+                    if (typeof draft.message === "string") setMessage(draft.message);
+                    if (Array.isArray(draft.delay)) setDelay(draft.delay);
+                    if (draft.scheduleMode) setScheduleMode(draft.scheduleMode);
+                    if (typeof draft.scheduledAt === "string") setScheduledAt(draft.scheduledAt);
+                    if (typeof draft.programmedTimesInput === "string") setProgrammedTimesInput(draft.programmedTimesInput);
+                    if (typeof draft.repeatDaily === "boolean") setRepeatDaily(draft.repeatDaily);
+                }
+            } catch (e) {
+                console.error("Falha ao restaurar rascunho do disparo", e);
             }
         }
-    }, []);
 
-    // Socket for progress updates
+        // B. Restaura progresso ativo do localStorage para exibição imediata (sem zerar)
+        try {
+            const rawActive = localStorage.getItem(ACTIVE_KEY(sessionId));
+            if (rawActive) {
+                const active = JSON.parse(rawActive) as BroadcastProgress;
+                setBroadcastProgress(active);
+                if (active.status === "running" || active.status === "queued") {
+                    setLoading(true);
+                }
+            }
+        } catch (e) {
+            console.error("Falha ao restaurar progresso ativo do disparo", e);
+        }
+
+        isLoadedRef.current = true;
+
+        // C. Sincroniza com o servidor para obter o estado mais recente do banco de dados
+        let isMounted = true;
+        (async () => {
+            try {
+                const res = await fetch(`/api/messages/${sessionId}/broadcast`);
+                if (!res.ok || !isMounted) return;
+                const data = await res.json();
+                if (data.status && data.broadcast) {
+                    const b = data.broadcast;
+                    if (data.hasActive) {
+                        const activeState: BroadcastProgress = {
+                            broadcastId: b.id,
+                            status: b.status,
+                            total: b.total,
+                            sent: b.sent,
+                            failed: b.failed,
+                            current: null,
+                            progress: b.total ? Math.round(((b.sent + b.failed) / b.total) * 100) : 0,
+                            errors: b.errors || [],
+                            startedAt: b.startedAt
+                        };
+                        setBroadcastProgress(activeState);
+                        setLoading(true);
+                        localStorage.setItem(ACTIVE_KEY(sessionId), JSON.stringify(activeState));
+                    } else if (b.completedAt || b.status === "completed" || b.status === "cancelled") {
+                        const rawActive = localStorage.getItem(ACTIVE_KEY(sessionId));
+                        const currentStored = rawActive ? JSON.parse(rawActive) : null;
+                        if (currentStored && currentStored.broadcastId === b.id) {
+                            const updatedState: BroadcastProgress = {
+                                broadcastId: b.id,
+                                status: b.status,
+                                total: b.total,
+                                sent: b.sent,
+                                failed: b.failed,
+                                current: null,
+                                progress: b.status === "completed" ? 100 : (b.total ? Math.round(((b.sent + b.failed) / b.total) * 100) : 0),
+                                errors: b.errors || [],
+                                startedAt: b.startedAt,
+                                completedAt: b.completedAt
+                            };
+                            setBroadcastProgress(updatedState);
+                            setLoading(false);
+                            localStorage.setItem(ACTIVE_KEY(sessionId), JSON.stringify(updatedState));
+                        }
+                    }
+                }
+            } catch (e) {
+                console.error("Falha ao sincronizar status do disparo com o servidor", e);
+            }
+        })();
+
+        return () => {
+            isMounted = false;
+        };
+    }, [sessionId]);
+
+    // 2. Salva rascunho de formulário automaticamente a cada digitação (sem zerar ao sair da página)
+    useEffect(() => {
+        if (!isLoadedRef.current || !sessionId || typeof window === "undefined") return;
+        const timer = setTimeout(() => {
+            try {
+                const draft = {
+                    contacts,
+                    message,
+                    delay,
+                    scheduleMode,
+                    scheduledAt,
+                    programmedTimesInput,
+                    repeatDaily
+                };
+                localStorage.setItem(DRAFT_KEY(sessionId), JSON.stringify(draft));
+            } catch {}
+        }, 250);
+
+        return () => clearTimeout(timer);
+    }, [contacts, message, delay, scheduleMode, scheduledAt, programmedTimesInput, repeatDaily, sessionId]);
+
+    // 3. Socket para acompanhar atualizações em tempo real
     useEffect(() => {
         const socket = getSocket();
         if (!socket || !sessionId) return;
@@ -176,13 +300,20 @@ export default function BroadcastPage() {
 
         const handler = (data: BroadcastProgress) => {
             setBroadcastProgress(data);
-            if (data.status === "running") return;
+            if (typeof window !== "undefined") {
+                localStorage.setItem(ACTIVE_KEY(sessionId), JSON.stringify(data));
+            }
+
+            if (data.status === "running" || data.status === "queued") {
+                setLoading(true);
+                return;
+            }
 
             setLoading(false);
             fetchHistory();
             if (data.status === "completed") {
                 if (data.failed === 0) {
-                    toast.success(`Disparo concluído: ${data.sent} enviadas.`);
+                    toast.success(`Disparo concluído: ${data.sent} enviadas com sucesso!`);
                 } else {
                     toast.warning(`Disparo concluído: ${data.sent} enviadas, ${data.failed} falhas.`);
                 }
@@ -192,7 +323,10 @@ export default function BroadcastPage() {
         };
 
         socket.on("broadcast.progress", handler);
-        return () => { socket.off("connect", onConnect); socket.off("broadcast.progress", handler); };
+        return () => {
+            socket.off("connect", onConnect);
+            socket.off("broadcast.progress", handler);
+        };
     }, [sessionId, getSocket, joinSession]);
 
     // Fetch history
@@ -344,6 +478,67 @@ export default function BroadcastPage() {
         }
     };
 
+    // Cancela o disparo ativo atualmente
+    const handleCancelActiveBroadcast = async () => {
+        const idToCancel = broadcastProgress?.broadcastId;
+        if (!idToCancel || !sessionId) return;
+        try {
+            const res = await fetch(`/api/messages/${sessionId}/broadcast/history/${idToCancel}`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ action: "cancel" })
+            });
+            const data = await res.json();
+            if (res.ok) {
+                toast.success("Cancelamento solicitado com sucesso");
+                setBroadcastProgress(prev => prev ? { ...prev, status: "cancelled" } : null);
+                setLoading(false);
+                if (typeof window !== "undefined") {
+                    const saved = localStorage.getItem(ACTIVE_KEY(sessionId));
+                    if (saved) {
+                        try {
+                            const parsed = JSON.parse(saved);
+                            localStorage.setItem(ACTIVE_KEY(sessionId), JSON.stringify({ ...parsed, status: "cancelled" }));
+                        } catch {}
+                    }
+                }
+                fetchHistory();
+            } else {
+                toast.error(data.message || "Não foi possível cancelar o disparo");
+            }
+        } catch (e) {
+            console.error("Erro ao cancelar disparo", e);
+            toast.error("Falha ao comunicar com o servidor");
+        }
+    };
+
+    // Limpa o painel de progresso concluído/cancelado
+    const handleClearProgress = () => {
+        if (loading || broadcastProgress?.status === "running" || broadcastProgress?.status === "queued") {
+            return toast.warning("Não é possível ocultar enquanto um disparo estiver em andamento.");
+        }
+        setBroadcastProgress(null);
+        if (sessionId && typeof window !== "undefined") {
+            localStorage.removeItem(ACTIVE_KEY(sessionId));
+        }
+    };
+
+    // Limpa campos do formulário conscientemente (sem perder por navegação acidental)
+    const handleClearForm = () => {
+        if (isBroadcasting) {
+            return toast.warning("Não é possível limpar enquanto um disparo estiver em andamento. Cancele o envio primeiro se desejar.");
+        }
+        setContacts("");
+        setMessage("");
+        setPickerSearch("");
+        setSelectedContacts([]);
+        setSelectedGroups([]);
+        if (sessionId && typeof window !== "undefined") {
+            localStorage.removeItem(DRAFT_KEY(sessionId));
+        }
+        toast.success("Campos limpos com sucesso");
+    };
+
     const handleSend = async () => {
         if (!sessionId) return toast.error("Nenhuma sessão ativa encontrada");
         if (!message.trim()) return toast.error("A mensagem não pode ficar vazia");
@@ -381,7 +576,6 @@ export default function BroadcastPage() {
         }
 
         setLoading(true);
-        setBroadcastProgress(null);
 
         try {
             const res = await fetch(`/api/messages/${sessionId}/broadcast`, {
@@ -394,31 +588,47 @@ export default function BroadcastPage() {
 
             if (res.ok) {
                 if (scheduleMode === "programmed") {
+                    setLoading(false);
                     toast.success(`${bodyPayload.programmedTimes.length} disparos automáticos programados com sucesso! Executarão em sequência.`);
                     setActiveTab("history");
                     fetchHistory();
                 } else if (scheduleMode === "datetime") {
+                    setLoading(false);
                     toast.success("Disparo agendado com sucesso!");
                     setActiveTab("history");
                     fetchHistory();
                 } else {
+                    const newProgress: BroadcastProgress = {
+                        broadcastId: data.data.broadcastId,
+                        status: "running",
+                        total: recipients.length,
+                        sent: 0,
+                        failed: 0,
+                        progress: 0,
+                        startedAt: new Date().toISOString()
+                    };
+                    setBroadcastProgress(newProgress);
+                    if (typeof window !== "undefined") {
+                        localStorage.setItem(ACTIVE_KEY(sessionId), JSON.stringify(newProgress));
+                    }
                     toast.info(`Disparo iniciado para ${recipients.length} destinatários na fila sequencial...`);
+                    // Não redefine loading para false, pois continua disparando em background!
                 }
             } else {
+                setLoading(false);
                 toast.error(data.message || "Não foi possível iniciar o disparo");
             }
         } catch (e) {
+            setLoading(false);
             console.error(e);
             toast.error("Erro ao enviar o disparo");
-        } finally {
-            setLoading(false);
         }
     };
 
     const recipientCount = contacts.split(/[\n,]+/).map(s => s.trim()).filter(Boolean).length;
     const formatJid = (jid: string) => {
         if (!jid) return "-";
-        return jid.replace("@s.whatsapp.net", "").replace("@g.us", " (Group)");
+        return jid.replace("@s.whatsapp.net", "").replace("@g.us", " (Grupo)");
     };
 
     const formatTime = (ts: string) => {
@@ -434,9 +644,32 @@ export default function BroadcastPage() {
     return (
         <SessionGuard>
             <div className="space-y-6">
-                <div>
-                    <h2 className="text-xl sm:text-3xl font-bold tracking-tight">Disparo em massa</h2>
-                    <p className="text-muted-foreground text-sm mt-1">Envie mensagens para vários destinatários de uma só vez.</p>
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                        <div className="flex items-center gap-3">
+                            <h2 className="text-xl sm:text-3xl font-bold tracking-tight">Disparo em massa</h2>
+                            {isBroadcasting && (
+                                <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-blue-500/10 text-blue-600 border border-blue-500/25 animate-pulse">
+                                    <Radio className="h-3 w-3 animate-ping" /> Disparando em segundo plano
+                                </span>
+                            )}
+                        </div>
+                        <p className="text-muted-foreground text-sm mt-1">Envie mensagens para vários destinatários de uma só vez.</p>
+                    </div>
+
+                    {(contacts.trim().length > 0 || message.trim().length > 0) && !isBroadcasting && (
+                        <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            onClick={handleClearForm}
+                            className="text-xs text-muted-foreground hover:text-destructive h-8 px-3"
+                            title="Limpar formulário e começar novo disparo"
+                        >
+                            <Trash2 className="h-3.5 w-3.5 mr-1.5" />
+                            Limpar campos
+                        </Button>
+                    )}
                 </div>
 
                 {/* Tabs */}
@@ -445,7 +678,7 @@ export default function BroadcastPage() {
                         <button
                             key={tab.id}
                             onClick={() => setActiveTab(tab.id)}
-                            className={`flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-md transition-all ${
+                            className={`relative flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-md transition-all ${
                                 activeTab === tab.id
                                     ? "bg-background shadow-sm text-foreground"
                                     : "text-muted-foreground hover:text-foreground"
@@ -453,6 +686,9 @@ export default function BroadcastPage() {
                         >
                             <tab.icon className="h-4 w-4" />
                             {tab.label}
+                            {tab.id === "new" && isBroadcasting && (
+                                <span className="h-2 w-2 rounded-full bg-blue-500 animate-pulse ml-0.5" />
+                            )}
                         </button>
                     ))}
                 </div>
@@ -462,9 +698,24 @@ export default function BroadcastPage() {
                         <div className="grid gap-4 sm:gap-6 grid-cols-1 md:grid-cols-2">
                             {/* Recipients Card */}
                             <Card>
-                                <CardHeader>
-                                    <CardTitle>Destinatários</CardTitle>
-                                    <CardDescription>Informe os números separados por vírgula ou linha.</CardDescription>
+                                <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-3">
+                                    <div>
+                                        <CardTitle>Destinatários</CardTitle>
+                                        <CardDescription>Informe os números separados por vírgula ou linha.</CardDescription>
+                                    </div>
+                                    {(contacts.trim().length > 0 || message.trim().length > 0) && !isBroadcasting && (
+                                        <Button
+                                            type="button"
+                                            variant="ghost"
+                                            size="sm"
+                                            onClick={handleClearForm}
+                                            className="text-xs text-muted-foreground hover:text-destructive h-7 px-2"
+                                            title="Limpar destinatários e mensagem"
+                                        >
+                                            <RotateCcw className="h-3 w-3 mr-1" />
+                                            Limpar
+                                        </Button>
+                                    )}
                                 </CardHeader>
                                 <CardContent className="space-y-4">
                                     <div className="space-y-2">
@@ -475,7 +726,7 @@ export default function BroadcastPage() {
                                             style={{ fieldSizing: "fixed", maxHeight: "220px", height: "180px", overflowY: "auto" }}
                                             value={contacts}
                                             onChange={e => setContacts(e.target.value)}
-                                            disabled={loading}
+                                            disabled={isBroadcasting}
                                         />
                                         <p className="text-xs text-muted-foreground">{recipientCount} números identificados</p>
                                     </div>
@@ -488,7 +739,7 @@ export default function BroadcastPage() {
                                             placeholder="Pesquisar por nome ou número..."
                                             value={pickerSearch}
                                             onChange={e => setPickerSearch(e.target.value)}
-                                            disabled={loading}
+                                            disabled={isBroadcasting}
                                         />
                                         <div className="max-h-48 overflow-y-auto divide-y rounded-md border">
                                             {pickerLoading ? (
@@ -501,7 +752,7 @@ export default function BroadcastPage() {
                                                         <Checkbox
                                                             checked={selectedContacts.includes(contact.id)}
                                                             onCheckedChange={() => toggleContact(contact.id)}
-                                                            disabled={loading}
+                                                            disabled={isBroadcasting}
                                                         />
                                                         <span className="min-w-0 flex-1">
                                                             <span className="block truncate text-sm font-medium">
@@ -519,7 +770,7 @@ export default function BroadcastPage() {
                                             size="sm"
                                             className="w-full"
                                             onClick={addSelectedContacts}
-                                            disabled={selectedContacts.length === 0 || loading}
+                                            disabled={selectedContacts.length === 0 || isBroadcasting}
                                         >
                                             <Users className="mr-2 h-4 w-4" />
                                             Adicionar {selectedContacts.length > 0 ? `${selectedContacts.length} ` : ""}aos destinatários
@@ -534,7 +785,7 @@ export default function BroadcastPage() {
                                             placeholder="Pesquisar grupo pelo nome..."
                                             value={groupSearch}
                                             onChange={e => setGroupSearch(e.target.value)}
-                                            disabled={loading}
+                                            disabled={isBroadcasting}
                                         />
                                         <div className="max-h-48 overflow-y-auto divide-y rounded-md border">
                                             {groups.length === 0 ? (
@@ -548,7 +799,7 @@ export default function BroadcastPage() {
                                                             <Checkbox
                                                                 checked={selectedGroups.includes(group.jid)}
                                                                 onCheckedChange={() => setSelectedGroups(prev => prev.includes(group.jid) ? prev.filter(x => x !== group.jid) : [...prev, group.jid])}
-                                                                disabled={loading}
+                                                                disabled={isBroadcasting}
                                                             />
                                                             <span className="min-w-0 flex-1">
                                                                 <span className="block truncate text-sm font-medium">{group.subject || group.jid}</span>
@@ -564,7 +815,7 @@ export default function BroadcastPage() {
                                             size="sm"
                                             className="w-full"
                                             onClick={addSelectedGroups}
-                                            disabled={selectedGroups.length === 0 || loading}
+                                            disabled={selectedGroups.length === 0 || isBroadcasting}
                                         >
                                             <Users className="mr-2 h-4 w-4" />
                                             Adicionar {selectedGroups.length > 0 ? `${selectedGroups.length} ` : ""}grupo(s)
@@ -596,7 +847,7 @@ export default function BroadcastPage() {
                                                         onClick={() => setMessage(prev => prev + (prev.endsWith(" ") || prev === "" ? "" : " ") + v.tag + " ")}
                                                         className="px-2 py-0.5 text-[11px] font-mono font-medium rounded bg-primary/10 hover:bg-primary/20 text-primary border border-primary/20 transition-colors cursor-pointer"
                                                         title={`Inserir ${v.tag}`}
-                                                        disabled={loading}
+                                                        disabled={isBroadcasting}
                                                     >
                                                         {v.tag}
                                                     </button>
@@ -609,7 +860,7 @@ export default function BroadcastPage() {
                                             style={{ fieldSizing: "fixed", maxHeight: "220px", height: "180px", overflowY: "auto" }}
                                             value={message}
                                             onChange={e => setMessage(e.target.value)}
-                                            disabled={loading}
+                                            disabled={isBroadcasting}
                                         />
                                         <p className="text-[11px] text-muted-foreground">
                                             Dica: As variáveis são substituídas dinamicamente para cada destinatário com simulação de digitação humana para máxima segurança.
@@ -624,7 +875,7 @@ export default function BroadcastPage() {
                                                     <button
                                                         type="button"
                                                         onClick={() => setDelay([200])}
-                                                        disabled={loading}
+                                                        disabled={isBroadcasting}
                                                         className={`px-2.5 py-1 text-xs rounded-lg border font-semibold transition-all ${
                                                             delay[0] <= 300 
                                                                 ? "bg-amber-500 text-white border-amber-600 shadow-sm" 
@@ -636,7 +887,7 @@ export default function BroadcastPage() {
                                                     <button
                                                         type="button"
                                                         onClick={() => setDelay([500])}
-                                                        disabled={loading}
+                                                        disabled={isBroadcasting}
                                                         className={`px-2.5 py-1 text-xs rounded-lg border font-semibold transition-all ${
                                                             delay[0] > 300 && delay[0] <= 800 
                                                                 ? "bg-primary text-primary-foreground border-primary shadow-sm" 
@@ -648,7 +899,7 @@ export default function BroadcastPage() {
                                                     <button
                                                         type="button"
                                                         onClick={() => setDelay([1500])}
-                                                        disabled={loading}
+                                                        disabled={isBroadcasting}
                                                         className={`px-2.5 py-1 text-xs rounded-lg border font-semibold transition-all ${
                                                             delay[0] > 800 
                                                                 ? "bg-emerald-600 text-white border-emerald-700 shadow-sm" 
@@ -666,7 +917,7 @@ export default function BroadcastPage() {
                                                 step={100}
                                                 value={delay}
                                                 onValueChange={setDelay}
-                                                disabled={loading}
+                                                disabled={isBroadcasting}
                                             />
                                             <p className="text-xs text-muted-foreground">
                                                 {delay[0] <= 300 
@@ -693,7 +944,7 @@ export default function BroadcastPage() {
                                                 <button
                                                     type="button"
                                                     onClick={() => setScheduleMode("now")}
-                                                    disabled={loading}
+                                                    disabled={isBroadcasting}
                                                     className={`flex items-center justify-center gap-1.5 py-1.5 px-2 text-xs font-medium rounded-md transition-all ${
                                                         scheduleMode === "now"
                                                             ? "bg-background shadow-sm text-foreground font-semibold"
@@ -705,7 +956,7 @@ export default function BroadcastPage() {
                                                 <button
                                                     type="button"
                                                     onClick={() => setScheduleMode("datetime")}
-                                                    disabled={loading}
+                                                    disabled={isBroadcasting}
                                                     className={`flex items-center justify-center gap-1.5 py-1.5 px-2 text-xs font-medium rounded-md transition-all ${
                                                         scheduleMode === "datetime"
                                                             ? "bg-background shadow-sm text-foreground font-semibold"
@@ -717,7 +968,7 @@ export default function BroadcastPage() {
                                                 <button
                                                     type="button"
                                                     onClick={() => setScheduleMode("programmed")}
-                                                    disabled={loading}
+                                                    disabled={isBroadcasting}
                                                     className={`flex items-center justify-center gap-1.5 py-1.5 px-2 text-xs font-medium rounded-md transition-all ${
                                                         scheduleMode === "programmed"
                                                             ? "bg-primary text-primary-foreground font-semibold shadow-sm"
@@ -736,7 +987,7 @@ export default function BroadcastPage() {
                                                         type="datetime-local"
                                                         value={scheduledAt}
                                                         onChange={e => setScheduledAt(e.target.value)}
-                                                        disabled={loading}
+                                                        disabled={isBroadcasting}
                                                     />
                                                     <p className="text-[11px] text-muted-foreground">O disparo iniciará automaticamente na data e hora selecionadas.</p>
                                                 </div>
@@ -756,7 +1007,7 @@ export default function BroadcastPage() {
                                                             placeholder="12h00, 15h00, 18h00"
                                                             value={programmedTimesInput}
                                                             onChange={e => setProgrammedTimesInput(e.target.value)}
-                                                            disabled={loading}
+                                                            disabled={isBroadcasting}
                                                             className="font-mono text-sm bg-background"
                                                         />
                                                     </div>
@@ -775,6 +1026,7 @@ export default function BroadcastPage() {
                                                                     key={preset}
                                                                     type="button"
                                                                     onClick={() => setProgrammedTimesInput(preset)}
+                                                                    disabled={isBroadcasting}
                                                                     className="px-2 py-0.5 text-[11px] rounded bg-background border hover:border-primary hover:text-primary transition-colors text-muted-foreground"
                                                                 >
                                                                     {preset}
@@ -816,7 +1068,7 @@ export default function BroadcastPage() {
                                                             id="repeatDaily"
                                                             checked={repeatDaily}
                                                             onCheckedChange={(checked) => setRepeatDaily(!!checked)}
-                                                            disabled={loading}
+                                                            disabled={isBroadcasting}
                                                         />
                                                         <label htmlFor="repeatDaily" className="text-xs text-foreground cursor-pointer font-medium select-none">
                                                             Repetir diariamente nestes horários automaticamente
@@ -834,48 +1086,84 @@ export default function BroadcastPage() {
                                             )}
                                         </div>
 
-                                                                                <Button
+                                        <Button
                                             className="w-full"
-                                            onClick={handleSend}
-                                            disabled={loading || !sessionId || recipientCount === 0 || !message.trim()}
+                                            onClick={isBroadcasting ? handleCancelActiveBroadcast : handleSend}
+                                            disabled={(!isBroadcasting && (!sessionId || recipientCount === 0 || !message.trim()))}
+                                            variant={isBroadcasting ? "destructive" : "default"}
                                         >
-                                            {loading ? <RefreshCw className="mr-2 h-4 w-4 animate-spin" /> : <Send className="mr-2 h-4 w-4" />}
-                                            {loading
-                                                ? "Processando..."
-                                                : scheduleMode === "programmed"
-                                                    ? `Programar ${parseProgrammedTimes(programmedTimesInput).length} disparo(s) automático(s)`
-                                                    : scheduleMode === "datetime"
-                                                        ? "Agendar disparo"
-                                                        : `Iniciar disparo (${recipientCount} ${recipientCount === 1 ? 'destinatário' : 'destinatários'})`
-                                            }
+                                            {isBroadcasting ? (
+                                                <>
+                                                    <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
+                                                    Disparo em andamento ({broadcastProgress?.sent || 0}/{broadcastProgress?.total || recipientCount} enviados) — Clique para cancelar
+                                                </>
+                                            ) : (
+                                                <>
+                                                    <Send className="mr-2 h-4 w-4" />
+                                                    {scheduleMode === "programmed"
+                                                        ? `Programar ${parseProgrammedTimes(programmedTimesInput).length} disparo(s) automático(s)`
+                                                        : scheduleMode === "datetime"
+                                                            ? "Agendar disparo"
+                                                            : `Iniciar disparo (${recipientCount} ${recipientCount === 1 ? 'destinatário' : 'destinatários'})`}
+                                                </>
+                                            )}
                                         </Button>
                                     </div>
                                 </CardContent>
                             </Card>
                         </div>
 
-                        {/* Live Progress */}
+                        {/* Live Progress Card */}
                         {broadcastProgress && (
                             <Card className={`border-2 transition-colors ${
                                 broadcastProgress.status === "completed"
                                     ? (broadcastProgress.failed === 0 ? "border-green-500/30 bg-green-50/30 dark:bg-green-950/10" : "border-yellow-500/30 bg-yellow-50/30 dark:bg-yellow-950/10")
-                                    : "border-blue-500/30 bg-blue-50/30 dark:bg-blue-950/10"
+                                    : broadcastProgress.status === "cancelled" || broadcastProgress.status === "interrupted"
+                                        ? "border-destructive/30 bg-destructive/5"
+                                        : "border-blue-500/30 bg-blue-50/30 dark:bg-blue-950/10"
                             }`}>
-                                <CardHeader className="pb-3">
-                                    <CardTitle className="flex items-center gap-2 text-lg">
-                                        {broadcastProgress.status === "running" ? (
-                                            <><Radio className="h-5 w-5 text-blue-500 animate-pulse" /><span>Disparo em andamento</span></>
-                                        ) : broadcastProgress.status === "cancelled" ? (
-                                            <><Ban className="h-5 w-5 text-muted-foreground" /><span>Disparo cancelado</span></>
-                                        ) : broadcastProgress.status === "interrupted" ? (
-                                            <><AlertTriangle className="h-5 w-5 text-yellow-500" /><span>Disparo interrompido</span></>
-                                        ) : broadcastProgress.failed === 0 ? (
-                                            <><CheckCircle2 className="h-5 w-5 text-green-500" /><span>Disparo concluído</span></>
+                                <CardHeader className="pb-3 flex flex-row items-center justify-between space-y-0">
+                                    <div>
+                                        <CardTitle className="flex items-center gap-2 text-lg">
+                                            {broadcastProgress.status === "running" ? (
+                                                <><Radio className="h-5 w-5 text-blue-500 animate-pulse" /><span>Disparo em andamento</span></>
+                                            ) : broadcastProgress.status === "queued" ? (
+                                                <><Clock className="h-5 w-5 text-amber-500 animate-pulse" /><span>Disparo na fila sequencial</span></>
+                                            ) : broadcastProgress.status === "cancelled" ? (
+                                                <><Ban className="h-5 w-5 text-muted-foreground" /><span>Disparo cancelado</span></>
+                                            ) : broadcastProgress.status === "interrupted" ? (
+                                                <><AlertTriangle className="h-5 w-5 text-yellow-500" /><span>Disparo interrompido</span></>
+                                            ) : broadcastProgress.failed === 0 ? (
+                                                <><CheckCircle2 className="h-5 w-5 text-green-500" /><span>Disparo concluído com sucesso!</span></>
+                                            ) : (
+                                                <><AlertTriangle className="h-5 w-5 text-yellow-500" /><span>Disparo concluído com erros</span></>
+                                            )}
+                                        </CardTitle>
+                                        <CardDescription>ID: {broadcastProgress.broadcastId}</CardDescription>
+                                    </div>
+                                    <div className="flex items-center gap-2">
+                                        {(broadcastProgress.status === "running" || broadcastProgress.status === "queued") ? (
+                                            <Button
+                                                type="button"
+                                                variant="destructive"
+                                                size="sm"
+                                                onClick={handleCancelActiveBroadcast}
+                                                className="h-8 gap-1.5"
+                                            >
+                                                <Ban className="h-3.5 w-3.5" /> Cancelar envio
+                                            </Button>
                                         ) : (
-                                            <><AlertTriangle className="h-5 w-5 text-yellow-500" /><span>Disparo concluído com erros</span></>
+                                            <Button
+                                                type="button"
+                                                variant="outline"
+                                                size="sm"
+                                                onClick={handleClearProgress}
+                                                className="h-8 gap-1.5"
+                                            >
+                                                <CheckCircle2 className="h-3.5 w-3.5 text-muted-foreground" /> Ocultar progresso
+                                            </Button>
                                         )}
-                                    </CardTitle>
-                                    <CardDescription>ID: {broadcastProgress.broadcastId}</CardDescription>
+                                    </div>
                                 </CardHeader>
                                 <CardContent className="space-y-4">
                                     <div className="space-y-2">
@@ -903,7 +1191,7 @@ export default function BroadcastPage() {
                                         </div>
                                         <div className="bg-background rounded-lg p-3 text-center border">
                                             <div className="text-2xl font-bold text-muted-foreground">
-                                                {broadcastProgress.total - broadcastProgress.sent - broadcastProgress.failed}
+                                                {Math.max(0, broadcastProgress.total - broadcastProgress.sent - broadcastProgress.failed)}
                                             </div>
                                             <div className="text-xs text-muted-foreground flex items-center justify-center gap-1 mt-1">
                                                 <Clock className="h-3 w-3" /> Pendentes
@@ -919,10 +1207,17 @@ export default function BroadcastPage() {
                                         </div>
                                     )}
 
+                                    {broadcastProgress.status === "queued" && (
+                                        <div className="flex items-center gap-2 text-sm px-3 py-2 bg-amber-500/10 text-amber-700 dark:text-amber-400 rounded-lg border border-amber-500/20">
+                                            <Clock className="h-3.5 w-3.5 animate-spin" />
+                                            <span>{broadcastProgress.message || "Aguardando disparo anterior terminar na fila sequencial..."}</span>
+                                        </div>
+                                    )}
+
                                     {broadcastProgress.status === "completed" && broadcastProgress.errors && broadcastProgress.errors.length > 0 && (
                                         <div className="space-y-2">
                                             <h4 className="text-sm font-semibold text-red-600 flex items-center gap-1.5">
-                                                <XCircle className="h-4 w-4" /> Failed ({broadcastProgress.errors.length})
+                                                <XCircle className="h-4 w-4" /> Erros de envio ({broadcastProgress.errors.length})
                                             </h4>
                                             <div className="max-h-40 overflow-y-auto bg-red-50 dark:bg-red-950/30 rounded-lg p-2 space-y-1">
                                                 {broadcastProgress.errors.map((err, i) => (
@@ -1068,7 +1363,7 @@ export default function BroadcastPage() {
                                     ? <CheckCircle2 className="h-5 w-5 text-green-500" />
                                     : <Radio className="h-5 w-5 text-blue-500 animate-pulse" />
                                 }
-                                Broadcast Detail
+                                Detalhes do disparo
                             </DialogTitle>
                         </DialogHeader>
 
@@ -1102,14 +1397,14 @@ export default function BroadcastPage() {
 
                                 {/* Time */}
                                 <div className="flex gap-4 text-xs text-muted-foreground">
-                                    <span>Started: {formatTime(selectedLog.startedAt)}</span>
-                                    {selectedLog.completedAt && <span>Completed: {formatTime(selectedLog.completedAt)}</span>}
+                                    <span>Início: {formatTime(selectedLog.startedAt)}</span>
+                                    {selectedLog.completedAt && <span>Conclusão: {formatTime(selectedLog.completedAt)}</span>}
                                 </div>
 
                                 {/* Recipients list */}
                                 {selectedLog.recipients && selectedLog.recipients.length > 0 && (
                                     <div className="flex-1 overflow-y-auto min-h-0">
-                                        <h4 className="text-sm font-semibold mb-2">Recipients ({selectedLog.recipients.length})</h4>
+                                        <h4 className="text-sm font-semibold mb-2">Destinatários ({selectedLog.recipients.length})</h4>
                                         <div className="space-y-1">
                                             {selectedLog.recipients.map(r => (
                                                 <div key={r.id}
