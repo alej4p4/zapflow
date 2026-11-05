@@ -2,7 +2,7 @@ import { NextResponse, NextRequest } from "next/server";
 import { waManager } from "@/modules/whatsapp/manager";
 import { getAuthenticatedUser, canAccessSession } from "@/lib/api-auth";
 
-// PUT: Mark messages as read
+// PUT: Mark messages as read or unread
 export async function PUT(
     request: NextRequest,
     { params }: { params: Promise<{ sessionId: string; jid: string }> }
@@ -14,8 +14,8 @@ export async function PUT(
         }
 
         const { sessionId, jid } = await params;
-        const body = await request.json();
-        const { messageIds } = body;
+        const body = await request.json().catch(() => ({}));
+        const { messageIds, markRead } = body;
 
         // Check if user can access this session
         const canAccess = await canAccessSession(user.id, user.role, sessionId);
@@ -30,10 +30,10 @@ export async function PUT(
 
         // Decode JID from URL parameter
         const decodedJid = decodeURIComponent(jid);
+        const shouldMarkRead = markRead !== undefined ? Boolean(markRead) : true;
 
-        // If specific message IDs provided, mark those as read
-        // Otherwise, mark entire chat as read
-        if (messageIds && Array.isArray(messageIds) && messageIds.length > 0) {
+        // If specific message IDs provided and marking as read
+        if (messageIds && Array.isArray(messageIds) && messageIds.length > 0 && shouldMarkRead) {
             for (const messageId of messageIds) {
                 await instance.socket.readMessages([{
                     remoteJid: decodedJid,
@@ -42,15 +42,17 @@ export async function PUT(
                 }]);
             }
         } else {
-            // Mark all messages in chat as read
-            // Note: lastMessages is required by Baileys but can be empty array
+            // Mark chat as read or unread in Baileys
             await instance.socket.chatModify(
-                { markRead: true, lastMessages: [] },
+                { markRead: shouldMarkRead, lastMessages: [] },
                 decodedJid
             );
         }
 
-        return NextResponse.json({ status: true, message: "Messages marked as read" });
+        return NextResponse.json({
+            status: true,
+            message: shouldMarkRead ? "Mensagens marcadas como lidas" : "Conversa marcada como não lida"
+        });
 
     } catch (error) {
         console.error("Mark as read error:", error);

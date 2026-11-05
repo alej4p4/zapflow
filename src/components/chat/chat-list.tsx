@@ -29,8 +29,13 @@ import {
     Mic,
     Video,
     Maximize2,
-    Minimize2
+    Minimize2,
+    Eye,
+    EyeOff,
+    ChevronDown,
+    Settings
 } from "lucide-react";
+import { LabelAssignPopover, LabelData, ManageLabelsModal } from "./label-assign-popover";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
@@ -53,11 +58,6 @@ export interface ChatContact {
     unreadCount?: number;
 }
 
-interface LabelData {
-    id: string;
-    name: string;
-    colorHex: string;
-}
 
 interface ChatListProps {
     sessionId: string;
@@ -104,91 +104,6 @@ function getTimeLabel(timestamp: string): string {
     return date.toLocaleDateString("pt-BR", { month: 'numeric', day: 'numeric' });
 }
 
-// ─── Label Assignment Popover ──────
-function LabelAssignPopover({ sessionId, jid, children }: { sessionId: string; jid: string; children: React.ReactNode }) {
-    const [labels, setLabels] = useState<LabelData[]>([]);
-    const [assigned, setAssigned] = useState<Set<string>>(new Set());
-    const [loading, setLoading] = useState(false);
-    const openRef = useRef(false);
-
-    const fetchLabels = useCallback(async () => {
-        setLoading(true);
-        try {
-            const [labelRes, assignedRes] = await Promise.all([
-                fetch(`/api/labels/${sessionId}`),
-                fetch(`/api/labels/${sessionId}/chats?jid=${encodeURIComponent(jid)}`)
-            ]);
-            const labelData = await labelRes.json();
-            const assignedData = await assignedRes.json();
-
-            if (labelRes.ok) setLabels(labelData.data?.labels || []);
-            if (assignedRes.ok) {
-                setAssigned(new Set((assignedData.data || []).map((cl: any) => cl.labelId)));
-            }
-        } catch (e) {
-            console.error("Failed to fetch labels", e);
-        } finally {
-            setLoading(false);
-        }
-    }, [sessionId, jid]);
-
-    useEffect(() => {
-        if (openRef.current) fetchLabels();
-    }, [fetchLabels]);
-
-    const toggleLabel = async (labelId: string) => {
-        const isAssigned = assigned.has(labelId);
-        try {
-            const res = await fetch(`/api/labels/${sessionId}/chat/${encodeURIComponent(jid)}/labels`, {
-                method: "PUT",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ labelIds: [labelId], action: isAssigned ? "remove" : "add" })
-            });
-            if (res.ok) {
-                setAssigned(prev => {
-                    const next = new Set(prev);
-                    if (isAssigned) next.delete(labelId);
-                    else next.add(labelId);
-                    return next;
-                });
-                toast.success(isAssigned ? "Etiqueta removida" : "Etiqueta atribuída");
-            }
-        } catch (e) {
-            toast.error("Não foi possível atualizar a etiqueta");
-        }
-    };
-
-    return (
-        <Popover onOpenChange={(open) => { openRef.current = open; if (open) fetchLabels(); }}>
-            <PopoverTrigger asChild>{children}</PopoverTrigger>
-            <PopoverContent className="w-56 p-1.5" side="right" align="start">
-                <div className="text-xs font-semibold text-muted-foreground px-2 py-1.5">Atribuir etiquetas</div>
-                {loading ? (
-                    <div className="flex items-center justify-center py-4"><Skeleton className="h-4 w-24" /></div>
-                ) : labels.length === 0 ? (
-                    <p className="text-xs text-muted-foreground px-2 py-2">Nenhuma etiqueta criada.</p>
-                ) : (
-                    <div className="flex flex-col gap-0.5 max-h-48 overflow-y-auto">
-                        {labels.map(label => (
-                            <button key={label.id} onClick={() => toggleLabel(label.id)}
-                                className="flex items-center gap-2 px-2 py-1.5 rounded-lg text-sm hover:bg-muted transition-colors cursor-pointer text-left">
-                                <div className={cn(
-                                    "h-3.5 w-3.5 rounded-full border-2 flex items-center justify-center shrink-0 transition-all",
-                                    assigned.has(label.id) ? "border-foreground" : "border-muted-foreground/30"
-                                )}>
-                                    {assigned.has(label.id) && <Check className="h-2.5 w-2.5" />}
-                                </div>
-                                <div className="h-2.5 w-2.5 rounded-full shrink-0" style={{ backgroundColor: label.colorHex }} />
-                                <span className="truncate text-xs font-medium">{label.name}</span>
-                            </button>
-                        ))}
-                    </div>
-                )}
-            </PopoverContent>
-        </Popover>
-    );
-}
-
 // ─── Context Menu ──────────────────
 interface CtxMenuState {
     x: number;
@@ -197,18 +112,21 @@ interface CtxMenuState {
     name: string;
     profilePic?: string | null;
     isPinned: boolean;
+    unreadCount?: number;
 }
 
 function ChatContextMenu({
     state,
     onClose,
     onSelect,
-    onTogglePin
+    onTogglePin,
+    onToggleRead
 }: {
     state: CtxMenuState;
     onClose: () => void;
     onSelect: (jid: string, name?: string, profilePic?: string | null) => void;
     onTogglePin: (jid: string) => void;
+    onToggleRead: (jid: string, isUnread: boolean) => void;
 }) {
     const ref = useRef<HTMLDivElement>(null);
     useEffect(() => {
@@ -217,6 +135,7 @@ function ChatContextMenu({
         return () => document.removeEventListener("mousedown", h);
     }, [onClose]);
 
+    const isUnread = Boolean(state.unreadCount && state.unreadCount > 0);
     const items = [
         {
             label: "Abrir conversa",
@@ -227,6 +146,11 @@ function ChatContextMenu({
             label: state.isPinned ? "Desafixar conversa" : "Fixar conversa no topo",
             icon: state.isPinned ? PinOff : Pin,
             action: () => { onTogglePin(state.jid); onClose(); }
+        },
+        {
+            label: isUnread ? "Marcar como lida" : "Marcar como não lida",
+            icon: isUnread ? CheckCheck : Eye,
+            action: () => { onToggleRead(state.jid, isUnread); onClose(); }
         },
         {
             label: "Copiar JID",
@@ -263,6 +187,7 @@ function ChatRow({
     isPinned,
     onSelect,
     onTogglePin,
+    onToggleRead,
     sessionId,
     labelDots
 }: {
@@ -271,8 +196,9 @@ function ChatRow({
     isPinned: boolean;
     onSelect: (jid: string, name?: string, profilePic?: string | null) => void;
     onTogglePin: (jid: string, e?: React.MouseEvent) => void;
+    onToggleRead: (jid: string, isUnread: boolean) => void;
     sessionId: string;
-    labelDots: { colorHex: string }[];
+    labelDots: { colorHex: string; name?: string }[];
 }) {
     const displayName = getDisplayName(chat);
     const [ctxMenu, setCtxMenu] = useState<CtxMenuState | null>(null);
@@ -287,6 +213,7 @@ function ChatRow({
                     onClose={() => setCtxMenu(null)}
                     onSelect={onSelect}
                     onTogglePin={onTogglePin}
+                    onToggleRead={onToggleRead}
                 />
             )}
             <div
@@ -300,7 +227,7 @@ function ChatRow({
                 onMouseEnter={() => prefetchChatMessages(sessionId, chat.jid)}
                 onContextMenu={(e) => {
                     e.preventDefault();
-                    setCtxMenu({ x: e.clientX, y: e.clientY, jid: chat.jid, name: displayName, profilePic: chat.profilePic, isPinned });
+                    setCtxMenu({ x: e.clientX, y: e.clientY, jid: chat.jid, name: displayName, profilePic: chat.profilePic, isPinned, unreadCount: chat.unreadCount });
                 }}
             >
                 {/* Avatar with WhatsApp group/user style */}
@@ -329,7 +256,7 @@ function ChatRow({
                             {labelDots.length > 0 && (
                                 <span className="flex items-center gap-[3px] shrink-0">
                                     {labelDots.map((d, i) => (
-                                        <span key={i} className="h-2 w-2 rounded-full inline-block" style={{ backgroundColor: d.colorHex }} title="Etiqueta" />
+                                        <span key={i} className="h-2 w-2 rounded-full inline-block shadow-xs" style={{ backgroundColor: d.colorHex }} title={d.name || "Etiqueta"} />
                                     ))}
                                 </span>
                             )}
@@ -416,6 +343,7 @@ function SkeletonRow() {
                 </div>
                 <Skeleton className="h-3.5 w-44" />
             </div>
+
         </div>
     );
 }
@@ -442,8 +370,11 @@ export function ChatList({ sessionId, onSelectChat, selectedJid }: ChatListProps
     const [extraContacts, setExtraContacts] = useState<ChatContact[]>([]);
     const contactSearchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-    // Label dots per JID — {colorHex}[]
-    const [chatLabelMap, setChatLabelMap] = useState<Map<string, { colorHex: string }[]>>(new Map());
+    // Label dots & active session labels
+    const [chatLabelMap, setChatLabelMap] = useState<Map<string, { labelId: string; name: string; colorHex: string }[]>>(new Map());
+    const [availableLabels, setAvailableLabels] = useState<LabelData[]>([]);
+    const [selectedLabelId, setSelectedLabelId] = useState<string | null>(null);
+    const [isManageLabelsOpen, setIsManageLabelsOpen] = useState(false);
 
     const { getSocket, joinSession } = useSocket();
     const chatsRef = useRef<ChatContact[]>(chats);
@@ -506,6 +437,28 @@ export function ChatList({ sessionId, onSelectChat, selectedJid }: ChatListProps
             }
         } catch (e) {
             console.error("Failed to load pinned chats from localStorage", e);
+        }
+    }, [sessionId]);
+
+    // Mark Chat as Read / Unread
+    const handleToggleRead = useCallback(async (jid: string, currentlyUnread: boolean) => {
+        const nextStatus = !currentlyUnread;
+        setChats(prev => {
+            const next = prev.map(c => c.jid === jid ? { ...c, unreadCount: currentlyUnread ? 0 : 1 } : c);
+            globalChatListCache.set(sessionId, next);
+            return next;
+        });
+        try {
+            const res = await fetch(`/api/chat/${sessionId}/${encodeURIComponent(jid)}/read`, {
+                method: "PUT",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ markRead: nextStatus })
+            });
+            if (res.ok) {
+                toast.success(currentlyUnread ? "Conversa marcada como lida" : "Conversa marcada como não lida");
+            }
+        } catch {
+            toast.error("Erro ao alterar status da conversa");
         }
     }, [sessionId]);
 
@@ -646,26 +599,39 @@ export function ChatList({ sessionId, onSelectChat, selectedJid }: ChatListProps
         return () => window.removeEventListener("zapflow:local-message-sent", handleLocalSent);
     }, []);
 
-    // Fetch label assignments
-    useEffect(() => {
+    // Fetch labels & chat label assignments with real-time sync
+    const reloadLabelsAndAssignments = useCallback(async () => {
         if (!sessionId) return;
-        (async () => {
-            try {
-                const res = await fetch(`/api/labels/${sessionId}/chats`);
-                if (!res.ok) return;
-                const data = await res.json();
-                const map = new Map<string, { colorHex: string }[]>();
-                for (const cl of (data.data || [])) {
+        try {
+            const [labelRes, chatLabelsRes] = await Promise.all([
+                fetch(`/api/labels/${sessionId}`),
+                fetch(`/api/labels/${sessionId}/chats`)
+            ]);
+            if (labelRes.ok) {
+                const lData = await labelRes.json();
+                setAvailableLabels(lData.data?.labels || []);
+            }
+            if (chatLabelsRes.ok) {
+                const cData = await chatLabelsRes.json();
+                const map = new Map<string, { labelId: string; name: string; colorHex: string }[]>();
+                for (const cl of (cData.data || [])) {
                     const jid = cl.chatJid;
                     if (!map.has(jid)) map.set(jid, []);
-                    map.get(jid)!.push({ colorHex: cl.colorHex });
+                    map.get(jid)!.push({ labelId: cl.labelId, name: cl.labelName, colorHex: cl.colorHex });
                 }
                 setChatLabelMap(map);
-            } catch (e) {
-                console.error("Failed to load label assignments", e);
             }
-        })();
+        } catch (e) {
+            console.error("Failed to load label assignments", e);
+        }
     }, [sessionId]);
+
+    useEffect(() => {
+        reloadLabelsAndAssignments();
+        const handler = () => reloadLabelsAndAssignments();
+        window.addEventListener("zapflow:labels-changed", handler);
+        return () => window.removeEventListener("zapflow:labels-changed", handler);
+    }, [reloadLabelsAndAssignments]);
 
     // ─── INSTANT SEARCH & SORTING (0ms delay, no skeleton wipe, unlimited pinning) ───
     const totalUnreadCount = useMemo(() => chats.filter(c => (c.unreadCount || 0) > 0).length, [chats]);
@@ -698,7 +664,11 @@ export function ChatList({ sessionId, onSelectChat, selectedJid }: ChatListProps
             }
         }
 
-        // 2. Filter buttons: Tudo, Contatos, Grupos, Fixados
+        // 2. Filter buttons: Tudo, Contatos, Grupos, Fixados, Etiquetas
+        if (selectedLabelId) {
+            list = list.filter(c => chatLabelMap.get(c.jid)?.some(l => l.labelId === selectedLabelId));
+        }
+
         if (filterType === "unread") {
             list = list.filter(c => (c.unreadCount || 0) > 0);
         } else if (filterType === "contacts") {
@@ -729,7 +699,7 @@ export function ChatList({ sessionId, onSelectChat, selectedJid }: ChatListProps
         });
 
         return [...pinnedList, ...unpinnedList];
-    }, [chats, searchInput, extraContacts, filterType, pinnedJids]);
+    }, [chats, searchInput, extraContacts, filterType, pinnedJids, selectedLabelId, chatLabelMap]);
 
     // Keyboard shortcuts listeners (Ctrl+Shift+F to search, Alt+Up/Down to navigate chats)
     useEffect(() => {
@@ -776,11 +746,12 @@ export function ChatList({ sessionId, onSelectChat, selectedJid }: ChatListProps
                 isPinned={pinnedJids.includes(chat.jid)}
                 onSelect={onSelectChat}
                 onTogglePin={handleTogglePin}
+                onToggleRead={handleToggleRead}
                 sessionId={sessionId}
                 labelDots={chatLabelMap.get(chat.jid) || []}
             />
         ),
-        [selectedJid, pinnedJids, onSelectChat, handleTogglePin, sessionId, chatLabelMap]
+        [selectedJid, pinnedJids, onSelectChat, handleTogglePin, handleToggleRead, sessionId, chatLabelMap]
     );
 
     const handleStartNewChat = () => {
@@ -856,13 +827,13 @@ export function ChatList({ sessionId, onSelectChat, selectedJid }: ChatListProps
                     )}
                 </div>
 
-                {/* Quick Filters: Tudo, Contatos, Grupos, Fixados */}
+                {/* Quick Filters: Tudo, Contatos, Grupos, Fixados, Etiquetas */}
                 <div className="flex items-center gap-1.5 pt-0.5 overflow-x-auto no-scrollbar">
                     <button
-                        onClick={() => setFilterType("all")}
+                        onClick={() => { setFilterType("all"); setSelectedLabelId(null); }}
                         className={cn(
                             "px-3 py-1 rounded-full text-xs font-medium transition-colors shrink-0 cursor-pointer",
-                            filterType === "all"
+                            filterType === "all" && !selectedLabelId
                                 ? "bg-[#00a884] text-white"
                                 : "bg-muted/70 hover:bg-muted text-muted-foreground"
                         )}
@@ -870,10 +841,10 @@ export function ChatList({ sessionId, onSelectChat, selectedJid }: ChatListProps
                         Tudo
                     </button>
                     <button
-                        onClick={() => setFilterType("unread")}
+                        onClick={() => { setFilterType("unread"); setSelectedLabelId(null); }}
                         className={cn(
                             "px-3 py-1 rounded-full text-xs font-medium transition-colors shrink-0 flex items-center gap-1.5 cursor-pointer",
-                            filterType === "unread"
+                            filterType === "unread" && !selectedLabelId
                                 ? "bg-[#00a884] text-white"
                                 : "bg-muted/70 hover:bg-muted text-muted-foreground"
                         )}
@@ -882,17 +853,17 @@ export function ChatList({ sessionId, onSelectChat, selectedJid }: ChatListProps
                         {totalUnreadCount > 0 && (
                             <span className={cn(
                                 "px-1.5 py-0.2 rounded-full text-[10px] font-bold tabular-nums",
-                                filterType === "unread" ? "bg-white text-[#00a884]" : "bg-[#00a884] text-white"
+                                filterType === "unread" && !selectedLabelId ? "bg-white text-[#00a884]" : "bg-[#00a884] text-white"
                             )}>
                                 {totalUnreadCount}
                             </span>
                         )}
                     </button>
                     <button
-                        onClick={() => setFilterType("contacts")}
+                        onClick={() => { setFilterType("contacts"); setSelectedLabelId(null); }}
                         className={cn(
                             "px-3 py-1 rounded-full text-xs font-medium transition-colors shrink-0 flex items-center gap-1 cursor-pointer",
-                            filterType === "contacts"
+                            filterType === "contacts" && !selectedLabelId
                                 ? "bg-[#00a884] text-white"
                                 : "bg-muted/70 hover:bg-muted text-muted-foreground"
                         )}
@@ -901,10 +872,10 @@ export function ChatList({ sessionId, onSelectChat, selectedJid }: ChatListProps
                         Contatos
                     </button>
                     <button
-                        onClick={() => setFilterType("groups")}
+                        onClick={() => { setFilterType("groups"); setSelectedLabelId(null); }}
                         className={cn(
                             "px-3 py-1 rounded-full text-xs font-medium transition-colors shrink-0 flex items-center gap-1 cursor-pointer",
-                            filterType === "groups"
+                            filterType === "groups" && !selectedLabelId
                                 ? "bg-[#00a884] text-white"
                                 : "bg-muted/70 hover:bg-muted text-muted-foreground"
                         )}
@@ -913,10 +884,10 @@ export function ChatList({ sessionId, onSelectChat, selectedJid }: ChatListProps
                         Grupos
                     </button>
                     <button
-                        onClick={() => setFilterType("pinned")}
+                        onClick={() => { setFilterType("pinned"); setSelectedLabelId(null); }}
                         className={cn(
                             "px-3 py-1 rounded-full text-xs font-medium transition-colors shrink-0 flex items-center gap-1 cursor-pointer",
-                            filterType === "pinned"
+                            filterType === "pinned" && !selectedLabelId
                                 ? "bg-[#00a884] text-white"
                                 : "bg-muted/70 hover:bg-muted text-muted-foreground"
                         )}
@@ -924,6 +895,84 @@ export function ChatList({ sessionId, onSelectChat, selectedJid }: ChatListProps
                         <Pin className="h-3 w-3 rotate-45" />
                         Fixados {pinnedJids.length > 0 && `(${pinnedJids.length})`}
                     </button>
+
+                    {/* Active Label Chip or Labels Dropdown */}
+                    {selectedLabelId ? (
+                        (() => {
+                            const activeLabel = availableLabels.find(l => l.id === selectedLabelId);
+                            return (
+                                <button
+                                    onClick={() => setSelectedLabelId(null)}
+                                    className="px-2.5 py-1 rounded-full text-xs font-semibold bg-[#00a884] text-white flex items-center gap-1.5 shrink-0 shadow-sm cursor-pointer transition-all"
+                                    title="Clique para remover filtro de etiqueta"
+                                >
+                                    <span className="h-2 w-2 rounded-full ring-1 ring-white/50" style={{ backgroundColor: activeLabel?.colorHex || "#fff" }} />
+                                    <span className="truncate max-w-[120px]">{activeLabel?.name || "Etiqueta"}</span>
+                                    <X className="h-3 w-3 hover:bg-black/20 rounded-full" />
+                                </button>
+                            );
+                        })()
+                    ) : (
+                        <Popover>
+                            <PopoverTrigger asChild>
+                                <button
+                                    className={cn(
+                                        "px-2.5 py-1 rounded-full text-xs font-medium transition-colors shrink-0 flex items-center gap-1 cursor-pointer",
+                                        "bg-muted/70 hover:bg-muted text-muted-foreground"
+                                    )}
+                                    title="Filtrar conversas por etiqueta"
+                                >
+                                    <Tag className="h-3 w-3" />
+                                    <span>Etiquetas</span>
+                                    {availableLabels.length > 0 && (
+                                        <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-black/10 dark:bg-white/15 font-semibold">
+                                            {availableLabels.length}
+                                        </span>
+                                    )}
+                                    <ChevronDown className="h-3 w-3 opacity-60" />
+                                </button>
+                            </PopoverTrigger>
+                            <PopoverContent className="w-56 p-1.5 rounded-2xl shadow-2xl bg-white dark:bg-[#202c33] border border-border/40 z-50 animate-in fade-in zoom-in-95" align="start">
+                                <div className="flex items-center justify-between px-2 py-1.5 border-b border-border/20 text-xs font-semibold text-foreground">
+                                    <span>Filtrar por etiqueta</span>
+                                    <button
+                                        type="button"
+                                        onClick={() => setIsManageLabelsOpen(true)}
+                                        className="text-[11px] text-[#00a884] hover:underline flex items-center gap-1 cursor-pointer"
+                                    >
+                                        <Settings className="h-3 w-3" />
+                                        Gerenciar
+                                    </button>
+                                </div>
+                                {availableLabels.length === 0 ? (
+                                    <div className="py-4 text-center text-xs text-muted-foreground">
+                                        Nenhuma etiqueta cadastrada.
+                                    </div>
+                                ) : (
+                                    <div className="flex flex-col gap-0.5 max-h-48 overflow-y-auto pt-1">
+                                        {availableLabels.map(label => {
+                                            const chatCount = chats.filter(c => chatLabelMap.get(c.jid)?.some(l => l.labelId === label.id)).length;
+                                            return (
+                                                <button
+                                                    key={label.id}
+                                                    onClick={() => setSelectedLabelId(label.id)}
+                                                    className="flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-xl text-xs hover:bg-muted/60 transition-colors text-left cursor-pointer text-foreground"
+                                                >
+                                                    <div className="flex items-center gap-2 truncate">
+                                                        <span className="h-2.5 w-2.5 rounded-full shrink-0 shadow-xs" style={{ backgroundColor: label.colorHex }} />
+                                                        <span className="truncate font-medium">{label.name}</span>
+                                                    </div>
+                                                    <span className="text-[10px] text-muted-foreground font-semibold px-1.5 py-0.2 rounded-full bg-muted shrink-0">
+                                                        {chatCount}
+                                                    </span>
+                                                </button>
+                                            );
+                                        })}
+                                    </div>
+                                )}
+                            </PopoverContent>
+                        </Popover>
+                    )}
                 </div>
 
                 {/* New Chat Form Drawer */}
@@ -954,13 +1003,22 @@ export function ChatList({ sessionId, onSelectChat, selectedJid }: ChatListProps
                 {filteredAndSortedChats.length === 0 ? (
                     <div className="flex flex-col items-center justify-center py-16 px-4 text-center">
                         <div className="h-12 w-12 rounded-full bg-muted/50 flex items-center justify-center mb-3">
-                            <MessageCircle className="h-6 w-6 text-muted-foreground/50" />
+                            {selectedLabelId ? <Tag className="h-6 w-6 text-muted-foreground/50" /> : <MessageCircle className="h-6 w-6 text-muted-foreground/50" />}
                         </div>
-                        <p className="text-sm font-medium text-foreground">Nenhuma conversa encontrada</p>
-                        <p className="text-xs text-muted-foreground mt-1">
-                            {searchInput ? `Nenhum resultado para "${searchInput}"` : "Nenhuma conversa disponível"}
+                        <p className="text-sm font-medium text-foreground">
+                            {selectedLabelId ? "Nenhuma conversa com esta etiqueta" : "Nenhuma conversa encontrada"}
                         </p>
-                        {searchInput && (
+                        <p className="text-xs text-muted-foreground mt-1">
+                            {selectedLabelId
+                                ? "Atribua esta etiqueta a contatos para visualizá-los aqui."
+                                : searchInput ? `Nenhum resultado para "${searchInput}"` : "Nenhuma conversa disponível"}
+                        </p>
+                        {selectedLabelId && (
+                            <Button variant="ghost" size="sm" className="mt-3 text-xs text-[#00a884]" onClick={() => setSelectedLabelId(null)}>
+                                Limpar filtro de etiqueta
+                            </Button>
+                        )}
+                        {searchInput && !selectedLabelId && (
                             <Button variant="ghost" size="sm" className="mt-3 text-xs text-[#00a884]" onClick={() => setSearchInput("")}>
                                 Limpar busca
                             </Button>
@@ -986,6 +1044,13 @@ export function ChatList({ sessionId, onSelectChat, selectedJid }: ChatListProps
                     />
                 )}
             </div>
+
+            {/* Manage Labels Modal */}
+            <ManageLabelsModal
+                sessionId={sessionId}
+                isOpen={isManageLabelsOpen}
+                onClose={() => setIsManageLabelsOpen(false)}
+            />
         </div>
     );
 }

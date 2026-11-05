@@ -41,8 +41,10 @@ import {
     Plus,
     Forward,
     User,
-    RefreshCw
+    RefreshCw,
+    Tag
 } from "lucide-react";
+import { LabelAssignPopover, LabelData } from "./label-assign-popover";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import {
     AlertDialog,
@@ -1996,6 +1998,34 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
     const [presenceInfo, setPresenceInfo] = useState<{ isComposing: boolean; isRecording: boolean; sender?: string } | null>(null);
     const presenceTimerRef = useRef<NodeJS.Timeout | null>(null);
 
+    // Active chat assigned labels
+    const [chatLabels, setChatLabels] = useState<LabelData[]>([]);
+
+    const fetchCurrentChatLabels = useCallback(async () => {
+        if (!sessionId || !jid) return;
+        try {
+            const res = await fetch(`/api/labels/${sessionId}/chats?jid=${encodeURIComponent(jid)}`);
+            if (res.ok) {
+                const data = await res.json();
+                const labels: LabelData[] = (data.data || []).map((cl: any) => ({
+                    id: cl.labelId,
+                    name: cl.labelName,
+                    colorHex: cl.colorHex,
+                }));
+                setChatLabels(labels);
+            }
+        } catch (e) {
+            console.error("Failed to fetch active chat labels", e);
+        }
+    }, [sessionId, jid]);
+
+    useEffect(() => {
+        fetchCurrentChatLabels();
+        const handleLabelsChanged = () => fetchCurrentChatLabels();
+        window.addEventListener("zapflow:labels-changed", handleLabelsChanged);
+        return () => window.removeEventListener("zapflow:labels-changed", handleLabelsChanged);
+    }, [fetchCurrentChatLabels]);
+
 
     useEffect(() => {
         if (typeof window === "undefined") return;
@@ -2710,10 +2740,48 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
                         </AvatarFallback>
                     </Avatar>
                     <div className="flex-1 min-w-0 cursor-pointer" onClick={() => { setChatInfoModalTab("media"); setIsChatInfoModalOpen(true); }}>
-                        <h3 className="text-[15px] font-semibold text-foreground truncate leading-snug">
-                            {displayName}
-                        </h3>
-                        <p className="text-[11.5px] text-muted-foreground truncate flex items-center gap-1.5">
+                        <div className="flex items-center gap-2">
+                            <h3 className="text-[15px] font-semibold text-foreground truncate leading-snug">
+                                {displayName}
+                            </h3>
+                            {/* Contact Labels in Header */}
+                            {chatLabels.length > 0 && (
+                                <div className="hidden sm:flex items-center gap-1 shrink-0 overflow-hidden" onClick={e => e.stopPropagation()}>
+                                    {chatLabels.slice(0, 3).map(l => (
+                                        <span
+                                            key={l.id}
+                                            className="inline-flex items-center gap-1 text-[10px] font-medium px-2 py-0.5 rounded-full border shadow-xs"
+                                            style={{
+                                                backgroundColor: `${l.colorHex}15`,
+                                                borderColor: `${l.colorHex}45`,
+                                                color: l.colorHex
+                                            }}
+                                            title={l.name}
+                                        >
+                                            <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: l.colorHex }} />
+                                            <span className="truncate max-w-[80px]">{l.name}</span>
+                                        </span>
+                                    ))}
+                                    {chatLabels.length > 3 && (
+                                        <span className="text-[10px] text-muted-foreground font-semibold px-1 py-0.2 rounded-full bg-muted">
+                                            +{chatLabels.length - 3}
+                                        </span>
+                                    )}
+                                </div>
+                            )}
+                            <LabelAssignPopover sessionId={sessionId} jid={jid}>
+                                <button
+                                    type="button"
+                                    onClick={e => e.stopPropagation()}
+                                    className="inline-flex items-center gap-1 text-[10px] text-muted-foreground hover:text-[#00a884] px-1.5 py-0.5 rounded-full bg-black/5 dark:bg-white/10 hover:bg-[#00a884]/15 transition-colors shrink-0 cursor-pointer"
+                                    title="Atribuir etiquetas para este contato"
+                                >
+                                    <Tag className="h-2.5 w-2.5" />
+                                    <span>{chatLabels.length === 0 ? "Etiquetar" : "+"}</span>
+                                </button>
+                            </LabelAssignPopover>
+                        </div>
+                        <p className="text-[11.5px] text-muted-foreground truncate flex items-center gap-1.5 mt-0.5">
                             {presenceInfo ? (
                                 <span className="flex items-center gap-1.5 text-[#00a884] font-medium animate-pulse">
                                     {presenceInfo.isRecording ? (
@@ -2820,6 +2888,15 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
                                 <ImageIcon className="h-4 w-4 text-blue-500" />
                                 <span>Mídias, links e docs</span>
                             </button>
+                            <LabelAssignPopover sessionId={sessionId} jid={jid}>
+                                <button
+                                    type="button"
+                                    className="w-full flex items-center gap-2.5 px-3 py-2 text-xs font-medium text-foreground rounded-xl hover:bg-black/5 dark:hover:bg-white/10 transition-colors text-left cursor-pointer"
+                                >
+                                    <Tag className="h-4 w-4 text-emerald-500" />
+                                    <span>Etiquetas da conversa</span>
+                                </button>
+                            </LabelAssignPopover>
 
                             <button
                                 type="button"
