@@ -32,7 +32,10 @@ import {
     Pause,
     AtSign,
     FileDown,
-    Zap
+    Zap,
+    ChevronUp,
+    ChevronDown,
+    Pin
 } from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import {
@@ -95,8 +98,23 @@ function MessageStatusCheck({ status }: { status: string }) {
 }
 
 // ─── Lazy media ────────
+function highlightText(text: string, query?: string): React.ReactNode {
+    if (!query || !query.trim()) return text;
+    const q = query.trim();
+    const regex = new RegExp(`(${q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'gi');
+    const segments = text.split(regex);
+    if (segments.length === 1) return text;
+    return segments.map((seg, i) =>
+        seg.toLowerCase() === q.toLowerCase() ? (
+            <mark key={i} className="bg-amber-300 dark:bg-amber-500/80 text-black dark:text-white rounded-xs px-0.5">
+                {seg}
+            </mark>
+        ) : seg
+    );
+}
+
 // ─── Helper for rendering text with links and @mentions ───
-function renderMessageContent(content: string | null | undefined, contactMap?: Record<string, string>) {
+function renderMessageContent(content: string | null | undefined, contactMap?: Record<string, string>, highlightQuery?: string) {
     if (!content) return null;
 
     // Build pattern for URLs and @mentions (digits or known contact names)
@@ -122,7 +140,7 @@ function renderMessageContent(content: string | null | undefined, contactMap?: R
     while ((match = tokenRegex.exec(content)) !== null) {
         const matchIndex = match.index;
         if (matchIndex > lastIndex) {
-            parts.push(content.substring(lastIndex, matchIndex));
+            parts.push(highlightText(content.substring(lastIndex, matchIndex), highlightQuery));
         }
 
         if (match[1]) {
@@ -176,7 +194,7 @@ function renderMessageContent(content: string | null | undefined, contactMap?: R
     }
 
     if (lastIndex < content.length) {
-        parts.push(content.substring(lastIndex));
+        parts.push(highlightText(content.substring(lastIndex), highlightQuery));
     }
 
     return parts;
@@ -404,12 +422,16 @@ function ContextMenu({
     state,
     onClose,
     onReply,
-    onDelete
+    onDelete,
+    onTogglePin,
+    isPinned
 }: {
     state: ContextMenuState;
     onClose: () => void;
     onReply: (msg: Message) => void;
     onDelete: (msg: Message) => void;
+    onTogglePin: (msg: Message) => void;
+    isPinned: boolean;
 }) {
     const ref = useRef<HTMLDivElement>(null);
     useEffect(() => {
@@ -422,6 +444,7 @@ function ContextMenu({
 
     const items = [
         { label: "Responder", icon: CornerUpLeft, action: () => { onReply(state.msg); onClose(); } },
+        { label: isPinned ? "Desafixar mensagem" : "Fixar mensagem", icon: Pin, action: () => { onTogglePin(state.msg); onClose(); } },
         { label: "Copiar texto", icon: Copy, action: () => { navigator.clipboard.writeText(state.msg.content || "").then(() => toast.success("Copiado")).catch(() => {}); onClose(); } },
         { label: "Excluir", icon: Trash2, action: () => { onDelete(state.msg); onClose(); }, dangerous: true },
         { label: "Informações", icon: Info, action: () => { toast.info(`Status: ${state.msg.status}\nHorário: ${new Date(state.msg.timestamp).toLocaleString("pt-BR")}`); onClose(); } },
@@ -480,6 +503,28 @@ function playNotificationChime() {
         osc.start(ctx.currentTime);
         osc.stop(ctx.currentTime + 0.25);
     } catch {}
+}
+
+function showDesktopNotification(title: string, body: string, icon?: string) {
+    if (typeof window === "undefined" || !("Notification" in window)) return;
+    if (Notification.permission === "granted") {
+        try {
+            const n = new Notification(title, {
+                body,
+                icon: icon || "/favicon.ico",
+                badge: "/favicon.ico",
+                tag: "zapflow-msg"
+            });
+            n.onclick = () => {
+                window.focus();
+                n.close();
+            };
+        } catch {}
+    } else if (Notification.permission === "default") {
+        try {
+            Notification.requestPermission();
+        } catch {}
+    }
 }
 
 // ─── Isolated Chat Input Bar (Local state = 120 FPS typing with zero message re-renders) ───
@@ -1067,8 +1112,103 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
     // Reply state
     const [replyingTo, setReplyingTo] = useState<Message | null>(null);
 
+    // Media preview modal before sending
+    const [previewFile, setPreviewFile] = useState<{
+        file: File;
+        type: string;
+        previewUrl: string;
+        caption: string;
+    } | null>(null);
+
     // Context menu state
     const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
+
+    // In-chat message search (WhatsApp Web style)
+    const [isSearching, setIsSearching] = useState(false);
+    const [searchQuery, setSearchQuery] = useState("");
+    const [searchMatchIdx, setSearchMatchIdx] = useState(0);
+    const searchInputRef = useRef<HTMLInputElement>(null);
+
+    const searchMatches = useMemo(() => {
+        const q = searchQuery.trim().toLowerCase();
+        if (!q) return [];
+        return messages.filter(m => (m.content && m.content.toLowerCase().includes(q)) || (m.pushName && m.pushName.toLowerCase().includes(q)));
+    }, [messages, searchQuery]);
+
+    const scrollToSearchMatch = useCallback((msg: Message) => {
+        const target = document.getElementById(`msg-${msg.keyId}`);
+        if (target) {
+            target.scrollIntoView({ behavior: "smooth", block: "center" });
+            target.classList.add("ring-2", "ring-amber-500", "rounded-xl", "transition-all", "duration-300");
+            setTimeout(() => {
+                target.classList.remove("ring-2", "ring-amber-500");
+            }, 1800);
+        }
+    }, []);
+
+    const handleNextSearchMatch = useCallback(() => {
+        if (searchMatches.length === 0) return;
+        const nextIdx = (searchMatchIdx + 1) % searchMatches.length;
+        setSearchMatchIdx(nextIdx);
+        scrollToSearchMatch(searchMatches[nextIdx]);
+    }, [searchMatches, searchMatchIdx, scrollToSearchMatch]);
+
+    const handlePrevSearchMatch = useCallback(() => {
+        if (searchMatches.length === 0) return;
+        const prevIdx = (searchMatchIdx - 1 + searchMatches.length) % searchMatches.length;
+        setSearchMatchIdx(prevIdx);
+        scrollToSearchMatch(searchMatches[prevIdx]);
+    }, [searchMatches, searchMatchIdx, scrollToSearchMatch]);
+
+    // Keyboard shortcut (Ctrl+F) to toggle search
+    useEffect(() => {
+        const handleKeyDown = (e: KeyboardEvent) => {
+            if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "f") {
+                e.preventDefault();
+                setIsSearching(true);
+                setTimeout(() => searchInputRef.current?.focus(), 50);
+            }
+        };
+        window.addEventListener("keydown", handleKeyDown);
+        return () => window.removeEventListener("keydown", handleKeyDown);
+    }, []);
+
+    // Pinned Message state (persisted per sessionId:jid in localStorage)
+    const [pinnedMessageId, setPinnedMessageId] = useState<string | null>(null);
+
+    useEffect(() => {
+        if (typeof window === "undefined") return;
+        try {
+            const saved = localStorage.getItem(`zapflow_pinned_msg_${sessionId}_${jid}`);
+            setPinnedMessageId(saved || null);
+        } catch {}
+    }, [sessionId, jid]);
+
+    const pinnedMessage = useMemo(() => {
+        if (!pinnedMessageId) return null;
+        return messages.find(m => m.keyId === pinnedMessageId) || null;
+    }, [messages, pinnedMessageId]);
+
+    const handleTogglePin = useCallback((msg: Message) => {
+        setPinnedMessageId(prev => {
+            const isCurrentlyPinned = prev === msg.keyId;
+            const next = isCurrentlyPinned ? null : msg.keyId;
+            try {
+                if (next) localStorage.setItem(`zapflow_pinned_msg_${sessionId}_${jid}`, next);
+                else localStorage.removeItem(`zapflow_pinned_msg_${sessionId}_${jid}`);
+            } catch {}
+            toast.success(isCurrentlyPinned ? "Mensagem desafixada" : "Mensagem fixada no topo!");
+            return next;
+        });
+    }, [sessionId, jid]);
+
+    const handleUnpin = useCallback(() => {
+        setPinnedMessageId(null);
+        try {
+            localStorage.removeItem(`zapflow_pinned_msg_${sessionId}_${jid}`);
+        } catch {}
+        toast.success("Mensagem desafixada");
+    }, [sessionId, jid]);
 
     // Close Lightbox on ESC
     useEffect(() => {
@@ -1080,6 +1220,13 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
         window.addEventListener("keydown", handleKeyDown);
         return () => window.removeEventListener("keydown", handleKeyDown);
     }, [lightboxMedia]);
+
+    // Request desktop notifications permission quietly
+    useEffect(() => {
+        if (typeof window !== "undefined" && "Notification" in window && Notification.permission === "default") {
+            Notification.requestPermission().catch(() => {});
+        }
+    }, []);
 
     const { getSocket, joinSession } = useSocket();
     const getDateLabel = useDateLabel();
@@ -1166,10 +1313,18 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
                 const relevant = newMessages.filter(m => m.remoteJid === normalizedJid || prev.some(p => p.remoteJid === m.remoteJid));
                 if (relevant.length === 0) return prev;
 
-                // Play chime if there are incoming messages from someone else
-                const incomingFromOthers = relevant.some(m => !m.fromMe && !m.keyId.startsWith("temp-"));
-                if (incomingFromOthers) {
+                // Play chime and desktop notification if there are incoming messages from someone else
+                const incomingFromOthers = relevant.filter(m => !m.fromMe && !m.keyId.startsWith("temp-"));
+                if (incomingFromOthers.length > 0) {
                     playNotificationChime();
+                    if (typeof document !== "undefined" && document.hidden) {
+                        const lastMsg = incomingFromOthers[incomingFromOthers.length - 1];
+                        const senderName = lastMsg.pushName || name || "WhatsApp";
+                        showDesktopNotification(
+                            isGroup ? `${senderName} (${name || "Grupo"})` : senderName,
+                            lastMsg.content || (lastMsg.type === 'IMAGE' ? "📷 Foto" : "📎 Arquivo")
+                        );
+                    }
                 }
 
                 // Remove optimistic temp- messages that match incoming messages fromMe
@@ -1318,7 +1473,7 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
         return () => window.removeEventListener("keydown", handler);
     }, [replyingTo]);
 
-    const processFileUpload = async (file: File, explicitType?: string) => {
+    const processFileUpload = async (file: File, explicitType?: string, caption?: string) => {
         const formData = new FormData();
         formData.append("file", file);
         let type = explicitType;
@@ -1331,6 +1486,7 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
         formData.append("type", type);
         formData.append("sessionId", sessionId);
         formData.append("jid", jid);
+        if (caption) formData.append("caption", caption);
         try {
             toast.info(`Enviando ${file.name}...`);
             await sendMediaMessage(formData);
@@ -1339,6 +1495,45 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
         } catch (error: any) {
             toast.error(error.message || "Falha ao enviar a mídia");
         }
+    };
+
+    const initiateFilePreview = (file: File, explicitType?: string) => {
+        let type = explicitType;
+        if (!type || type === '*') {
+            if (file.type.startsWith('image/')) type = 'image';
+            else if (file.type.startsWith('video/')) type = 'video';
+            else if (file.type.startsWith('audio/')) type = 'audio';
+            else type = 'document';
+        }
+        const previewUrl = URL.createObjectURL(file);
+        setPreviewFile({
+            file,
+            type: type || 'document',
+            previewUrl,
+            caption: ""
+        });
+    };
+
+    const handleSendPreviewFile = async () => {
+        if (!previewFile) return;
+        const { file, type, caption } = previewFile;
+        if (previewFile.previewUrl) URL.revokeObjectURL(previewFile.previewUrl);
+        setPreviewFile(null);
+        await processFileUpload(file, type, caption);
+    };
+
+    const handleCancelPreviewFile = () => {
+        if (previewFile?.previewUrl) {
+            URL.revokeObjectURL(previewFile.previewUrl);
+        }
+        setPreviewFile(null);
+    };
+
+    const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0];
+        if (!file) return;
+        initiateFilePreview(file, uploadType);
+        if (fileInputRef.current) fileInputRef.current.value = "";
     };
 
     const handleSendAudio = async (blob: Blob, mimeType: string) => {
@@ -1383,13 +1578,6 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
             toast.error(error?.message || "Falha ao enviar áudio");
             setMessages(prev => prev.map(m => m.keyId === tempKeyId ? { ...m, status: "FAILED" } : m));
         }
-    };
-
-    const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-        const file = e.target.files?.[0];
-        if (!file) return;
-        await processFileUpload(file, uploadType);
-        if (fileInputRef.current) fileInputRef.current.value = "";
     };
 
     const triggerUpload = (type: string) => {
@@ -1502,7 +1690,7 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
                 e.preventDefault();
                 setIsDragging(false);
                 const f = e.dataTransfer.files?.[0];
-                if (f) processFileUpload(f);
+                if (f) initiateFilePreview(f);
             }}
         >
             {/* Context menu */}
@@ -1512,6 +1700,8 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
                     onClose={() => setContextMenu(null)}
                     onReply={(msg) => { setReplyingTo(msg); scrollToBottom(true); }}
                     onDelete={(msg) => setDeleteConfirmMsg(msg)}
+                    onTogglePin={handleTogglePin}
+                    isPinned={pinnedMessageId === contextMenu.msg.keyId}
                 />
             )}
 
@@ -1602,7 +1792,23 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
 
                 {/* Header right icons */}
                 <div className="flex items-center gap-1 text-[#54656f] dark:text-[#aebac1]">
-                    <Button variant="ghost" size="icon" className="h-9 w-9 rounded-full hover:bg-black/5 dark:hover:bg-white/10" title="Pesquisar">
+                    <Button
+                        variant="ghost"
+                        size="icon"
+                        className={cn(
+                            "h-9 w-9 rounded-full hover:bg-black/5 dark:hover:bg-white/10 cursor-pointer",
+                            isSearching && "bg-[#00a884]/15 text-[#00a884]"
+                        )}
+                        title="Pesquisar mensagens (Ctrl+F)"
+                        onClick={() => {
+                            setIsSearching(prev => {
+                                const next = !prev;
+                                if (next) setTimeout(() => searchInputRef.current?.focus(), 50);
+                                else setSearchQuery("");
+                                return next;
+                            });
+                        }}
+                    >
                         <Search className="h-4.5 w-4.5" />
                     </Button>
                     <Popover>
@@ -1645,6 +1851,115 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
                     </Popover>
                 </div>
             </div>
+
+            {/* In-chat Search Bar (WhatsApp Web style) */}
+            {isSearching && (
+                <div className="shrink-0 px-4 py-2 bg-white dark:bg-[#111b21] border-b border-border/20 flex items-center gap-2 z-20 shadow-xs animate-in slide-in-from-top-2 duration-150 select-none">
+                    <Search className="h-4 w-4 text-[#00a884] shrink-0" />
+                    <input
+                        ref={searchInputRef}
+                        type="text"
+                        value={searchQuery}
+                        onChange={(e) => {
+                            setSearchQuery(e.target.value);
+                            setSearchMatchIdx(0);
+                        }}
+                        onKeyDown={(e) => {
+                            if (e.key === "Enter") {
+                                e.preventDefault();
+                                if (e.shiftKey) handlePrevSearchMatch();
+                                else handleNextSearchMatch();
+                            } else if (e.key === "Escape") {
+                                e.preventDefault();
+                                setIsSearching(false);
+                                setSearchQuery("");
+                            }
+                        }}
+                        placeholder="Pesquisar mensagens na conversa..."
+                        className="flex-1 bg-transparent text-sm text-foreground placeholder:text-muted-foreground outline-none"
+                        autoFocus
+                    />
+                    {searchQuery.trim() && (
+                        <span className="text-xs text-muted-foreground tabular-nums select-none shrink-0 font-medium px-2 py-0.5 rounded-full bg-black/5 dark:bg-white/10">
+                            {searchMatches.length > 0 ? `${searchMatchIdx + 1} de ${searchMatches.length}` : "0 encontrados"}
+                        </span>
+                    )}
+                    <div className="flex items-center gap-0.5">
+                        <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-8 w-8 rounded-full text-muted-foreground hover:text-foreground cursor-pointer"
+                            disabled={searchMatches.length === 0}
+                            onClick={handlePrevSearchMatch}
+                            title="Anterior (Shift+Enter)"
+                        >
+                            <ChevronUp className="h-4 w-4" />
+                        </Button>
+                        <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-8 w-8 rounded-full text-muted-foreground hover:text-foreground cursor-pointer"
+                            disabled={searchMatches.length === 0}
+                            onClick={handleNextSearchMatch}
+                            title="Próxima (Enter)"
+                        >
+                            <ChevronDown className="h-4 w-4" />
+                        </Button>
+                        <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-8 w-8 rounded-full text-muted-foreground hover:text-foreground cursor-pointer"
+                            onClick={() => {
+                                setIsSearching(false);
+                                setSearchQuery("");
+                            }}
+                            title="Fechar busca (Esc)"
+                        >
+                            <X className="h-4 w-4" />
+                        </Button>
+                    </div>
+                </div>
+            )}
+
+            {/* WhatsApp Pinned Message Banner */}
+            {pinnedMessage && (
+                <div
+                    onClick={() => {
+                        const target = document.getElementById(`msg-${pinnedMessage.keyId}`);
+                        if (target) {
+                            target.scrollIntoView({ behavior: "smooth", block: "center" });
+                            target.classList.add("bg-[#00a884]/20", "transition-colors", "duration-500");
+                            setTimeout(() => target.classList.remove("bg-[#00a884]/20"), 1500);
+                        }
+                    }}
+                    className="shrink-0 px-4 py-2 bg-white/95 dark:bg-[#182229]/95 backdrop-blur-sm border-b border-border/20 flex items-center justify-between gap-3 z-15 cursor-pointer shadow-xs select-none hover:bg-black/5 dark:hover:bg-white/5 transition-colors animate-in slide-in-from-top-1 duration-150"
+                >
+                    <div className="flex items-center gap-2.5 min-w-0">
+                        <div className="h-6 w-6 rounded-full bg-[#00a884]/15 flex items-center justify-center shrink-0 text-[#00a884]">
+                            <Pin className="h-3.5 w-3.5 rotate-45 fill-current" />
+                        </div>
+                        <div className="flex flex-col min-w-0">
+                            <span className="text-[11px] font-semibold text-[#00a884] dark:text-[#25d366]">
+                                Mensagem fixada
+                            </span>
+                            <p className="text-xs text-foreground/90 truncate max-w-lg">
+                                {pinnedMessage.content || (pinnedMessage.type === 'IMAGE' ? "Foto" : "Mídia")}
+                            </p>
+                        </div>
+                    </div>
+                    <button
+                        type="button"
+                        onClick={(e) => {
+                            e.stopPropagation();
+                            handleUnpin();
+                        }}
+                        className="p-1 rounded-full text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/10 cursor-pointer"
+                        title="Desafixar mensagem"
+                    >
+                        <X className="h-3.5 w-3.5" />
+                    </button>
+                </div>
+            )}
 
             {/* WhatsApp Chat Wallpaper & Message Stream */}
             <div
@@ -1911,7 +2226,7 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
                                         {/* Text content with mentions & Timestamp + status checks */}
                                         <div className="flex flex-wrap items-end justify-end gap-x-2 gap-y-0.5">
                                             <span className="flex-1 break-words whitespace-pre-wrap text-[14.2px]">
-                                                {renderMessageContent(msg.content, contactMap)}
+                                                {renderMessageContent(msg.content, contactMap, searchQuery)}
                                             </span>
                                             <div className="inline-flex items-center gap-1 shrink-0 ml-auto select-none pt-0.5">
                                                 <span className="text-[11px] leading-none text-[#667781] dark:text-[#8696a0]">
@@ -2056,6 +2371,81 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
                             {renderMessageContent(lightboxMedia.caption, contactMap)}
                         </div>
                     ) : <div className="h-6" />}
+                </div>
+            )}
+
+            {/* WhatsApp Web Style Media Preview Modal before Sending */}
+            {previewFile && (
+                <div className="fixed inset-0 z-[99999] bg-black/90 backdrop-blur-md flex flex-col justify-between p-4 sm:p-6 animate-in fade-in duration-150 select-none">
+                    {/* Top bar with file name and close button */}
+                    <div className="w-full flex items-center justify-between z-10">
+                        <span className="text-white/80 text-xs font-medium truncate max-w-md">
+                            {previewFile.file.name} ({(previewFile.file.size / (1024 * 1024)).toFixed(2)} MB)
+                        </span>
+                        <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-9 w-9 rounded-full text-white/80 hover:text-white hover:bg-white/10 cursor-pointer"
+                            onClick={handleCancelPreviewFile}
+                            title="Cancelar (Esc)"
+                        >
+                            <X className="h-5 w-5" />
+                        </Button>
+                    </div>
+
+                    {/* Media Preview centered */}
+                    <div className="flex-1 flex items-center justify-center p-4 max-h-[70vh] overflow-hidden">
+                        {previewFile.type === 'image' && (
+                            <img
+                                src={previewFile.previewUrl}
+                                alt="Pré-visualização"
+                                className="max-w-full max-h-[65vh] object-contain rounded-xl shadow-2xl"
+                            />
+                        )}
+                        {previewFile.type === 'video' && (
+                            <video
+                                src={previewFile.previewUrl}
+                                controls
+                                className="max-w-full max-h-[65vh] rounded-xl shadow-2xl"
+                            />
+                        )}
+                        {previewFile.type !== 'image' && previewFile.type !== 'video' && (
+                            <div className="flex flex-col items-center gap-3 p-8 rounded-2xl bg-white/10 text-white">
+                                <FileText className="h-16 w-16 text-[#00a884]" />
+                                <p className="font-semibold text-base">{previewFile.file.name}</p>
+                                <p className="text-xs text-white/70">{(previewFile.file.size / 1024).toFixed(1)} KB</p>
+                            </div>
+                        )}
+                    </div>
+
+                    {/* Bottom Caption Input & Send button */}
+                    <div className="w-full max-w-2xl mx-auto flex items-center gap-2 bg-[#2a3942] rounded-2xl p-1.5 shadow-2xl">
+                        <input
+                            type="text"
+                            value={previewFile.caption}
+                            onChange={(e) => setPreviewFile(prev => prev ? { ...prev, caption: e.target.value } : null)}
+                            onKeyDown={(e) => {
+                                if (e.key === "Enter") {
+                                    e.preventDefault();
+                                    handleSendPreviewFile();
+                                } else if (e.key === "Escape") {
+                                    e.preventDefault();
+                                    handleCancelPreviewFile();
+                                }
+                            }}
+                            placeholder="Adicione uma legenda..."
+                            className="flex-1 bg-transparent px-3 py-2 text-sm text-white placeholder:text-white/50 outline-none"
+                            autoFocus
+                        />
+                        <button
+                            type="button"
+                            onClick={handleSendPreviewFile}
+                            className="h-10 w-10 rounded-full bg-[#00a884] hover:bg-[#00a884]/90 text-white flex items-center justify-center shrink-0 shadow-md cursor-pointer transition-transform active:scale-95"
+                            title="Enviar (Enter)"
+                        >
+                            <Send className="h-5 w-5 fill-current ml-0.5" />
+                        </button>
+                    </div>
                 </div>
             )}
         </div>

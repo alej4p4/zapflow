@@ -50,6 +50,7 @@ export interface ChatContact {
         type: string;
         fromMe?: boolean;
     };
+    unreadCount?: number;
 }
 
 interface LabelData {
@@ -428,7 +429,7 @@ export function ChatList({ sessionId, onSelectChat, selectedJid }: ChatListProps
     const [chats, setChats] = useState<ChatContact[]>(initialCached);
     const [loading, setLoading] = useState(initialCached.length === 0);
     const [searchInput, setSearchInput] = useState("");
-    const [filterType, setFilterType] = useState<"all" | "contacts" | "groups" | "pinned">("all");
+    const [filterType, setFilterType] = useState<"all" | "unread" | "contacts" | "groups" | "pinned">("all");
     const [isNewChatOpen, setIsNewChatOpen] = useState(false);
     const [newChatNumber, setNewChatNumber] = useState("");
     const [hasMore, setHasMore] = useState(true);
@@ -666,6 +667,8 @@ export function ChatList({ sessionId, onSelectChat, selectedJid }: ChatListProps
     }, [sessionId]);
 
     // ─── INSTANT SEARCH & SORTING (0ms delay, no skeleton wipe, unlimited pinning) ───
+    const totalUnreadCount = useMemo(() => chats.filter(c => (c.unreadCount || 0) > 0).length, [chats]);
+
     const filteredAndSortedChats = useMemo(() => {
         let list = chats;
 
@@ -695,7 +698,9 @@ export function ChatList({ sessionId, onSelectChat, selectedJid }: ChatListProps
         }
 
         // 2. Filter buttons: Tudo, Contatos, Grupos, Fixados
-        if (filterType === "contacts") {
+        if (filterType === "unread") {
+            list = list.filter(c => (c.unreadCount || 0) > 0);
+        } else if (filterType === "contacts") {
             list = list.filter(c => !c.jid.endsWith("@g.us"));
         } else if (filterType === "groups") {
             list = list.filter(c => c.jid.endsWith("@g.us"));
@@ -833,6 +838,25 @@ export function ChatList({ sessionId, onSelectChat, selectedJid }: ChatListProps
                         )}
                     >
                         Tudo
+                    </button>
+                    <button
+                        onClick={() => setFilterType("unread")}
+                        className={cn(
+                            "px-3 py-1 rounded-full text-xs font-medium transition-colors shrink-0 flex items-center gap-1.5 cursor-pointer",
+                            filterType === "unread"
+                                ? "bg-[#00a884] text-white"
+                                : "bg-muted/70 hover:bg-muted text-muted-foreground"
+                        )}
+                    >
+                        <span>Não lidas</span>
+                        {totalUnreadCount > 0 && (
+                            <span className={cn(
+                                "px-1.5 py-0.2 rounded-full text-[10px] font-bold tabular-nums",
+                                filterType === "unread" ? "bg-white text-[#00a884]" : "bg-[#00a884] text-white"
+                            )}>
+                                {totalUnreadCount}
+                            </span>
+                        )}
                     </button>
                     <button
                         onClick={() => setFilterType("contacts")}
