@@ -161,8 +161,26 @@ async function executeBroadcast(logId: string): Promise<void> {
     let sent = log.recipients.filter(r => r.status === "sent").length;
     let failed = log.recipients.filter(r => r.status === "failed").length;
     const errors: { jid: string; error: string }[] = [];
-    const messageContent: AnyMessageContent = { text: log.message };
     const baseDelay = log.delay || 2000;
+
+    // Detect structured media payload (image, video, document, audio) or plain text
+    let messageTemplate = log.message;
+    let mediaPayload: { type: "image" | "video" | "document" | "audio"; mimetype: string; filename?: string; base64: string } | null = null;
+    let mediaBuffer: Buffer | null = null;
+
+    if (log.message && log.message.startsWith("{") && log.message.includes('"media"')) {
+        try {
+            const parsed = JSON.parse(log.message);
+            if (parsed.media && parsed.media.base64) {
+                mediaPayload = parsed.media;
+                messageTemplate = parsed.caption || "";
+                const cleanBase64 = parsed.media.base64.replace(/^data:[^;]+;base64,/, "");
+                mediaBuffer = Buffer.from(cleanBase64, "base64");
+            }
+        } catch {
+            // Fallback plain text
+        }
+    }
 
     await prisma.broadcastLog.update({
         where: { id: logId },
@@ -218,8 +236,8 @@ async function executeBroadcast(logId: string): Promise<void> {
                 const currentHour = new Date().getHours();
                 const saudacao = currentHour >= 5 && currentHour < 12 ? "Bom dia" : currentHour >= 12 && currentHour < 18 ? "Boa tarde" : "Boa noite";
 
-                // Substituição das variáveis dinâmicas
-                const personalizedText = log.message
+                // Substituição das variáveis dinâmicas na legenda ou texto da mensagem
+                const personalizedText = messageTemplate
                     .replace(/\{nome\}/gi, contactName || "Amigo(a)")
                     .replace(/\{primeiro_nome\}/gi, firstName || contactName || "Amigo(a)")
                     .replace(/\{saudacao\}/gi, saudacao)
@@ -235,8 +253,43 @@ async function executeBroadcast(logId: string): Promise<void> {
                     } catch {}
                 }
 
+                // Monta mensagem de mídia com legenda dinâmica ou texto puro
+                let contentToSend: AnyMessageContent;
+                if (mediaPayload && mediaBuffer) {
+                    const options: any = { mimetype: mediaPayload.mimetype };
+                    if (personalizedText && personalizedText.trim().length > 0) {
+                        options.caption = personalizedText;
+                    }
+
+                    if (mediaPayload.type === "image") {
+                        contentToSend = { image: mediaBuffer, ...options };
+                    } else if (mediaPayload.type === "video") {
+                        contentToSend = { video: mediaBuffer, ...options };
+                    } else if (mediaPayload.type === "document") {
+                        contentToSend = {
+                            document: mediaBuffer,
+                            fileName: mediaPayload.filename || "documento",
+                            ...options
+                        };
+                    } else if (mediaPayload.type === "audio") {
+                        contentToSend = {
+                            audio: mediaBuffer,
+                            mimetype: mediaPayload.mimetype || "audio/mp4",
+                            ptt: false
+                        };
+                    } else {
+                        contentToSend = {
+                            document: mediaBuffer,
+                            fileName: mediaPayload.filename || "arquivo",
+                            ...options
+                        };
+                    }
+                } else {
+                    contentToSend = { text: personalizedText };
+                }
+
                 // Disparo com skipAntiSpam para não entrar na fila do antispam e não travar após 15 mensagens
-                await instance.socket!.sendMessage(target, { text: personalizedText }, { skipAntiSpam: true } as any);
+                await instance.socket!.sendMessage(target, contentToSend, { skipAntiSpam: true } as any);
 
                 const wasFailed = recipient.status === "failed";
                 sent++;

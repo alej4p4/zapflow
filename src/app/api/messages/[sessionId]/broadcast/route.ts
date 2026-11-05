@@ -8,7 +8,13 @@ import { z } from "zod";
 
 const broadcastBodySchema = z.object({
     recipients: z.array(z.string()),
-    message: z.string().min(1),
+    message: z.string().optional().default(""),
+    media: z.object({
+        base64: z.string(),
+        filename: z.string(),
+        mimetype: z.string(),
+        type: z.enum(["image", "video", "document", "audio"])
+    }).optional(),
     delay: z.number().optional(),
     scheduledAt: z.string().optional(),
     mode: z.enum(["now", "datetime", "programmed"]).optional(),
@@ -35,7 +41,12 @@ export async function POST(
             return NextResponse.json({ error: parseResult.error.flatten() }, { status: 400 });
         }
 
-        const { message, delay, scheduledAt, mode, programmedTimes, scheduledDateTimes, repeatDaily } = parseResult.data;
+        const { message, media, delay, scheduledAt, mode, programmedTimes, scheduledDateTimes, repeatDaily } = parseResult.data;
+
+        if (!message?.trim() && !media) {
+            return NextResponse.json({ status: false, message: "A mensagem ou mídia deve ser informada", error: "Empty message and media" }, { status: 400 });
+        }
+
         // Normaliza e remove duplicados (mesmo número digitado duas vezes)
         const recipients = [...new Set(parseResult.data.recipients.map(toWhatsAppJid).filter(Boolean))];
         if (recipients.length === 0) {
@@ -51,6 +62,12 @@ export async function POST(
         if (!instance?.socket) {
             return NextResponse.json({ status: false, message: "Session not ready", error: "Session not ready" }, { status: 503 });
         }
+
+        // Converte mensagem e anexo em formato estruturado transparente
+        const messageToStore = media ? JSON.stringify({
+            caption: message || "",
+            media
+        }) : (message || "");
 
         // Modo Horários Programados (ex.: 12:00, 15:00, 18:00)
         if (mode === "programmed" && programmedTimes && programmedTimes.length > 0) {
@@ -73,7 +90,7 @@ export async function POST(
                 const bLog = await prisma.broadcastLog.create({
                     data: {
                         sessionId,
-                        message,
+                        message: messageToStore,
                         total: recipients.length,
                         delay: delay || 2000,
                         status: "scheduled",
@@ -101,7 +118,7 @@ export async function POST(
         // Modo Agendamento de Data/Hora única ou Disparo Imediato
         const logData: any = {
             sessionId,
-            message,
+            message: messageToStore,
             total: recipients.length,
             delay: delay || 2000,
             recipients: {
@@ -224,4 +241,3 @@ export async function GET(
         return NextResponse.json({ status: false, message: "Failed to get broadcast status", error: "Failed to get broadcast status" }, { status: 500 });
     }
 }
-

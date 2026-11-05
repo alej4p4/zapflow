@@ -10,7 +10,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { Slider } from "@/components/ui/slider";
 import { Progress } from "@/components/ui/progress";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { RefreshCw, Send, CheckCircle2, XCircle, Radio, Clock, AlertTriangle, History, Eye, Calendar, Users, Ban, RotateCcw, Trash2, Sparkles, Plus } from "lucide-react";
+import { RefreshCw, Send, CheckCircle2, XCircle, Radio, Clock, AlertTriangle, History, Eye, Calendar, Users, Ban, RotateCcw, Trash2, Sparkles, Plus, Paperclip, FileText, Video as VideoIcon, X, File } from "lucide-react";
 import { toast } from "sonner";
 import { useSession } from "@/components/dashboard/session-provider";
 import { SessionGuard } from "@/components/dashboard/session-guard";
@@ -74,6 +74,40 @@ interface PhoneGroup {
     subject: string | null;
 }
 
+interface BroadcastAttachment {
+    name: string;
+    size: number;
+    type: "image" | "video" | "document";
+    mimetype: string;
+    base64: string;
+    previewUrl?: string;
+}
+
+function formatFileSize(bytes: number): string {
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function parseBroadcastMessage(msg: string): { text: string; media?: { type: string; filename: string; mimetype?: string } } {
+    if (msg && msg.startsWith("{") && msg.includes('"media"')) {
+        try {
+            const parsed = JSON.parse(msg);
+            if (parsed.media) {
+                return {
+                    text: parsed.caption || "",
+                    media: {
+                        type: parsed.media.type,
+                        filename: parsed.media.filename,
+                        mimetype: parsed.media.mimetype
+                    }
+                };
+            }
+        } catch {}
+    }
+    return { text: msg || "" };
+}
+
 /** Chaves de armazenamento persistente por sessão */
 const DRAFT_KEY = (sid: string) => `zapflow_broadcast_draft_${sid}`;
 const ACTIVE_KEY = (sid: string) => `zapflow_broadcast_active_${sid}`;
@@ -128,6 +162,8 @@ export default function BroadcastPage() {
     const { sessionId } = useSession();
     const [contacts, setContacts] = useState("");
     const [message, setMessage] = useState("");
+    const [attachment, setAttachment] = useState<BroadcastAttachment | null>(null);
+    const fileInputRef = useRef<HTMLInputElement>(null);
     const [delay, setDelay] = useState([500]);
     const [pickerSearch, setPickerSearch] = useState("");
     const initialCachedContacts = (sessionId ? getCachedPhoneContacts(sessionId) : null) || [];
@@ -493,15 +529,67 @@ export default function BroadcastPage() {
         toast.success("Grupos adicionados com nome aos destinatários");
     };
 
+    // Handlers para anexo de mídia / documento no disparo
+    const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0];
+        if (!file) return;
+
+        if (file.size > 25 * 1024 * 1024) {
+            toast.error("O arquivo ultrapassa o limite máximo de 25MB.");
+            if (fileInputRef.current) fileInputRef.current.value = "";
+            return;
+        }
+
+        let fileType: "image" | "video" | "document" = "document";
+        if (file.type.startsWith("image/")) {
+            fileType = "image";
+        } else if (file.type.startsWith("video/")) {
+            fileType = "video";
+        }
+
+        const reader = new FileReader();
+        reader.onload = () => {
+            const base64 = reader.result as string;
+            const previewUrl = file.type.startsWith("image/") ? URL.createObjectURL(file) : undefined;
+            setAttachment({
+                name: file.name,
+                size: file.size,
+                type: fileType,
+                mimetype: file.type || (fileType === "document" ? "application/pdf" : "application/octet-stream"),
+                base64,
+                previewUrl
+            });
+            toast.success(`Arquivo "${file.name}" anexado com sucesso!`);
+        };
+        reader.readAsDataURL(file);
+    };
+
+    const removeAttachment = () => {
+        if (attachment?.previewUrl) {
+            try { URL.revokeObjectURL(attachment.previewUrl); } catch {}
+        }
+        setAttachment(null);
+        if (fileInputRef.current) fileInputRef.current.value = "";
+    };
+
     // Resolve nomes de grupos e contatos para JIDs ou números crus na lista
     const resolveRecipientNames = useCallback((text: string) => {
         if (!text || (!groups.length && !pickerContacts.length)) return text;
-        const groupMap = new Map(groups.map(g => [g.jid, g.subject]));
+        const groupMap = new Map<string, string>();
+        groups.forEach(g => {
+            if (g.jid) {
+                groupMap.set(g.jid.trim().toLowerCase(), g.subject || "Grupo");
+                groupMap.set(g.jid.trim(), g.subject || "Grupo");
+            }
+        });
+
         const contactMap = new Map<string, string>();
         pickerContacts.forEach(c => {
             const num = contactNumber(c);
             const lbl = contactLabel(c);
-            if (num && lbl) contactMap.set(num, lbl);
+            if (num && lbl) {
+                contactMap.set(num.trim(), lbl);
+            }
         });
 
         const lines = text.split("\n");
@@ -512,18 +600,19 @@ export default function BroadcastPage() {
             if (trimmed.includes("(") || trimmed.includes("<")) return line;
 
             // Grupo
-            if (groupMap.has(trimmed)) {
+            const lower = trimmed.toLowerCase();
+            if (groupMap.has(lower)) {
                 changed = true;
-                return `${groupMap.get(trimmed) || "Grupo"} (${trimmed})`;
+                return `${groupMap.get(lower) || "Grupo"} (${trimmed})`;
             }
 
             // Contato
             const digits = trimmed.replace(/\D/g, "");
             const clean11 = digits.startsWith("55") && digits.length >= 12 ? digits.slice(2) : digits;
-            if (contactMap.has(digits)) {
+            if (digits && contactMap.has(digits)) {
                 changed = true;
                 return `${contactMap.get(digits)} (${digits})`;
-            } else if (contactMap.has(clean11)) {
+            } else if (clean11 && contactMap.has(clean11)) {
                 changed = true;
                 return `${contactMap.get(clean11)} (${digits})`;
             }
@@ -536,10 +625,10 @@ export default function BroadcastPage() {
 
     // Auto-resolve nomes ao carregar grupos e contatos
     useEffect(() => {
-        if (groups.length > 0) {
+        if (groups.length > 0 || pickerContacts.length > 0) {
             setContacts(prev => resolveRecipientNames(prev));
         }
-    }, [groups, resolveRecipientNames]);
+    }, [groups, pickerContacts, resolveRecipientNames]);
 
     const handleReuseLastRecipients = () => {
         try {
@@ -647,6 +736,7 @@ export default function BroadcastPage() {
     const handleClearForm = () => {
         setContacts("");
         setMessage("");
+        removeAttachment();
         setPickerSearch("");
         setSelectedContacts([]);
         setSelectedGroups([]);
@@ -658,7 +748,9 @@ export default function BroadcastPage() {
 
     const handleSend = async () => {
         if (!sessionId) return toast.error("Nenhuma sessão ativa encontrada");
-        if (!message.trim()) return toast.error("A mensagem não pode ficar vazia");
+        if (!attachment && !message.trim()) {
+            return toast.error("Digite uma mensagem ou anexe uma mídia/documento para o disparo");
+        }
 
         const recipients = contacts
             .split(/[\n,]+/)
@@ -673,10 +765,19 @@ export default function BroadcastPage() {
 
         let bodyPayload: any = {
             recipients,
-            message,
+            message: message.trim(),
             delay: delay[0],
             mode: scheduleMode
         };
+
+        if (attachment) {
+            bodyPayload.media = {
+                base64: attachment.base64,
+                filename: attachment.name,
+                mimetype: attachment.mimetype,
+                type: attachment.type
+            };
+        }
 
         if (scheduleMode === "datetime") {
             if (!scheduledAt) {
@@ -720,6 +821,7 @@ export default function BroadcastPage() {
                     toast.success(`Próximo disparo enfileirado com sucesso para ${recipients.length} destinatários! O processo atual continuará até o fim.`);
                     setContacts("");
                     setMessage("");
+                    removeAttachment();
                     fetchHistory();
                 } else {
                     const newProgress: BroadcastProgress = {
@@ -738,6 +840,7 @@ export default function BroadcastPage() {
                     toast.info(`Disparo iniciado para ${recipients.length} destinatários na fila sequencial...`);
                     setContacts("");
                     setMessage("");
+                    removeAttachment();
                 }
             } else {
                 toast.error(data.message || "Não foi possível iniciar o disparo");
@@ -896,6 +999,14 @@ export default function BroadcastPage() {
                                             style={{ fieldSizing: "fixed", maxHeight: "220px", height: "180px", overflowY: "auto" }}
                                             value={contacts}
                                             onChange={e => setContacts(e.target.value)}
+                                            onPaste={() => {
+                                                setTimeout(() => {
+                                                    setContacts(prev => resolveRecipientNames(prev));
+                                                }, 120);
+                                            }}
+                                            onBlur={() => {
+                                                setContacts(prev => resolveRecipientNames(prev));
+                                            }}
                                             disabled={isSubmitting}
                                         />
                                         <div className="flex items-center justify-between text-xs text-muted-foreground">
@@ -1031,13 +1142,90 @@ export default function BroadcastPage() {
 
                             {/* Message Card */}
                             <Card>
-                                <CardHeader>
-                                    <CardTitle>Conteúdo da mensagem</CardTitle>
+                                <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-3">
+                                    <div>
+                                        <CardTitle className="flex items-center gap-2">
+                                            <span>Conteúdo da mensagem</span>
+                                            {attachment && (
+                                                <span className="text-[11px] font-medium px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-600 border border-emerald-500/20">
+                                                    Com anexo
+                                                </span>
+                                            )}
+                                        </CardTitle>
+                                        <CardDescription>
+                                            {attachment 
+                                                ? "Texto que acompanhará o arquivo anexado como legenda." 
+                                                : "Mensagem de texto com suporte a variáveis personalizadas."}
+                                        </CardDescription>
+                                    </div>
+                                    <div>
+                                        <input
+                                            ref={fileInputRef}
+                                            type="file"
+                                            className="hidden"
+                                            accept="image/*,video/*,application/pdf,.xlsx,.xls,.csv,.doc,.docx,.txt"
+                                            onChange={handleFileSelect}
+                                            disabled={isSubmitting}
+                                        />
+                                        <Button
+                                            type="button"
+                                            variant="outline"
+                                            size="sm"
+                                            onClick={() => fileInputRef.current?.click()}
+                                            disabled={isSubmitting}
+                                            className="text-xs h-8 border-dashed hover:border-primary hover:text-primary gap-1.5 cursor-pointer"
+                                        >
+                                            <Paperclip className="h-3.5 w-3.5 text-primary" />
+                                            {attachment ? "Trocar arquivo" : "Anexar mídia / arquivo"}
+                                        </Button>
+                                    </div>
                                 </CardHeader>
                                 <CardContent className="space-y-4">
+                                    {/* Card de visualização do anexo selecionado */}
+                                    {attachment && (
+                                        <div className="flex items-center justify-between p-2.5 rounded-lg border bg-primary/5 border-primary/20 transition-all">
+                                            <div className="flex items-center gap-3 min-w-0">
+                                                {attachment.type === "image" && attachment.previewUrl ? (
+                                                    <img
+                                                        src={attachment.previewUrl}
+                                                        alt="Preview"
+                                                        className="h-12 w-12 rounded object-cover border shrink-0 bg-background"
+                                                    />
+                                                ) : attachment.type === "video" ? (
+                                                    <div className="h-12 w-12 rounded bg-purple-500/10 text-purple-600 flex items-center justify-center shrink-0 border border-purple-500/20">
+                                                        <VideoIcon className="h-6 w-6" />
+                                                    </div>
+                                                ) : (
+                                                    <div className="h-12 w-12 rounded bg-amber-500/10 text-amber-600 flex items-center justify-center shrink-0 border border-amber-500/20">
+                                                        <FileText className="h-6 w-6" />
+                                                    </div>
+                                                )}
+                                                <div className="min-w-0">
+                                                    <p className="text-sm font-semibold truncate text-foreground">{attachment.name}</p>
+                                                    <p className="text-xs text-muted-foreground">
+                                                        {formatFileSize(attachment.size)} • <span className="uppercase font-medium text-primary">{attachment.type}</span>
+                                                    </p>
+                                                </div>
+                                            </div>
+                                            <Button
+                                                type="button"
+                                                variant="ghost"
+                                                size="icon"
+                                                onClick={removeAttachment}
+                                                disabled={isSubmitting}
+                                                className="h-8 w-8 text-muted-foreground hover:text-destructive shrink-0 cursor-pointer"
+                                                title="Remover arquivo anexado"
+                                            >
+                                                <X className="h-4 w-4" />
+                                            </Button>
+                                        </div>
+                                    )}
+
                                     <div className="space-y-2">
                                         <div className="flex flex-wrap items-center justify-between gap-1.5">
-                                            <Label>Mensagem</Label>
+                                            <Label>
+                                                {attachment ? "Legenda do anexo (opcional)" : "Mensagem"}
+                                            </Label>
                                             <div className="flex flex-wrap items-center gap-1.5">
                                                 <span className="text-[11px] text-muted-foreground mr-1">Variáveis:</span>
                                                 {[
@@ -1060,7 +1248,9 @@ export default function BroadcastPage() {
                                             </div>
                                         </div>
                                         <Textarea
-                                            placeholder="Ex: Olá {primeiro_nome}, {saudacao}! Tudo bem? Digite sua mensagem aqui..."
+                                            placeholder={attachment 
+                                                ? "Digite uma legenda personalizada que acompanhará a mídia (opcional)..." 
+                                                : "Ex: Olá {primeiro_nome}, {saudacao}! Tudo bem? Digite sua mensagem aqui..."}
                                             className="h-44 max-h-56 [field-sizing:fixed] overflow-y-auto text-sm resize-y"
                                             style={{ fieldSizing: "fixed", maxHeight: "220px", height: "180px", overflowY: "auto" }}
                                             value={message}
@@ -1068,7 +1258,9 @@ export default function BroadcastPage() {
                                             disabled={isSubmitting}
                                         />
                                         <p className="text-[11px] text-muted-foreground">
-                                            Dica: As variáveis são substituídas dinamicamente para cada destinatário com simulação de digitação humana para máxima segurança.
+                                            {attachment 
+                                                ? "O arquivo selecionado será disparado diretamente no WhatsApp de cada destinatário com a legenda personalizada acima."
+                                                : "Dica: As variáveis são substituídas dinamicamente para cada destinatário com simulação de digitação humana para máxima segurança."}
                                         </p>
                                     </div>
 
@@ -1492,7 +1684,20 @@ export default function BroadcastPage() {
 
                                             {/* Info */}
                                             <div className="flex-1 min-w-0">
-                                                <p className="text-sm font-medium truncate">{log.message}</p>
+                                                {(() => {
+                                                    const parsed = parseBroadcastMessage(log.message);
+                                                    return (
+                                                        <div className="flex items-center gap-1.5 truncate">
+                                                            {parsed.media && (
+                                                                <span className="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded bg-primary/10 text-primary border border-primary/20 shrink-0">
+                                                                    <Paperclip className="h-3 w-3" />
+                                                                    {parsed.media.filename || parsed.media.type}
+                                                                </span>
+                                                            )}
+                                                            <p className="text-sm font-medium truncate">{parsed.text || "(Sem legenda)"}</p>
+                                                        </div>
+                                                    );
+                                                })()}
                                                 <div className="flex items-center gap-3 text-xs text-muted-foreground mt-1">
                                                     <span className="flex items-center gap-1">
                                                         <CheckCircle2 className="h-3 w-3 text-green-500" /> {log.sent}
@@ -1603,10 +1808,30 @@ export default function BroadcastPage() {
                                     </div>
                                 </div>
 
-                                {/* Message */}
-                                <div className="bg-muted/30 rounded-lg p-3">
-                                    <p className="text-xs text-muted-foreground mb-1">Mensagem:</p>
-                                    <p className="text-sm whitespace-pre-wrap break-words">{selectedLog.message}</p>
+                                {/* Message / Media Content */}
+                                <div className="bg-muted/30 rounded-lg p-3 space-y-2">
+                                    <p className="text-xs text-muted-foreground">Conteúdo / Mensagem:</p>
+                                    {(() => {
+                                        const parsed = parseBroadcastMessage(selectedLog.message);
+                                        return (
+                                            <>
+                                                {parsed.media && (
+                                                    <div className="flex items-center gap-2 p-2 rounded-md border bg-background/60">
+                                                        <Paperclip className="h-4 w-4 text-primary shrink-0" />
+                                                        <div className="min-w-0 flex-1">
+                                                            <p className="text-xs font-semibold truncate">{parsed.media.filename}</p>
+                                                            <p className="text-[10px] text-muted-foreground uppercase">{parsed.media.type}</p>
+                                                        </div>
+                                                    </div>
+                                                )}
+                                                {parsed.text ? (
+                                                    <p className="text-sm whitespace-pre-wrap break-words">{parsed.text}</p>
+                                                ) : parsed.media ? (
+                                                    <p className="text-xs text-muted-foreground italic">(Sem legenda de texto)</p>
+                                                ) : null}
+                                            </>
+                                        );
+                                    })()}
                                 </div>
 
                                 {/* Time */}
