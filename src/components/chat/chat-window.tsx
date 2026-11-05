@@ -2623,19 +2623,24 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
             return;
         }
 
-        const validNumbers = participantsList
-            .map(p => p.phoneNumber || p.id)
-            .filter((num): num is string => Boolean(num && !num.includes("@g.us")));
+        const validRecipients = participantsList
+            .map(p => {
+                const num = p.phoneNumber || p.id;
+                if (!num || num.includes("@g.us")) return null;
+                const clean = num.replace(/\D/g, "");
+                return p.name ? `${p.name} (${clean})` : clean;
+            })
+            .filter((s): s is string => Boolean(s));
 
-        if (validNumbers.length === 0) {
+        if (validRecipients.length === 0) {
             toast.error("Nenhum número válido encontrado nos membros");
             return;
         }
 
         if (typeof window !== "undefined") {
-            sessionStorage.setItem("zapflow_broadcast_draft_recipients", JSON.stringify(validNumbers));
+            sessionStorage.setItem("zapflow_broadcast_draft_recipients", JSON.stringify(validRecipients));
         }
-        toast.success(`${validNumbers.length} membros carregados para novo disparo!`);
+        toast.success(`${validRecipients.length} membros carregados com nomes para novo disparo!`);
         router.push("/dashboard/broadcast");
     };
 

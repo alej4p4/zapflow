@@ -10,12 +10,12 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { Slider } from "@/components/ui/slider";
 import { Progress } from "@/components/ui/progress";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { RefreshCw, Send, CheckCircle2, XCircle, Radio, Clock, AlertTriangle, History, Eye, Calendar, Users, Ban, RotateCcw, Trash2 } from "lucide-react";
+import { RefreshCw, Send, CheckCircle2, XCircle, Radio, Clock, AlertTriangle, History, Eye, Calendar, Users, Ban, RotateCcw, Trash2, Sparkles, Plus } from "lucide-react";
 import { toast } from "sonner";
 import { useSession } from "@/components/dashboard/session-provider";
 import { SessionGuard } from "@/components/dashboard/session-guard";
 import { useSocket } from "@/components/chat/socket-context";
-import { normalizeSearch } from "@/lib/phone";
+import { normalizeSearch, toWhatsAppJid, extractRecipientTarget } from "@/lib/phone";
 import { fetchCachedPhoneContacts, getCachedPhoneContacts, fetchCachedGroups, getCachedGroups } from "@/lib/whatsapp-client-cache";
 
 interface BroadcastProgress {
@@ -159,7 +159,9 @@ export default function BroadcastPage() {
     const isLoadedRef = useRef(false);
     const prevSessionIdRef = useRef<string | null>(null);
 
-    // Broadcast ativo calculado
+    const [isSubmitting, setIsSubmitting] = useState(false);
+
+    // Broadcast ativo em segundo plano (calculado)
     const isBroadcasting = loading || broadcastProgress?.status === "running" || broadcastProgress?.status === "queued";
 
     // 1. Restaura rascunho e estado ativo de localStorage e sincroniza com backend
@@ -420,16 +422,22 @@ export default function BroadcastPage() {
 
     const addSelectedContacts = () => {
         setContacts(prev => {
-            const numbers = new Set(prev.split(/[\n,]+/).map(s => s.trim()).filter(Boolean));
+            const lines = prev.split(/[\n,]+/).map(s => s.trim()).filter(Boolean);
+            const existingTargets = new Set(lines.map(extractRecipientTarget));
             const selectedSet = new Set(selectedContacts);
+            const toAdd: string[] = [];
             for (const contact of pickerContacts) {
                 const number = contactNumber(contact);
-                if (number && selectedSet.has(contact.id)) numbers.add(number);
+                if (number && selectedSet.has(contact.id) && !existingTargets.has(number)) {
+                    const label = contactLabel(contact);
+                    toAdd.push(label ? `${label} (${number})` : number);
+                    existingTargets.add(number);
+                }
             }
-            return Array.from(numbers).join("\n");
+            return [...lines, ...toAdd].join("\n");
         });
         setSelectedContacts([]);
-        toast.success("Contatos adicionados aos destinatários");
+        toast.success("Contatos adicionados com nome aos destinatários");
     };
 
     // Grupos da sessão: em cache na memória (método WhatsApp Web)
@@ -469,15 +477,80 @@ export default function BroadcastPage() {
 
     const addSelectedGroups = () => {
         setContacts(prev => {
-            const numbers = new Set(prev.split(/[\n,]+/).map(s => s.trim()).filter(Boolean));
+            const lines = prev.split(/[\n,]+/).map(s => s.trim()).filter(Boolean);
+            const existingTargets = new Set(lines.map(extractRecipientTarget));
             const selectedSet = new Set(selectedGroups);
+            const toAdd: string[] = [];
             for (const group of groups) {
-                if (selectedSet.has(group.jid)) numbers.add(group.jid);
+                if (selectedSet.has(group.jid) && !existingTargets.has(group.jid)) {
+                    toAdd.push(`${group.subject || "Grupo"} (${group.jid})`);
+                    existingTargets.add(group.jid);
+                }
             }
-            return Array.from(numbers).join("\n");
+            return [...lines, ...toAdd].join("\n");
         });
         setSelectedGroups([]);
-        toast.success("Grupos adicionados aos destinatários");
+        toast.success("Grupos adicionados com nome aos destinatários");
+    };
+
+    // Resolve nomes de grupos e contatos para JIDs ou números crus na lista
+    const resolveRecipientNames = useCallback((text: string) => {
+        if (!text || (!groups.length && !pickerContacts.length)) return text;
+        const groupMap = new Map(groups.map(g => [g.jid, g.subject]));
+        const contactMap = new Map<string, string>();
+        pickerContacts.forEach(c => {
+            const num = contactNumber(c);
+            const lbl = contactLabel(c);
+            if (num && lbl) contactMap.set(num, lbl);
+        });
+
+        const lines = text.split("\n");
+        let changed = false;
+        const resolvedLines = lines.map(line => {
+            const trimmed = line.trim();
+            if (!trimmed) return line;
+            if (trimmed.includes("(") || trimmed.includes("<")) return line;
+
+            // Grupo
+            if (groupMap.has(trimmed)) {
+                changed = true;
+                return `${groupMap.get(trimmed) || "Grupo"} (${trimmed})`;
+            }
+
+            // Contato
+            const digits = trimmed.replace(/\D/g, "");
+            const clean11 = digits.startsWith("55") && digits.length >= 12 ? digits.slice(2) : digits;
+            if (contactMap.has(digits)) {
+                changed = true;
+                return `${contactMap.get(digits)} (${digits})`;
+            } else if (contactMap.has(clean11)) {
+                changed = true;
+                return `${contactMap.get(clean11)} (${digits})`;
+            }
+
+            return line;
+        });
+
+        return changed ? resolvedLines.join("\n") : text;
+    }, [groups, pickerContacts]);
+
+    // Auto-resolve nomes ao carregar grupos e contatos
+    useEffect(() => {
+        if (groups.length > 0) {
+            setContacts(prev => resolveRecipientNames(prev));
+        }
+    }, [groups, resolveRecipientNames]);
+
+    const handleReuseLastRecipients = () => {
+        try {
+            const stored = sessionStorage.getItem("zapflow_last_broadcast_recipients");
+            if (stored) {
+                setContacts(stored);
+                toast.success("Destinatários do último disparo restaurados!");
+            } else {
+                toast.info("Nenhum destinatário anterior registrado na sessão.");
+            }
+        } catch {}
     };
 
     // Open detail modal
@@ -570,11 +643,8 @@ export default function BroadcastPage() {
         }
     };
 
-    // Limpa campos do formulário conscientemente (sem perder por navegação acidental)
+    // Limpa campos do formulário conscientemente (sem afetar o disparo em processo)
     const handleClearForm = () => {
-        if (isBroadcasting) {
-            return toast.warning("Não é possível limpar enquanto um disparo estiver em andamento. Cancele o envio primeiro se desejar.");
-        }
         setContacts("");
         setMessage("");
         setPickerSearch("");
@@ -583,17 +653,19 @@ export default function BroadcastPage() {
         if (sessionId && typeof window !== "undefined") {
             localStorage.removeItem(DRAFT_KEY(sessionId));
         }
-        toast.success("Campos limpos com sucesso");
+        toast.success("Formulário limpo para configurar o próximo disparo");
     };
 
     const handleSend = async () => {
         if (!sessionId) return toast.error("Nenhuma sessão ativa encontrada");
         if (!message.trim()) return toast.error("A mensagem não pode ficar vazia");
 
-        const recipients = contacts.split(/[\n,]+/).map(s => s.trim()).filter(Boolean).map(s => {
-            if (!s.includes('@')) return `${s}@s.whatsapp.net`;
-            return s;
-        });
+        const recipients = contacts
+            .split(/[\n,]+/)
+            .map(s => s.trim())
+            .filter(Boolean)
+            .map(toWhatsAppJid)
+            .filter(Boolean);
 
         if (recipients.length === 0) {
             return toast.error("Nenhum destinatário informado");
@@ -622,7 +694,7 @@ export default function BroadcastPage() {
             bodyPayload.repeatDaily = repeatDaily;
         }
 
-        setLoading(true);
+        setIsSubmitting(true);
 
         try {
             const res = await fetch(`/api/messages/${sessionId}/broadcast`, {
@@ -634,15 +706,20 @@ export default function BroadcastPage() {
             const data = await res.json();
 
             if (res.ok) {
+                try { sessionStorage.setItem("zapflow_last_broadcast_recipients", contacts); } catch {}
+
                 if (scheduleMode === "programmed") {
-                    setLoading(false);
                     toast.success(`${bodyPayload.programmedTimes.length} disparos automáticos programados com sucesso! Executarão em sequência.`);
                     setActiveTab("history");
                     fetchHistory();
                 } else if (scheduleMode === "datetime") {
-                    setLoading(false);
                     toast.success("Disparo agendado com sucesso!");
                     setActiveTab("history");
+                    fetchHistory();
+                } else if (isBroadcasting) {
+                    toast.success(`Próximo disparo enfileirado com sucesso para ${recipients.length} destinatários! O processo atual continuará até o fim.`);
+                    setContacts("");
+                    setMessage("");
                     fetchHistory();
                 } else {
                     const newProgress: BroadcastProgress = {
@@ -659,16 +736,17 @@ export default function BroadcastPage() {
                         localStorage.setItem(ACTIVE_KEY(sessionId), JSON.stringify(newProgress));
                     }
                     toast.info(`Disparo iniciado para ${recipients.length} destinatários na fila sequencial...`);
-                    // Não redefine loading para false, pois continua disparando em background!
+                    setContacts("");
+                    setMessage("");
                 }
             } else {
-                setLoading(false);
                 toast.error(data.message || "Não foi possível iniciar o disparo");
             }
         } catch (e) {
-            setLoading(false);
             console.error(e);
             toast.error("Erro ao enviar o disparo");
+        } finally {
+            setIsSubmitting(false);
         }
     };
 
@@ -742,40 +820,97 @@ export default function BroadcastPage() {
 
                 {activeTab === "new" && (
                     <>
+                        {isBroadcasting && (
+                            <div className="mb-4 rounded-xl border border-blue-200 bg-blue-50/80 p-3.5 text-xs text-blue-900 dark:border-blue-900/50 dark:bg-blue-950/30 dark:text-blue-200 flex items-center justify-between gap-3 shadow-xs animate-in fade-in">
+                                <div className="flex items-center gap-2.5">
+                                    <span className="relative flex h-2.5 w-2.5">
+                                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-75"></span>
+                                        <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-blue-600"></span>
+                                    </span>
+                                    <div>
+                                        <span className="font-semibold text-blue-950 dark:text-blue-100">Disparo em andamento:</span>{" "}
+                                        <span>Enviando para {broadcastProgress?.total} destinatários ({broadcastProgress?.sent} enviadas).</span>
+                                        <p className="text-[11.5px] text-blue-700 dark:text-blue-300 mt-0.5 font-normal">
+                                            🔒 O processo atual é <strong>independente e seguro</strong>. Qualquer contato ou grupo adicionado abaixo será preparado exclusivamente para o seu <strong>próximo disparo</strong>.
+                                        </p>
+                                    </div>
+                                </div>
+                            </div>
+                        )}
                         <div className="grid gap-4 sm:gap-6 grid-cols-1 md:grid-cols-2">
                             {/* Recipients Card */}
                             <Card>
                                 <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-3">
                                     <div>
-                                        <CardTitle>Destinatários</CardTitle>
-                                        <CardDescription>Informe os números separados por vírgula ou linha.</CardDescription>
+                                        <CardTitle className="flex items-center gap-2">
+                                            <span>Destinatários</span>
+                                            {isBroadcasting && (
+                                                <span className="text-[11px] font-medium px-2 py-0.5 rounded-full bg-blue-500/10 text-blue-600 border border-blue-500/20">
+                                                    Próximo Disparo
+                                                </span>
+                                            )}
+                                        </CardTitle>
+                                        <CardDescription>
+                                            Nome do grupo ou contato seguido do número/JID entre parênteses.
+                                        </CardDescription>
                                     </div>
-                                    {(contacts.trim().length > 0 || message.trim().length > 0) && !isBroadcasting && (
-                                        <Button
-                                            type="button"
-                                            variant="ghost"
-                                            size="sm"
-                                            onClick={handleClearForm}
-                                            className="text-xs text-muted-foreground hover:text-destructive h-7 px-2"
-                                            title="Limpar destinatários e mensagem"
-                                        >
-                                            <RotateCcw className="h-3 w-3 mr-1" />
-                                            Limpar
-                                        </Button>
-                                    )}
+                                    <div className="flex items-center gap-1">
+                                        {contacts.trim().length > 0 && (
+                                            <Button
+                                                type="button"
+                                                variant="ghost"
+                                                size="sm"
+                                                onClick={() => {
+                                                    const res = resolveRecipientNames(contacts);
+                                                    setContacts(res);
+                                                    toast.success("Nomes de grupos e contatos identificados!");
+                                                }}
+                                                className="text-xs text-[#00a884] hover:bg-[#00a884]/10 h-7 px-2 font-medium"
+                                                title="Identificar e preencher nomes dos grupos e contatos"
+                                            >
+                                                <Sparkles className="h-3 w-3 mr-1" />
+                                                Identificar nomes
+                                            </Button>
+                                        )}
+                                        {(contacts.trim().length > 0 || message.trim().length > 0) && (
+                                            <Button
+                                                type="button"
+                                                variant="ghost"
+                                                size="sm"
+                                                onClick={handleClearForm}
+                                                className="text-xs text-muted-foreground hover:text-destructive h-7 px-2"
+                                                title="Limpar campos para configurar próximo disparo"
+                                            >
+                                                <RotateCcw className="h-3 w-3 mr-1" />
+                                                Limpar
+                                            </Button>
+                                        )}
+                                    </div>
                                 </CardHeader>
                                 <CardContent className="space-y-4">
                                     <div className="space-y-2">
                                         <Label>Números de destino (ex.: 5511999999999)</Label>
                                         <Textarea
-                                            placeholder={"628123456789\n628987654321"}
+                                            placeholder={"Grupo Cotações (120363377785922974@g.us)\nJoão Silva (5566999999999)\n5511999999999"}
                                             className="h-44 max-h-56 [field-sizing:fixed] overflow-y-auto font-mono text-sm resize-y"
                                             style={{ fieldSizing: "fixed", maxHeight: "220px", height: "180px", overflowY: "auto" }}
                                             value={contacts}
                                             onChange={e => setContacts(e.target.value)}
-                                            disabled={isBroadcasting}
+                                            disabled={isSubmitting}
                                         />
-                                        <p className="text-xs text-muted-foreground">{recipientCount} números identificados</p>
+                                        <div className="flex items-center justify-between text-xs text-muted-foreground">
+                                            <p>{recipientCount} {recipientCount === 1 ? "destinatário identificado" : "destinatários identificados"}</p>
+                                            {typeof window !== "undefined" && sessionStorage.getItem("zapflow_last_broadcast_recipients") && (
+                                                <button
+                                                    type="button"
+                                                    onClick={handleReuseLastRecipients}
+                                                    className="text-[11px] text-[#00a884] hover:underline flex items-center gap-1 cursor-pointer"
+                                                >
+                                                    <History className="h-3 w-3" />
+                                                    Reutilizar últimos destinatários
+                                                </button>
+                                            )}
+                                        </div>
                                     </div>
 
                                     <div className="space-y-2 rounded-lg border p-3">
@@ -787,8 +922,8 @@ export default function BroadcastPage() {
                                                 <button
                                                     type="button"
                                                     onClick={toggleSelectAllContacts}
-                                                    disabled={isBroadcasting}
-                                                    className="text-xs font-semibold text-primary hover:underline disabled:opacity-50 transition-colors"
+                                                    disabled={isSubmitting}
+                                                    className="text-xs font-semibold text-primary hover:underline disabled:opacity-50 transition-colors cursor-pointer"
                                                 >
                                                     {isAllFilteredContactsSelected ? "Desmarcar todos" : `Selecionar todos (${filteredContacts.length})`}
                                                 </button>
@@ -798,7 +933,7 @@ export default function BroadcastPage() {
                                             placeholder="Pesquisar por nome ou número..."
                                             value={pickerSearch}
                                             onChange={e => setPickerSearch(e.target.value)}
-                                            disabled={isBroadcasting}
+                                            disabled={isSubmitting}
                                         />
                                         <div className="max-h-52 overflow-y-auto divide-y rounded-md border">
                                             {pickerLoading ? (
@@ -811,7 +946,7 @@ export default function BroadcastPage() {
                                                         <Checkbox
                                                             checked={selectedContacts.includes(contact.id)}
                                                             onCheckedChange={() => toggleContact(contact.id)}
-                                                            disabled={isBroadcasting}
+                                                            disabled={isSubmitting}
                                                         />
                                                         <span className="min-w-0 flex-1">
                                                             <span className="block truncate text-sm font-medium">
@@ -829,7 +964,7 @@ export default function BroadcastPage() {
                                             size="sm"
                                             className="w-full"
                                             onClick={addSelectedContacts}
-                                            disabled={selectedContacts.length === 0 || isBroadcasting}
+                                            disabled={selectedContacts.length === 0 || isSubmitting}
                                         >
                                             <Users className="mr-2 h-4 w-4" />
                                             Adicionar {selectedContacts.length > 0 ? `${selectedContacts.length} ` : ""}aos destinatários
@@ -845,8 +980,8 @@ export default function BroadcastPage() {
                                                 <button
                                                     type="button"
                                                     onClick={toggleSelectAllGroups}
-                                                    disabled={isBroadcasting}
-                                                    className="text-xs font-semibold text-primary hover:underline disabled:opacity-50 transition-colors"
+                                                    disabled={isSubmitting}
+                                                    className="text-xs font-semibold text-primary hover:underline disabled:opacity-50 transition-colors cursor-pointer"
                                                 >
                                                     {isAllFilteredGroupsSelected ? "Desmarcar todos" : `Selecionar todos (${filteredGroups.length})`}
                                                 </button>
@@ -856,7 +991,7 @@ export default function BroadcastPage() {
                                             placeholder="Pesquisar grupo pelo nome..."
                                             value={groupSearch}
                                             onChange={e => setGroupSearch(e.target.value)}
-                                            disabled={isBroadcasting}
+                                            disabled={isSubmitting}
                                         />
                                         <div className="max-h-52 overflow-y-auto divide-y rounded-md border">
                                             {groups.length === 0 ? (
@@ -869,7 +1004,7 @@ export default function BroadcastPage() {
                                                         <Checkbox
                                                             checked={selectedGroups.includes(group.jid)}
                                                             onCheckedChange={() => setSelectedGroups(prev => prev.includes(group.jid) ? prev.filter(x => x !== group.jid) : [...prev, group.jid])}
-                                                            disabled={isBroadcasting}
+                                                            disabled={isSubmitting}
                                                         />
                                                         <span className="min-w-0 flex-1">
                                                             <span className="block truncate text-sm font-medium">{group.subject || group.jid}</span>
@@ -885,7 +1020,7 @@ export default function BroadcastPage() {
                                             size="sm"
                                             className="w-full"
                                             onClick={addSelectedGroups}
-                                            disabled={selectedGroups.length === 0 || isBroadcasting}
+                                            disabled={selectedGroups.length === 0 || isSubmitting}
                                         >
                                             <Users className="mr-2 h-4 w-4" />
                                             Adicionar {selectedGroups.length > 0 ? `${selectedGroups.length} ` : ""}grupo(s)
@@ -917,7 +1052,7 @@ export default function BroadcastPage() {
                                                         onClick={() => setMessage(prev => prev + (prev.endsWith(" ") || prev === "" ? "" : " ") + v.tag + " ")}
                                                         className="px-2 py-0.5 text-[11px] font-mono font-medium rounded bg-primary/10 hover:bg-primary/20 text-primary border border-primary/20 transition-colors cursor-pointer"
                                                         title={`Inserir ${v.tag}`}
-                                                        disabled={isBroadcasting}
+                                                        disabled={isSubmitting}
                                                     >
                                                         {v.tag}
                                                     </button>
@@ -930,7 +1065,7 @@ export default function BroadcastPage() {
                                             style={{ fieldSizing: "fixed", maxHeight: "220px", height: "180px", overflowY: "auto" }}
                                             value={message}
                                             onChange={e => setMessage(e.target.value)}
-                                            disabled={isBroadcasting}
+                                            disabled={isSubmitting}
                                         />
                                         <p className="text-[11px] text-muted-foreground">
                                             Dica: As variáveis são substituídas dinamicamente para cada destinatário com simulação de digitação humana para máxima segurança.
@@ -945,8 +1080,8 @@ export default function BroadcastPage() {
                                                     <button
                                                         type="button"
                                                         onClick={() => setDelay([200])}
-                                                        disabled={isBroadcasting}
-                                                        className={`px-2.5 py-1 text-xs rounded-lg border font-semibold transition-all ${
+                                                        disabled={isSubmitting}
+                                                        className={`px-2.5 py-1 text-xs rounded-lg border font-semibold transition-all cursor-pointer ${
                                                             delay[0] <= 300 
                                                                 ? "bg-amber-500 text-white border-amber-600 shadow-sm" 
                                                                 : "bg-muted/80 text-foreground hover:bg-accent border-border"
@@ -957,8 +1092,8 @@ export default function BroadcastPage() {
                                                     <button
                                                         type="button"
                                                         onClick={() => setDelay([500])}
-                                                        disabled={isBroadcasting}
-                                                        className={`px-2.5 py-1 text-xs rounded-lg border font-semibold transition-all ${
+                                                        disabled={isSubmitting}
+                                                        className={`px-2.5 py-1 text-xs rounded-lg border font-semibold transition-all cursor-pointer ${
                                                             delay[0] > 300 && delay[0] <= 800 
                                                                 ? "bg-primary text-primary-foreground border-primary shadow-sm" 
                                                                 : "bg-muted/80 text-foreground hover:bg-accent border-border"
@@ -969,8 +1104,8 @@ export default function BroadcastPage() {
                                                     <button
                                                         type="button"
                                                         onClick={() => setDelay([1500])}
-                                                        disabled={isBroadcasting}
-                                                        className={`px-2.5 py-1 text-xs rounded-lg border font-semibold transition-all ${
+                                                        disabled={isSubmitting}
+                                                        className={`px-2.5 py-1 text-xs rounded-lg border font-semibold transition-all cursor-pointer ${
                                                             delay[0] > 800 
                                                                 ? "bg-emerald-600 text-white border-emerald-700 shadow-sm" 
                                                                 : "bg-muted/80 text-foreground hover:bg-accent border-border"
@@ -1157,15 +1292,19 @@ export default function BroadcastPage() {
                                         </div>
 
                                         <Button
-                                            className="w-full"
-                                            onClick={isBroadcasting ? handleCancelActiveBroadcast : handleSend}
-                                            disabled={(!isBroadcasting && (!sessionId || recipientCount === 0 || !message.trim()))}
-                                            variant={isBroadcasting ? "destructive" : "default"}
+                                            className="w-full bg-[#00a884] hover:bg-[#00a884]/90 text-white font-medium"
+                                            onClick={handleSend}
+                                            disabled={isSubmitting || !sessionId || recipientCount === 0 || !message.trim()}
                                         >
-                                            {isBroadcasting ? (
+                                            {isSubmitting ? (
                                                 <>
                                                     <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
-                                                    Disparo em andamento ({broadcastProgress?.sent || 0}/{broadcastProgress?.total || recipientCount} enviados) — Clique para cancelar
+                                                    Processando envio...
+                                                </>
+                                            ) : isBroadcasting ? (
+                                                <>
+                                                    <Clock className="mr-2 h-4 w-4" />
+                                                    Enfileirar para próximo disparo ({recipientCount} {recipientCount === 1 ? 'destinatário' : 'destinatários'})
                                                 </>
                                             ) : (
                                                 <>
@@ -1178,6 +1317,11 @@ export default function BroadcastPage() {
                                                 </>
                                             )}
                                         </Button>
+                                        {isBroadcasting && (
+                                            <p className="text-[11px] text-center text-muted-foreground mt-1">
+                                                * O disparo atual continua rodando normalmente. Este novo disparo entrará na fila e iniciará em sequência.
+                                            </p>
+                                        )}
                                     </div>
                                 </CardContent>
                             </Card>
