@@ -6,16 +6,12 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Badge } from "@/components/ui/badge";
 import {
     MessageSquarePlus,
     Search,
     MessageCircle,
     X,
     Tag,
-    MoreHorizontal,
-    CornerUpLeft,
-    Trash2,
     Info,
     Check,
     CheckCheck,
@@ -28,12 +24,11 @@ import {
     Image as ImageIcon,
     Mic,
     Video,
-    Maximize2,
-    Minimize2,
     Eye,
-    EyeOff,
     ChevronDown,
-    Settings
+    Settings,
+    Volume2,
+    VolumeX
 } from "lucide-react";
 import { LabelAssignPopover, LabelData, ManageLabelsModal } from "./label-assign-popover";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -50,46 +45,78 @@ export interface ChatContact {
     notify: string | null;
     profilePic: string | null;
     lastMessage?: {
+        keyId?: string;
         content: string | null;
         timestamp: string;
         type: string;
         fromMe?: boolean;
+        status?: string;
     };
     unreadCount?: number;
 }
 
-
 interface ChatListProps {
     sessionId: string;
-    onSelectChat: (jid: string, name?: string) => void;
+    onSelectChat: (jid: string, name?: string, profilePic?: string | null) => void;
     selectedJid?: string;
 }
 
-const PAGE_SIZE = 300;
+const PAGE_SIZE = 600;
+
+function playWhatsAppIncomingSound() {
+    try {
+        const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+        if (!AudioCtx) return;
+        const ctx = new AudioCtx();
+        const now = ctx.currentTime;
+
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = "sine";
+        osc.frequency.setValueAtTime(587.33, now); // D5
+        osc.frequency.exponentialRampToValueAtTime(880, now + 0.09); // A5
+        gain.gain.setValueAtTime(0.12, now);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + 0.18);
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start(now);
+        osc.stop(now + 0.18);
+    } catch {
+        // Ignore if blocked before interaction
+    }
+}
 
 function getDisplayName(chat: ChatContact): string {
     return chat.name || chat.notify || chat.jid.split('@')[0];
 }
 
 function getMessagePreview(chat: ChatContact): { text: string; isMedia: boolean; type?: string } {
-    if (!chat.lastMessage?.content) {
-        if (chat.jid.endsWith("@s.whatsapp.net")) {
-            return { text: "Contato da agenda", isMedia: false };
+    if (!chat.lastMessage) {
+        if (chat.jid.endsWith("@g.us")) {
+            return { text: "Grupo do WhatsApp", isMedia: false };
         }
-        return { text: "Nenhuma mensagem ainda", isMedia: false };
+        return { text: "Contato da agenda", isMedia: false };
     }
-    const content = chat.lastMessage.content;
+    if (!chat.lastMessage.content && chat.lastMessage.type === "TEXT") {
+        return { text: "Mensagem", isMedia: false };
+    }
+    const content = chat.lastMessage.content || "";
     if (chat.lastMessage.type !== "TEXT") {
         const types: Record<string, string> = {
-            IMAGE: "Imagem",
-            VIDEO: "Vídeo",
-            AUDIO: "Áudio",
-            DOCUMENT: "Documento",
+            IMAGE: content ? `📷 ${content}` : "Foto",
+            VIDEO: content ? `🎥 ${content}` : "Vídeo",
+            AUDIO: "Mensagem de voz",
+            DOCUMENT: content || "Documento",
             STICKER: "Figurinha",
             LOCATION: "Localização",
             CONTACT: "Contato"
         };
-        return { text: types[chat.lastMessage.type] || "Mídia", isMedia: true, type: chat.lastMessage.type };
+        const label = types[chat.lastMessage.type] || "Mídia";
+        return {
+            text: label.length > 45 ? label.slice(0, 45) + "…" : label,
+            isMedia: true,
+            type: chat.lastMessage.type
+        };
     }
     return { text: content.length > 45 ? content.slice(0, 45) + "…" : content, isMedia: false };
 }
@@ -102,6 +129,20 @@ function getTimeLabel(timestamp: string): string {
     if (diffDays === 1) return "Ontem";
     if (diffDays < 7) return date.toLocaleDateString("pt-BR", { weekday: 'short' });
     return date.toLocaleDateString("pt-BR", { month: 'numeric', day: 'numeric' });
+}
+
+function SidebarStatusCheck({ status }: { status?: string }) {
+    switch (status) {
+        case "READ":
+            return <CheckCheck className="h-3.5 w-3.5 text-[#53bdeb] shrink-0" />;
+        case "DELIVERED":
+            return <CheckCheck className="h-3.5 w-3.5 text-[#667781] dark:text-[#8696a0] shrink-0" />;
+        case "PENDING":
+            return <Clock className="h-3 w-3 text-[#667781] dark:text-[#8696a0] shrink-0" />;
+        case "SENT":
+        default:
+            return <Check className="h-3.5 w-3.5 text-[#667781] dark:text-[#8696a0] shrink-0" />;
+    }
 }
 
 // ─── Context Menu ──────────────────
@@ -185,6 +226,7 @@ function ChatRow({
     chat,
     isSelected,
     isPinned,
+    presence,
     onSelect,
     onTogglePin,
     onToggleRead,
@@ -194,6 +236,7 @@ function ChatRow({
     chat: ChatContact;
     isSelected: boolean;
     isPinned: boolean;
+    presence?: { status: "composing" | "recording" };
     onSelect: (jid: string, name?: string, profilePic?: string | null) => void;
     onTogglePin: (jid: string, e?: React.MouseEvent) => void;
     onToggleRead: (jid: string, isUnread: boolean) => void;
@@ -204,6 +247,7 @@ function ChatRow({
     const [ctxMenu, setCtxMenu] = useState<CtxMenuState | null>(null);
     const isGroup = chat.jid.endsWith("@g.us");
     const preview = getMessagePreview(chat);
+    const unreadCount = chat.unreadCount || 0;
 
     return (
         <>
@@ -218,7 +262,7 @@ function ChatRow({
             )}
             <div
                 className={cn(
-                    "relative w-full flex items-center gap-3 px-3.5 py-3 transition-colors duration-100 border-b border-border/10 group overflow-hidden cursor-pointer select-none",
+                    "relative w-full flex items-center gap-3 px-3.5 py-3 transition-colors duration-75 border-b border-border/10 group overflow-hidden cursor-pointer select-none",
                     isSelected
                         ? "bg-[#f0f2f5] dark:bg-[#2a3942] border-l-4 border-l-[#00a884]"
                         : "hover:bg-[#f5f6f6] dark:hover:bg-[#202c33]/70 border-l-4 border-l-transparent"
@@ -249,7 +293,7 @@ function ChatRow({
                     <div className="flex justify-between items-baseline gap-2 overflow-hidden">
                         <h4 className={cn(
                             "text-[15px] truncate flex items-center gap-1.5 leading-snug flex-1 min-w-0",
-                            isSelected ? "font-semibold text-foreground" : "font-medium text-foreground"
+                            unreadCount > 0 ? "font-bold text-foreground" : isSelected ? "font-semibold text-foreground" : "font-medium text-foreground"
                         )} title={displayName}>
                             <span className="truncate">{displayName}</span>
                             {/* Label dots */}
@@ -264,33 +308,60 @@ function ChatRow({
                         {chat.lastMessage && (
                             <span className={cn(
                                 "text-[11.5px] flex-shrink-0 tabular-nums",
-                                isPinned ? "text-[#00a884] font-medium" : "text-[#667781] dark:text-[#8696a0]"
+                                unreadCount > 0
+                                    ? "text-[#25d366] font-semibold"
+                                    : isPinned
+                                        ? "text-[#00a884] font-medium"
+                                        : "text-[#667781] dark:text-[#8696a0]"
                             )}>
                                 {getTimeLabel(chat.lastMessage.timestamp)}
                             </span>
                         )}
                     </div>
 
-                    {/* Line 2: Message preview + Status Check + Pin Icon + Actions */}
+                    {/* Line 2: Presence OR Message preview + Status Check + Unread Badge + Pin Icon */}
                     <div className="flex items-center justify-between gap-1 mt-0.5">
-                        <p className="text-[13px] text-[#667781] dark:text-[#8696a0] truncate flex items-center gap-1 flex-1">
-                            {/* From Me checkmark */}
-                            {chat.lastMessage?.fromMe && (
-                                <CheckCheck className="h-3.5 w-3.5 text-[#53bdeb] shrink-0" />
-                            )}
-                            {/* Media icon indicator */}
-                            {preview.isMedia && (
-                                <span className="shrink-0 text-muted-foreground">
-                                    {preview.type === "IMAGE" && <ImageIcon className="h-3.5 w-3.5 inline mr-1" />}
-                                    {preview.type === "VIDEO" && <Video className="h-3.5 w-3.5 inline mr-1" />}
-                                    {preview.type === "AUDIO" && <Mic className="h-3.5 w-3.5 inline mr-1" />}
-                                    {preview.type === "DOCUMENT" && <FileText className="h-3.5 w-3.5 inline mr-1" />}
-                                </span>
-                            )}
-                            <span className="truncate">{preview.text}</span>
-                        </p>
+                        {presence ? (
+                            <p className="text-[13px] text-[#00a884] dark:text-[#25d366] font-medium truncate flex items-center gap-1 flex-1 animate-pulse">
+                                {presence.status === "recording" ? (
+                                    <>
+                                        <Mic className="h-3.5 w-3.5 shrink-0" />
+                                        <span>gravando áudio...</span>
+                                    </>
+                                ) : (
+                                    <span>digitando...</span>
+                                )}
+                            </p>
+                        ) : (
+                            <p className={cn(
+                                "text-[13px] truncate flex items-center gap-1 flex-1",
+                                unreadCount > 0 ? "text-foreground font-medium" : "text-[#667781] dark:text-[#8696a0]"
+                            )}>
+                                {/* From Me checkmark */}
+                                {chat.lastMessage?.fromMe && (
+                                    <SidebarStatusCheck status={chat.lastMessage.status} />
+                                )}
+                                {/* Media icon indicator */}
+                                {preview.isMedia && (
+                                    <span className="shrink-0 text-muted-foreground">
+                                        {preview.type === "IMAGE" && <ImageIcon className="h-3.5 w-3.5 inline mr-1" />}
+                                        {preview.type === "VIDEO" && <Video className="h-3.5 w-3.5 inline mr-1" />}
+                                        {preview.type === "AUDIO" && <Mic className="h-3.5 w-3.5 inline mr-1 text-[#00a884]" />}
+                                        {preview.type === "DOCUMENT" && <FileText className="h-3.5 w-3.5 inline mr-1" />}
+                                    </span>
+                                )}
+                                <span className="truncate">{preview.text}</span>
+                            </p>
+                        )}
 
                         <div className="flex items-center gap-1 shrink-0">
+                            {/* WhatsApp Green Unread Counter Badge */}
+                            {unreadCount > 0 && (
+                                <span className="min-w-[20px] h-5 px-1.5 rounded-full bg-[#25d366] text-white text-[11px] font-bold flex items-center justify-center tabular-nums shadow-xs">
+                                    {unreadCount > 99 ? "99+" : unreadCount}
+                                </span>
+                            )}
+
                             {/* Persistent Pin Indicator */}
                             {isPinned && (
                                 <span title="Conversa fixada" className="text-[#00a884] dark:text-[#00a884] p-0.5">
@@ -343,7 +414,6 @@ function SkeletonRow() {
                 </div>
                 <Skeleton className="h-3.5 w-44" />
             </div>
-
         </div>
     );
 }
@@ -351,9 +421,36 @@ function SkeletonRow() {
 // Global in-memory cache for chat list per session (WhatsApp Web method)
 export const globalChatListCache = new Map<string, ChatContact[]>();
 
+function loadPersistedChatList(sessionId: string): ChatContact[] {
+    if (!sessionId) return [];
+    const inMem = globalChatListCache.get(sessionId);
+    if (inMem && inMem.length > 0) return inMem;
+    if (typeof window === "undefined") return [];
+    try {
+        const raw = localStorage.getItem(`zapflow_chatlist_v2_${sessionId}`);
+        if (raw) {
+            const parsed = JSON.parse(raw);
+            if (Array.isArray(parsed) && parsed.length > 0) {
+                globalChatListCache.set(sessionId, parsed);
+                return parsed;
+            }
+        }
+    } catch {}
+    return [];
+}
+
+function savePersistedChatList(sessionId: string, list: ChatContact[]) {
+    if (!sessionId) return;
+    globalChatListCache.set(sessionId, list);
+    if (typeof window === "undefined") return;
+    try {
+        localStorage.setItem(`zapflow_chatlist_v2_${sessionId}`, JSON.stringify(list.slice(0, 450)));
+    } catch {}
+}
+
 // ─── Main ChatList Component ─────────
 export function ChatList({ sessionId, onSelectChat, selectedJid }: ChatListProps) {
-    const initialCached = globalChatListCache.get(sessionId) || [];
+    const initialCached = useMemo(() => loadPersistedChatList(sessionId), [sessionId]);
     const [chats, setChats] = useState<ChatContact[]>(initialCached);
     const [loading, setLoading] = useState(initialCached.length === 0);
     const [searchInput, setSearchInput] = useState("");
@@ -361,12 +458,20 @@ export function ChatList({ sessionId, onSelectChat, selectedJid }: ChatListProps
     const [isNewChatOpen, setIsNewChatOpen] = useState(false);
     const [newChatNumber, setNewChatNumber] = useState("");
     const [hasMore, setHasMore] = useState(true);
+    const [soundMuted, setSoundMuted] = useState(false);
+
+    // Live presence map per JID ("composing" | "recording")
+    const [presenceMap, setPresenceMap] = useState<Record<string, { status: "composing" | "recording" }>>({});
+    const presenceTimersRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
+
+    // Track seen incoming keyIds so two-phase instant + media socket updates only increment unreadCount once
+    const seenIncomingKeysRef = useRef<Set<string>>(new Set());
 
     // Unlimited pinned chats (persisted per sessionId in localStorage)
     const [pinnedJids, setPinnedJids] = useState<string[]>([]);
     const searchInputRef = useRef<HTMLInputElement>(null);
 
-    // Contacts searched from the 4,613 address book contacts
+    // Contacts searched from the address book
     const [extraContacts, setExtraContacts] = useState<ChatContact[]>([]);
     const contactSearchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -379,19 +484,42 @@ export function ChatList({ sessionId, onSelectChat, selectedJid }: ChatListProps
     const { getSocket, joinSession } = useSocket();
     const chatsRef = useRef<ChatContact[]>(chats);
     chatsRef.current = chats;
+    const selectedJidRef = useRef<string | undefined>(selectedJid);
+    selectedJidRef.current = selectedJid;
+    const soundMutedRef = useRef<boolean>(soundMuted);
+    soundMutedRef.current = soundMuted;
     const fetchingRef = useRef(false);
 
-    // Automatically prefetch top chats into cache for instantaneous 0ms opening
+    // Load mute state from localStorage
+    useEffect(() => {
+        if (typeof window === "undefined") return;
+        try {
+            setSoundMuted(localStorage.getItem("zapflow_chat_muted") === "1");
+        } catch {}
+    }, []);
+
+    const toggleMuteSound = () => {
+        setSoundMuted(prev => {
+            const next = !prev;
+            try {
+                localStorage.setItem("zapflow_chat_muted", next ? "1" : "0");
+            } catch {}
+            toast.info(next ? "Som de novas mensagens silenciado 🔕" : "Som de novas mensagens ativado 🔔");
+            return next;
+        });
+    };
+
+    // Automatically prefetch top 15 chats into cache for instantaneous 0ms opening
     useEffect(() => {
         if (!sessionId || chats.length === 0) return;
         const timer = setTimeout(() => {
-            const topChats = chats.slice(0, 8);
+            const topChats = chats.filter(c => !!c.lastMessage).slice(0, 15);
             topChats.forEach(c => prefetchChatMessages(sessionId, c.jid));
-        }, 300);
+        }, 150);
         return () => clearTimeout(timer);
-    }, [sessionId, chats]);
+    }, [sessionId, chats.length]);
 
-    // Dynamic contact search (e.g. searching "Alexandre" across all 4,613 contacts)
+    // Dynamic contact search across all contacts in DB
     useEffect(() => {
         const q = searchInput.trim();
         if (q.length < 2) {
@@ -403,7 +531,7 @@ export function ChatList({ sessionId, onSelectChat, selectedJid }: ChatListProps
         contactSearchTimerRef.current = setTimeout(async () => {
             try {
                 const results = await searchWhatsAppContacts(sessionId, q);
-                const loadedJids = new Set(chats.map(c => c.jid));
+                const loadedJids = new Set(chatsRef.current.map(c => c.jid));
                 const newContacts: ChatContact[] = results
                     .filter(c => !loadedJids.has(c.jid))
                     .map(c => ({
@@ -417,12 +545,12 @@ export function ChatList({ sessionId, onSelectChat, selectedJid }: ChatListProps
             } catch (err) {
                 console.error("Error searching contacts:", err);
             }
-        }, 120);
+        }, 100);
 
         return () => {
             if (contactSearchTimerRef.current) clearTimeout(contactSearchTimerRef.current);
         };
-    }, [searchInput, sessionId, chats]);
+    }, [searchInput, sessionId]);
 
     // Load pinned chats from localStorage on mount
     useEffect(() => {
@@ -440,12 +568,24 @@ export function ChatList({ sessionId, onSelectChat, selectedJid }: ChatListProps
         }
     }, [sessionId]);
 
-    // Mark Chat as Read / Unread
+    // Handle selecting a chat and automatically clearing its unread badge
+    const handleSelectAndClearUnread = useCallback((jid: string, name?: string, profilePic?: string | null) => {
+        setChats(prev => {
+            const target = prev.find(c => c.jid === jid);
+            if (!target || !target.unreadCount) return prev;
+            const next = prev.map(c => c.jid === jid ? { ...c, unreadCount: 0 } : c);
+            savePersistedChatList(sessionId, next);
+            return next;
+        });
+        onSelectChat(jid, name, profilePic);
+    }, [onSelectChat, sessionId]);
+
+    // Mark Chat as Read / Unread manually
     const handleToggleRead = useCallback(async (jid: string, currentlyUnread: boolean) => {
         const nextStatus = !currentlyUnread;
         setChats(prev => {
             const next = prev.map(c => c.jid === jid ? { ...c, unreadCount: currentlyUnread ? 0 : 1 } : c);
-            globalChatListCache.set(sessionId, next);
+            savePersistedChatList(sessionId, next);
             return next;
         });
         try {
@@ -462,7 +602,7 @@ export function ChatList({ sessionId, onSelectChat, selectedJid }: ChatListProps
         }
     }, [sessionId]);
 
-    // Toggle Pin / Unpin (Unlimited - NO 5 chat limit!)
+    // Toggle Pin / Unpin (Unlimited)
     const handleTogglePin = useCallback((jid: string, e?: React.MouseEvent) => {
         e?.stopPropagation();
         setPinnedJids(prev => {
@@ -472,13 +612,13 @@ export function ChatList({ sessionId, onSelectChat, selectedJid }: ChatListProps
                 next = prev.filter(id => id !== jid);
                 toast.success("Conversa desafixada");
             } else {
-                next = [jid, ...prev]; // Prepend so latest pinned is on top
+                next = [jid, ...prev];
                 toast.success(`Conversa fixada no topo (${next.length} fixadas)`);
             }
             if (typeof window !== "undefined") {
                 try {
                     localStorage.setItem(`zapflow_pinned_${sessionId}`, JSON.stringify(next));
-                } catch (err) {}
+                } catch {}
             }
             return next;
         });
@@ -489,26 +629,44 @@ export function ChatList({ sessionId, onSelectChat, selectedJid }: ChatListProps
         if (fetchingRef.current) return;
         fetchingRef.current = true;
         try {
-            if (!cursor && !globalChatListCache.has(sessionId)) setLoading(true);
+            if (!cursor && chatsRef.current.length === 0) setLoading(true);
             const rawChats: any = await getChatsStatus(sessionId, PAGE_SIZE, cursor || undefined);
 
             const processChats = (newChatsList: ChatContact[], existingChatsList: ChatContact[] = []) => {
                 const merged = new Map(existingChatsList.map(c => [c.jid, c]));
                 (newChatsList || []).forEach((c: any) => {
                     const existing = merged.get(c.jid);
-                    if (!existing || (c.lastMessage?.timestamp && (!existing.lastMessage?.timestamp || new Date(c.lastMessage.timestamp) > new Date(existing.lastMessage.timestamp)))) {
+                    if (!existing) {
                         merged.set(c.jid, c);
+                    } else {
+                        const newTs = c.lastMessage?.timestamp ? new Date(c.lastMessage.timestamp).getTime() : 0;
+                        const oldTs = existing.lastMessage?.timestamp ? new Date(existing.lastMessage.timestamp).getTime() : 0;
+                        merged.set(c.jid, {
+                            ...existing,
+                            ...c,
+                            name: c.name || existing.name,
+                            notify: c.notify || existing.notify,
+                            profilePic: c.profilePic || existing.profilePic,
+                            unreadCount: existing.unreadCount || 0,
+                            lastMessage: newTs >= oldTs ? (c.lastMessage || existing.lastMessage) : existing.lastMessage
+                        });
                     }
                 });
                 return Array.from(merged.values());
             };
 
             if (append) {
-                setChats(prev => { const next = processChats(rawChats, prev); globalChatListCache.set(sessionId, next); return next; });
+                setChats(prev => {
+                    const next = processChats(rawChats, prev);
+                    savePersistedChatList(sessionId, next);
+                    return next;
+                });
             } else {
-                const next = processChats(rawChats);
-                globalChatListCache.set(sessionId, next);
-                setChats(next);
+                setChats(prev => {
+                    const next = processChats(rawChats, prev);
+                    savePersistedChatList(sessionId, next);
+                    return next;
+                });
             }
             setHasMore((rawChats || []).length >= PAGE_SIZE);
         } catch (error) {
@@ -520,12 +678,18 @@ export function ChatList({ sessionId, onSelectChat, selectedJid }: ChatListProps
     }, [sessionId]);
 
     useEffect(() => {
-        if (!globalChatListCache.has(sessionId)) { setChats([]); }
+        const persisted = loadPersistedChatList(sessionId);
+        if (persisted.length > 0) {
+            setChats(persisted);
+            setLoading(false);
+        } else {
+            setChats([]);
+        }
         setHasMore(true);
         fetchChats();
     }, [fetchChats, sessionId]);
 
-    // Real-time socket message update
+    // Real-time socket message update + status checkmarks + typing presence
     useEffect(() => {
         const socket = getSocket();
         if (!socket) return;
@@ -535,69 +699,196 @@ export function ChatList({ sessionId, onSelectChat, selectedJid }: ChatListProps
 
         const handler = async (newMessages: any[]) => {
             let needsReload = false;
+            let shouldPlaySound = false;
+
             setChats(prev => {
                 const updated = [...prev];
                 newMessages.forEach(msg => {
                     const jid = msg.remoteJid;
+                    if (!jid || jid === "status@broadcast") return;
+
+                    const isNewKey = msg.keyId ? !seenIncomingKeysRef.current.has(msg.keyId) : true;
+                    if (msg.keyId) seenIncomingKeysRef.current.add(msg.keyId);
+
+                    const isIncomingFromOther = !msg.fromMe && jid !== selectedJidRef.current;
+                    if (isIncomingFromOther && isNewKey) {
+                        shouldPlaySound = true;
+                    }
+
+                    // Clear typing indicator for this chat when message arrives
+                    setPresenceMap(p => {
+                        if (!p[jid]) return p;
+                        const copy = { ...p };
+                        delete copy[jid];
+                        return copy;
+                    });
+
                     const idx = updated.findIndex(c => c.jid === jid);
                     if (idx !== -1) {
+                        const currentUnread = updated[idx].unreadCount || 0;
                         updated[idx] = {
                             ...updated[idx],
+                            name: updated[idx].name || (!msg.fromMe && !jid.endsWith("@g.us") ? msg.pushName : null) || updated[idx].name,
+                            unreadCount: isIncomingFromOther && isNewKey
+                                ? currentUnread + 1
+                                : (jid === selectedJidRef.current ? 0 : currentUnread),
                             lastMessage: {
+                                keyId: msg.keyId,
                                 content: msg.content,
                                 timestamp: msg.timestamp,
                                 type: msg.type,
-                                fromMe: Boolean(msg.fromMe)
+                                fromMe: Boolean(msg.fromMe),
+                                status: msg.status || (msg.fromMe ? "SENT" : "PENDING")
                             }
                         };
                     } else {
+                        // Add brand new chat immediately to top of list in 0ms!
+                        updated.unshift({
+                            jid,
+                            name: !msg.fromMe ? (msg.pushName || jid.split("@")[0]) : jid.split("@")[0],
+                            notify: !msg.fromMe ? (msg.pushName || null) : null,
+                            profilePic: null,
+                            unreadCount: isIncomingFromOther ? 1 : 0,
+                            lastMessage: {
+                                keyId: msg.keyId,
+                                content: msg.content,
+                                timestamp: msg.timestamp,
+                                type: msg.type,
+                                fromMe: Boolean(msg.fromMe),
+                                status: msg.status || (msg.fromMe ? "SENT" : "PENDING")
+                            }
+                        });
                         needsReload = true;
                     }
                 });
+
                 updated.sort((a, b) => {
                     const tA = a.lastMessage?.timestamp ? new Date(a.lastMessage.timestamp).getTime() : 0;
                     const tB = b.lastMessage?.timestamp ? new Date(b.lastMessage.timestamp).getTime() : 0;
                     return tB - tA;
                 });
-                globalChatListCache.set(sessionId, updated);
+
+                savePersistedChatList(sessionId, updated);
                 return updated;
             });
+
+            if (shouldPlaySound && !soundMutedRef.current) {
+                playWhatsAppIncomingSound();
+            }
             if (needsReload) fetchChats();
         };
 
+        const statusHandler = (data: { keyId: string; remoteJid?: string; status: string }) => {
+            if (!data?.status) return;
+            setChats(prev => {
+                let changed = false;
+                const next = prev.map(c => {
+                    if (
+                        (data.remoteJid && c.jid === data.remoteJid && c.lastMessage?.fromMe) ||
+                        (data.keyId && c.lastMessage?.keyId === data.keyId)
+                    ) {
+                        changed = true;
+                        return {
+                            ...c,
+                            lastMessage: c.lastMessage ? { ...c.lastMessage, status: data.status } : c.lastMessage
+                        };
+                    }
+                    return c;
+                });
+                if (changed) savePersistedChatList(sessionId, next);
+                return changed ? next : prev;
+            });
+        };
+
+        const presenceHandler = (data: { id: string; presences: Record<string, { lastKnownPresence?: string }> }) => {
+            if (!data?.id || !data?.presences) return;
+            const chatJid = data.id.endsWith("@c.us") ? data.id.replace("@c.us", "@s.whatsapp.net") : data.id;
+            for (const [, p] of Object.entries(data.presences)) {
+                const st = p?.lastKnownPresence;
+                if (st === "composing" || st === "recording") {
+                    setPresenceMap(prev => ({ ...prev, [chatJid]: { status: st } }));
+                    if (presenceTimersRef.current[chatJid]) clearTimeout(presenceTimersRef.current[chatJid]);
+                    presenceTimersRef.current[chatJid] = setTimeout(() => {
+                        setPresenceMap(prev => {
+                            const copy = { ...prev };
+                            delete copy[chatJid];
+                            return copy;
+                        });
+                    }, 4000);
+                    return;
+                } else if (st === "paused" || st === "unavailable") {
+                    setPresenceMap(prev => {
+                        if (!prev[chatJid]) return prev;
+                        const copy = { ...prev };
+                        delete copy[chatJid];
+                        return copy;
+                    });
+                }
+            }
+        };
+
         socket.on("message.update", handler);
+        socket.on("message.status", statusHandler);
+        socket.on("presence.update", presenceHandler);
         return () => {
             socket.off("connect", onConnect);
             socket.off("message.update", handler);
+            socket.off("message.status", statusHandler);
+            socket.off("presence.update", presenceHandler);
         };
     }, [sessionId, getSocket, joinSession, fetchChats]);
 
     // Instantly update sidebar when a message is sent locally (0ms optimistic)
     useEffect(() => {
         const handleLocalSent = (e: Event) => {
-            const { jid: sentJid, content, timestamp } = (e as CustomEvent).detail;
+            const { jid: sentJid, content, timestamp, type = "TEXT", keyId } = (e as CustomEvent).detail;
             setChats(prev => {
                 const idx = prev.findIndex(c => c.jid === sentJid);
-                if (idx === -1) return prev;
                 const updated = [...prev];
-                updated[idx] = {
-                    ...updated[idx],
-                    lastMessage: {
-                        content,
-                        timestamp,
-                        type: "TEXT",
-                        fromMe: true
-                    }
-                };
-                const [chatItem] = updated.splice(idx, 1);
-                const next = [chatItem, ...updated];
-                globalChatListCache.set(sessionId, next);
-                return next;
+                if (idx !== -1) {
+                    updated[idx] = {
+                        ...updated[idx],
+                        unreadCount: 0,
+                        lastMessage: {
+                            keyId,
+                            content,
+                            timestamp,
+                            type,
+                            fromMe: true,
+                            status: "PENDING"
+                        }
+                    };
+                    const [chatItem] = updated.splice(idx, 1);
+                    const next = [chatItem, ...updated];
+                    savePersistedChatList(sessionId, next);
+                    return next;
+                } else {
+                    const next: ChatContact[] = [
+                        {
+                            jid: sentJid,
+                            name: sentJid.split("@")[0],
+                            notify: null,
+                            profilePic: null,
+                            unreadCount: 0,
+                            lastMessage: {
+                                keyId,
+                                content,
+                                timestamp,
+                                type,
+                                fromMe: true,
+                                status: "PENDING"
+                            }
+                        },
+                        ...updated
+                    ];
+                    savePersistedChatList(sessionId, next);
+                    return next;
+                }
             });
         };
         window.addEventListener("zapflow:local-message-sent", handleLocalSent);
         return () => window.removeEventListener("zapflow:local-message-sent", handleLocalSent);
-    }, []);
+    }, [sessionId]);
 
     // Fetch labels & chat label assignments with real-time sync
     const reloadLabelsAndAssignments = useCallback(async () => {
@@ -635,6 +926,8 @@ export function ChatList({ sessionId, onSelectChat, selectedJid }: ChatListProps
 
     // ─── INSTANT SEARCH & SORTING (0ms delay, no skeleton wipe, unlimited pinning) ───
     const totalUnreadCount = useMemo(() => chats.filter(c => (c.unreadCount || 0) > 0).length, [chats]);
+    const totalGroupsCount = useMemo(() => chats.filter(c => c.jid.endsWith("@g.us")).length, [chats]);
+    const totalContactsCount = useMemo(() => chats.filter(c => !c.jid.endsWith("@g.us")).length, [chats]);
 
     const filteredAndSortedChats = useMemo(() => {
         let list = chats;
@@ -656,12 +949,20 @@ export function ChatList({ sessionId, onSelectChat, selectedJid }: ChatListProps
                 return matchName || matchJid || matchContent || matchDigits;
             });
 
-            // Append matching contacts from address book (e.g. searching "Alexandre")
+            // Append matching contacts from address book
             if (extraContacts.length > 0) {
                 const existingJids = new Set(list.map(c => c.jid));
                 const toAdd = extraContacts.filter(c => !existingJids.has(c.jid));
                 list = [...list, ...toAdd];
             }
+        } else if (filterType === "all" && !selectedLabelId) {
+            // In "Tudo" view without search, show active chats (with messages) + all groups first, then contacts
+            list = [...chats].sort((a, b) => {
+                const tA = a.lastMessage?.timestamp ? new Date(a.lastMessage.timestamp).getTime() : (a.jid.endsWith("@g.us") ? 1 : 0);
+                const tB = b.lastMessage?.timestamp ? new Date(b.lastMessage.timestamp).getTime() : (b.jid.endsWith("@g.us") ? 1 : 0);
+                if (tB !== tA) return tB - tA;
+                return (a.name || a.jid).localeCompare(b.name || b.jid);
+            });
         }
 
         // 2. Filter buttons: Tudo, Contatos, Grupos, Fixados, Etiquetas
@@ -685,13 +986,11 @@ export function ChatList({ sessionId, onSelectChat, selectedJid }: ChatListProps
         const pinnedList: ChatContact[] = [];
         const unpinnedList: ChatContact[] = [];
 
-        // Add pinned chats in the order they are stored in pinnedJids
         pinnedJids.forEach(pjid => {
             const item = list.find(c => c.jid === pjid);
             if (item) pinnedList.push(item);
         });
 
-        // Add the rest
         list.forEach(c => {
             if (!pinnedSet.has(c.jid)) {
                 unpinnedList.push(c);
@@ -717,7 +1016,7 @@ export function ChatList({ sessionId, onSelectChat, selectedJid }: ChatListProps
             if (nextIndex < 0) nextIndex = filteredAndSortedChats.length - 1;
             if (nextIndex >= filteredAndSortedChats.length) nextIndex = 0;
             const targetChat = filteredAndSortedChats[nextIndex];
-            if (targetChat) onSelectChat(targetChat.jid);
+            if (targetChat) handleSelectAndClearUnread(targetChat.jid, getDisplayName(targetChat), targetChat.profilePic);
         };
 
         window.addEventListener("zapflow:focus-search", handleFocusSearch);
@@ -726,12 +1025,12 @@ export function ChatList({ sessionId, onSelectChat, selectedJid }: ChatListProps
             window.removeEventListener("zapflow:focus-search", handleFocusSearch);
             window.removeEventListener("zapflow:nav-chat", handleNavChat as EventListener);
         };
-    }, [filteredAndSortedChats, selectedJid, onSelectChat]);
-
+    }, [filteredAndSortedChats, selectedJid, handleSelectAndClearUnread]);
 
     const handleEndReached = useCallback(() => {
         if (hasMore && !loading && !searchInput.trim()) {
-            const last = chatsRef.current[chatsRef.current.length - 1];
+            const withMsgs = chatsRef.current.filter(c => !!c.lastMessage?.timestamp);
+            const last = withMsgs[withMsgs.length - 1];
             const c = last?.lastMessage?.timestamp;
             if (c) fetchChats(c, true);
         }
@@ -744,21 +1043,22 @@ export function ChatList({ sessionId, onSelectChat, selectedJid }: ChatListProps
                 chat={chat}
                 isSelected={selectedJid === chat.jid}
                 isPinned={pinnedJids.includes(chat.jid)}
-                onSelect={onSelectChat}
+                presence={presenceMap[chat.jid]}
+                onSelect={handleSelectAndClearUnread}
                 onTogglePin={handleTogglePin}
                 onToggleRead={handleToggleRead}
                 sessionId={sessionId}
                 labelDots={chatLabelMap.get(chat.jid) || []}
             />
         ),
-        [selectedJid, pinnedJids, onSelectChat, handleTogglePin, handleToggleRead, sessionId, chatLabelMap]
+        [selectedJid, pinnedJids, presenceMap, handleSelectAndClearUnread, handleTogglePin, handleToggleRead, sessionId, chatLabelMap]
     );
 
     const handleStartNewChat = () => {
         if (!newChatNumber) return;
         let clean = newChatNumber.replace(/\D/g, '');
-        if (clean.startsWith('0')) clean = '62' + clean.substring(1);
-        onSelectChat(`${clean}@s.whatsapp.net`);
+        if (clean.startsWith('0')) clean = '55' + clean.substring(1);
+        handleSelectAndClearUnread(`${clean}@s.whatsapp.net`);
         setIsNewChatOpen(false);
         setNewChatNumber("");
     };
@@ -795,15 +1095,26 @@ export function ChatList({ sessionId, onSelectChat, selectedJid }: ChatListProps
                             </span>
                         )}
                     </div>
-                    <Button
-                        variant="ghost"
-                        size="icon"
-                        title="Nova conversa"
-                        className="h-8 w-8 rounded-full text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/10"
-                        onClick={() => setIsNewChatOpen(!isNewChatOpen)}
-                    >
-                        {isNewChatOpen ? <X className="h-4 w-4" /> : <MessageSquarePlus className="h-4 w-4" />}
-                    </Button>
+                    <div className="flex items-center gap-1">
+                        <Button
+                            variant="ghost"
+                            size="icon"
+                            title={soundMuted ? "Ativar som de novas mensagens" : "Silenciar som de novas mensagens"}
+                            className="h-8 w-8 rounded-full text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/10"
+                            onClick={toggleMuteSound}
+                        >
+                            {soundMuted ? <VolumeX className="h-4 w-4 text-amber-500" /> : <Volume2 className="h-4 w-4 text-[#00a884]" />}
+                        </Button>
+                        <Button
+                            variant="ghost"
+                            size="icon"
+                            title="Nova conversa"
+                            className="h-8 w-8 rounded-full text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/10"
+                            onClick={() => setIsNewChatOpen(!isNewChatOpen)}
+                        >
+                            {isNewChatOpen ? <X className="h-4 w-4" /> : <MessageSquarePlus className="h-4 w-4" />}
+                        </Button>
+                    </div>
                 </div>
 
                 {/* Instant Search Bar with Clear Button */}
@@ -811,7 +1122,7 @@ export function ChatList({ sessionId, onSelectChat, selectedJid }: ChatListProps
                     <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-[#667781] dark:text-[#8696a0]" />
                     <Input
                         ref={searchInputRef}
-                        placeholder="Pesquisar conversa ou contato..."
+                        placeholder="Pesquisar conversa, grupo ou contato..."
                         value={searchInput}
                         onChange={(e) => setSearchInput(e.target.value)}
                         className="h-9 pl-9 pr-8 text-[13.5px] bg-white dark:bg-[#111b21] border border-border/20 rounded-lg focus-visible:ring-1 focus-visible:ring-[#00a884] placeholder:text-[#667781] dark:placeholder:text-[#8696a0]"
@@ -827,7 +1138,7 @@ export function ChatList({ sessionId, onSelectChat, selectedJid }: ChatListProps
                     )}
                 </div>
 
-                {/* Quick Filters: Tudo, Contatos, Grupos, Fixados, Etiquetas */}
+                {/* Quick Filters: Tudo, Não lidas, Contatos, Grupos, Fixados, Etiquetas */}
                 <div className="flex items-center gap-1.5 pt-0.5 overflow-x-auto no-scrollbar">
                     <button
                         onClick={() => { setFilterType("all"); setSelectedLabelId(null); }}
@@ -853,7 +1164,7 @@ export function ChatList({ sessionId, onSelectChat, selectedJid }: ChatListProps
                         {totalUnreadCount > 0 && (
                             <span className={cn(
                                 "px-1.5 py-0.2 rounded-full text-[10px] font-bold tabular-nums",
-                                filterType === "unread" && !selectedLabelId ? "bg-white text-[#00a884]" : "bg-[#00a884] text-white"
+                                filterType === "unread" && !selectedLabelId ? "bg-white text-[#00a884]" : "bg-[#25d366] text-white"
                             )}>
                                 {totalUnreadCount}
                             </span>
@@ -869,7 +1180,10 @@ export function ChatList({ sessionId, onSelectChat, selectedJid }: ChatListProps
                         )}
                     >
                         <User className="h-3 w-3" />
-                        Contatos
+                        <span>Contatos</span>
+                        {totalContactsCount > 0 && (
+                            <span className="text-[10px] opacity-80">({totalContactsCount})</span>
+                        )}
                     </button>
                     <button
                         onClick={() => { setFilterType("groups"); setSelectedLabelId(null); }}
@@ -881,7 +1195,10 @@ export function ChatList({ sessionId, onSelectChat, selectedJid }: ChatListProps
                         )}
                     >
                         <Users className="h-3 w-3" />
-                        Grupos
+                        <span>Grupos</span>
+                        {totalGroupsCount > 0 && (
+                            <span className="text-[10px] opacity-80">({totalGroupsCount})</span>
+                        )}
                     </button>
                     <button
                         onClick={() => { setFilterType("pinned"); setSelectedLabelId(null); }}
@@ -1031,7 +1348,7 @@ export function ChatList({ sessionId, onSelectChat, selectedJid }: ChatListProps
                         computeItemKey={(_: number, chat: ChatContact) => chat.jid}
                         itemContent={itemContent}
                         endReached={handleEndReached}
-                        increaseViewportBy={300}
+                        increaseViewportBy={400}
                         components={{
                             Footer: () => hasMore && !loading && !searchInput.trim() ? (
                                 <div className="py-4 text-center">

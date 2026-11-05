@@ -158,7 +158,7 @@ export async function sendMediaMessage(formData: FormData) {
     try {
         const buffer = Buffer.from(await file.arrayBuffer());
 
-        await ChatService.sendMediaMessage(
+        const sendResult = await ChatService.sendMediaMessage(
             sessionId,
             jid,
             buffer,
@@ -168,10 +168,27 @@ export async function sendMediaMessage(formData: FormData) {
             caption
         );
 
-        return { success: true };
+        return {
+            success: true,
+            keyId: sendResult?.key?.id
+        };
     } catch (error: any) {
         console.error("Media send error:", error);
         throw new Error(`Failed to send media: ${error.message}`);
+    }
+}
+
+// Send typing / recording presence update to recipient
+export async function sendChatPresence(sessionId: string, jid: string, presence: "composing" | "recording" | "paused") {
+    try {
+        const user = await getAuthenticatedUserForAction();
+        if (!user) return { success: false };
+        const instance = waManager.getInstance(sessionId);
+        if (!instance?.socket) return { success: false };
+        await instance.socket.sendPresenceUpdate(presence, jid);
+        return { success: true };
+    } catch {
+        return { success: false };
     }
 }
 

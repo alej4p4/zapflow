@@ -3,7 +3,7 @@
 import { useState, useEffect } from "react";
 import { ChatList } from "./chat-list";
 import { ChatWindow } from "./chat-window";
-import { MessageCircle, Lock, ShieldCheck } from "lucide-react";
+import { MessageCircle, Lock } from "lucide-react";
 
 interface ChatLayoutClientProps {
     sessionId: string;
@@ -53,6 +53,18 @@ export function ChatLayoutClient({ sessionId, initialJid }: ChatLayoutClientProp
         };
         window.addEventListener("popstate", handlePopState);
         return () => window.removeEventListener("popstate", handlePopState);
+    }, []);
+
+    // Listen for zapflow:open-chat event (e.g., clicking a group member in the right drawer to message privately)
+    useEffect(() => {
+        const handleOpenChatEvent = (e: Event) => {
+            const detail = (e as CustomEvent<{ jid: string; name?: string; profilePic?: string | null }>).detail;
+            if (detail?.jid) {
+                setSelectedChat({ jid: detail.jid, name: detail.name, profilePic: detail.profilePic });
+            }
+        };
+        window.addEventListener("zapflow:open-chat", handleOpenChatEvent);
+        return () => window.removeEventListener("zapflow:open-chat", handleOpenChatEvent);
     }, []);
 
     const handleSelectChat = (jid: string, name?: string, profilePic?: string | null) => {
@@ -114,5 +126,5 @@ export function ChatLayoutClient({ sessionId, initialJid }: ChatLayoutClientProp
                 )}
             </div>
         </div>
-    )
+    );
 }

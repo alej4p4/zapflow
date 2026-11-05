@@ -190,6 +190,13 @@ export const bindSessionStore = (sock: WASocket, sessionId: string, io: Server |
                     data: { status: status as any }
                 });
 
+                // Emit real-time status checkmarks (SENT -> DELIVERED -> READ) to frontend
+                io?.to(sessionId).emit("message.status", {
+                    keyId,
+                    remoteJid: update.key?.remoteJid,
+                    status
+                });
+
                 // Dispatch webhook for message status update
                 dispatchWebhook(sessionId, "message.status", {
                     keyId,
@@ -508,18 +515,21 @@ async function processAndSaveMessage(
         senderJid = await resolveToPhoneJid(senderJid, dbSessionId, remoteJidAlt);
     }
 
+    const finalNormalizedRemoteJid = normalizeJid(normalizedRemoteJid);
 
-    // Download Media First (to save URL to DB)
-    let fileUrl: string | null = null;
-    try {
-        fileUrl = await downloadAndSaveMedia(msg, sessionId);
-    } catch (e) {
-        logger.error("Store", "Error downloading media in store", e);
-    }
-
-    // Extract contextInfo (quoted message ID)
+    // Extract contextInfo (quoted message ID) BEFORE downloading media so we can emit instant socket update
     let quoteId: string | null = null;
     let quotedThumbnail: string | null = null;
+    let quotedPreviewObj: {
+        keyId: string;
+        content: string | null;
+        fromMe: boolean;
+        senderJid: string | null;
+        pushName: string | null;
+        type: string;
+        mediaUrl: string | null;
+    } | null = null;
+
     if (msg.message) {
         const msgObj = msg.message as any;
         for (const key of Object.keys(msgObj)) {
@@ -561,8 +571,17 @@ async function processAndSaveMessage(
                             qContent = qMsg.extendedTextMessage.text || null;
                         }
 
+                        quotedPreviewObj = {
+                            keyId: quoteId!,
+                            content: qContent,
+                            fromMe: Boolean(contextInfo.participant && (contextInfo.participant.includes(sessionId) || contextInfo.participant.includes("me"))),
+                            senderJid: contextInfo.participant || null,
+                            pushName: null,
+                            type: qType,
+                            mediaUrl: quotedThumbnail
+                        };
+
                         if (dbSessionId && quoteId) {
-                            // Upsert: se a mensagem citada já existe, garante thumbnail; se não existia, cria registro histórico
                             prisma.message.upsert({
                                 where: {
                                     sessionId_keyId: {
@@ -575,7 +594,7 @@ async function processAndSaveMessage(
                                 },
                                 create: {
                                     sessionId: dbSessionId,
-                                    remoteJid: normalizeJid(normalizedRemoteJid),
+                                    remoteJid: finalNormalizedRemoteJid,
                                     senderJid: contextInfo.participant || null,
                                     fromMe: Boolean(contextInfo.participant && (contextInfo.participant.includes(sessionId) || contextInfo.participant.includes("me"))),
                                     keyId: quoteId,
@@ -595,11 +614,49 @@ async function processAndSaveMessage(
         }
     }
 
+    // ⚡ INSTANT REAL-TIME SOCKET EMIT (< 15ms) before media download / DB write finishes!
+    if (triggerWebhook && io) {
+        let inlineMediaPreview: string | null = null;
+        if (mediaInfo?.media?.jpegThumbnail) {
+            try {
+                const buf = Buffer.isBuffer(mediaInfo.media.jpegThumbnail)
+                    ? mediaInfo.media.jpegThumbnail
+                    : Buffer.from(mediaInfo.media.jpegThumbnail);
+                inlineMediaPreview = `data:image/jpeg;base64,${buf.toString('base64')}`;
+            } catch {}
+        }
+
+        io.to(sessionId).emit('message.update', [{
+            id: keyId,
+            sessionId: dbSessionId,
+            remoteJid: finalNormalizedRemoteJid,
+            senderJid,
+            fromMe: fromMe || false,
+            keyId,
+            pushName,
+            type: messageType,
+            content: text,
+            mediaUrl: inlineMediaPreview,
+            status: fromMe ? "SENT" : "PENDING",
+            timestamp: timestamp.toISOString(),
+            quoteId,
+            quoted: quotedPreviewObj
+        }]);
+    }
+
+    // Download Media (to save URL to DB)
+    let fileUrl: string | null = null;
+    try {
+        fileUrl = await downloadAndSaveMedia(msg, sessionId);
+    } catch (e) {
+        logger.error("Store", "Error downloading media in store", e);
+    }
+
     try {
         const newMessage = await prisma.message.create({
             data: {
                 sessionId: dbSessionId,
-                remoteJid: normalizeJid(normalizedRemoteJid),
+                remoteJid: finalNormalizedRemoteJid,
                 senderJid,
                 fromMe: fromMe || false,
                 keyId,
@@ -625,102 +682,69 @@ async function processAndSaveMessage(
             }).catch(() => {});
         }
         
-        // Ensure contact exists (Upsert Contact)
-        const finalRemoteJid = normalizeJid(normalizedRemoteJid);
-        if (remoteJid && !remoteJid.includes('@g.us') && !remoteJid.includes('status@broadcast')) {
-            const contactJid = finalRemoteJid; // Use fully normalized JID
-            const contactData: any = {
-                sessionId: dbSessionId,
-                jid: contactJid
-            };
-
-            // Only update name/notify if message is FROM the contact (not from me)
-            if (!fromMe) {
-                if (pushName) contactData.notify = pushName;
-                if (pushName) contactData.name = pushName;
-            }
-
-            const contact = await prisma.contact.upsert({
-                where: { sessionId_jid: { sessionId: dbSessionId, jid: contactJid } },
-                create: {
-                    sessionId: dbSessionId,
-                    jid: contactJid,
-                    notify: !fromMe ? pushName : undefined,
-                    name: !fromMe ? pushName : undefined,
-                    // @ts-ignore
-                    remoteJidAlt: remoteJidAlt || undefined
-                },
-                update: !fromMe ? {
-                    notify: pushName,
-                    // @ts-ignore
-                    remoteJidAlt: remoteJidAlt || undefined
-                } : {}
-            });
-
-            // If it is a group message, ensure participant contact exists with pushName
-            const effectiveParticipant = msg.key.participant || msg.participant;
-            if (isGroup && effectiveParticipant && pushName && !fromMe) {
-                const participantJid = normalizeJid(effectiveParticipant);
-                try {
+        // Non-blocking background Contact & Group Participant Upsert + Welcome Message
+        const finalRemoteJid = finalNormalizedRemoteJid;
+        void (async () => {
+            try {
+                if (remoteJid && !remoteJid.includes('@g.us') && !remoteJid.includes('status@broadcast')) {
+                    const contactJid = finalRemoteJid;
                     await prisma.contact.upsert({
-                        where: { sessionId_jid: { sessionId: dbSessionId, jid: participantJid } },
+                        where: { sessionId_jid: { sessionId: dbSessionId, jid: contactJid } },
                         create: {
                             sessionId: dbSessionId,
-                            jid: participantJid,
-                            notify: pushName,
-                            name: pushName,
+                            jid: contactJid,
+                            notify: !fromMe ? pushName : undefined,
+                            name: !fromMe ? pushName : undefined,
                             // @ts-ignore
-                            remoteJidAlt: remoteJidAlt || undefined,
-                            // @ts-ignore
-                            lid: isLidJid(effectiveParticipant) ? effectiveParticipant : undefined
+                            remoteJidAlt: remoteJidAlt || undefined
                         },
-                        update: {
+                        update: !fromMe ? {
                             notify: pushName,
-                            name: pushName,
                             // @ts-ignore
-                            remoteJidAlt: remoteJidAlt || undefined,
-                            // @ts-ignore
-                            lid: isLidJid(effectiveParticipant) ? effectiveParticipant : undefined
-                        }
+                            remoteJidAlt: remoteJidAlt || undefined
+                        } : {}
                     });
-                    if (remoteJidAlt) {
-                        const altJid = normalizeJid(remoteJidAlt);
+
+                    // Welcome Message Logic
+                    if (!fromMe && triggerWebhook && config?.welcomeMessage && sock) {
+                        const msgCount = await prisma.message.count({
+                            where: { sessionId: dbSessionId, remoteJid: finalRemoteJid }
+                        });
+                        if (msgCount === 1) {
+                            logger.info("Store", `Sending welcome message to ${finalRemoteJid}`);
+                            await sock.sendMessage(finalRemoteJid, { text: config.welcomeMessage });
+                        }
+                    }
+                } else if (isGroup && !fromMe && pushName) {
+                    const effectiveParticipant = msg.key.participant || msg.participant;
+                    if (effectiveParticipant) {
+                        const participantJid = normalizeJid(effectiveParticipant);
                         await prisma.contact.upsert({
-                            where: { sessionId_jid: { sessionId: dbSessionId, jid: altJid } },
+                            where: { sessionId_jid: { sessionId: dbSessionId, jid: participantJid } },
                             create: {
                                 sessionId: dbSessionId,
-                                jid: altJid,
+                                jid: participantJid,
                                 notify: pushName,
                                 name: pushName,
                                 // @ts-ignore
-                                remoteJidAlt: participantJid
+                                remoteJidAlt: remoteJidAlt || undefined,
+                                // @ts-ignore
+                                lid: isLidJid(effectiveParticipant) ? effectiveParticipant : undefined
                             },
                             update: {
                                 notify: pushName,
-                                name: pushName,
                                 // @ts-ignore
-                                remoteJidAlt: participantJid
+                                remoteJidAlt: remoteJidAlt || undefined,
+                                // @ts-ignore
+                                lid: isLidJid(effectiveParticipant) ? effectiveParticipant : undefined
                             }
                         });
                     }
-                } catch (e) {
-                    // Ignore silent upsert race conditions
                 }
+            } catch {
+                // Ignore background contact upsert race conditions
             }
-
-            // Welcome Message Logic
-            if (!fromMe && triggerWebhook && config?.welcomeMessage && sock) {
-                // Let's check if message count for this contact is exactly 1 (the one we just saved)
-                const msgCount = await prisma.message.count({
-                    where: { sessionId: dbSessionId, remoteJid: finalRemoteJid }
-                });
-
-                if (msgCount === 1) {
-                    logger.info("Store", `Sending welcome message to ${finalRemoteJid}`);
-                    await sock.sendMessage(finalRemoteJid, { text: config.welcomeMessage });
-                }
-            }
-        }
+        })();
 
         // Trigger webhook for new messages only (not history sync)
         if (triggerWebhook) {
@@ -731,7 +755,10 @@ async function processAndSaveMessage(
             }
         }
 
-        return newMessage;
+        return {
+            ...newMessage,
+            quoted: quotedPreviewObj
+        };
     } catch (e: any) {
         logger.error("Store", "Error saving message query", e);
         throw e;

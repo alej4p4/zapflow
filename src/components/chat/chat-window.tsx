@@ -42,7 +42,8 @@ import {
     Forward,
     User,
     RefreshCw,
-    Tag
+    Tag,
+    MessageCircle
 } from "lucide-react";
 import { LabelAssignPopover, LabelData } from "./label-assign-popover";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -70,7 +71,7 @@ import { globalChatListCache } from "./chat-list";
 
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
-import { sendChatMessage, sendMediaMessage, reactToChatMessage } from "@/app/dashboard/chat/actions";
+import { sendChatMessage, sendMediaMessage, reactToChatMessage, sendChatPresence } from "@/app/dashboard/chat/actions";
 import { useSocket } from "./socket-context";
 import { chatCache, fetchOrGetChatMessages, type Message, type GroupParticipant } from "./chat-cache";
 
@@ -1040,19 +1041,40 @@ function ChatInfoAndMediaModal({
                                 {filteredParticipants.length === 0 ? (
                                     <p className="p-4 text-xs text-muted-foreground text-center">Nenhum membro encontrado.</p>
                                 ) : (
-                                    filteredParticipants.map(p => (
-                                        <div key={p.id} className="p-2.5 flex items-center justify-between gap-3 hover:bg-muted/40 transition-colors">
-                                            <div className="flex items-center gap-2.5 min-w-0">
-                                                <div className="h-8 w-8 rounded-full bg-[#00a884]/20 text-[#00a884] font-bold text-xs flex items-center justify-center shrink-0">
-                                                    {(p.name || p.id).slice(0, 1).toUpperCase()}
+                                    filteredParticipants.map(p => {
+                                        const rawNum = (p.phoneNumber || p.id || "").split("@")[0].replace(/\D/g, "");
+                                        const targetJid = rawNum ? `${rawNum}@s.whatsapp.net` : p.id;
+                                        return (
+                                            <div key={p.id} className="p-2.5 flex items-center justify-between gap-3 hover:bg-muted/40 transition-colors">
+                                                <div className="flex items-center gap-2.5 min-w-0">
+                                                    <div className="h-8 w-8 rounded-full bg-[#00a884]/20 text-[#00a884] font-bold text-xs flex items-center justify-center shrink-0">
+                                                        {(p.name || p.id).slice(0, 1).toUpperCase()}
+                                                    </div>
+                                                    <div className="min-w-0">
+                                                        <span className="text-xs font-medium text-foreground block truncate">{p.name || "Participante"}</span>
+                                                        <span className="text-[10px] font-mono text-muted-foreground block truncate">{p.phoneNumber || p.id}</span>
+                                                    </div>
                                                 </div>
-                                                <div className="min-w-0">
-                                                    <span className="text-xs font-medium text-foreground block truncate">{p.name || "Participante"}</span>
-                                                    <span className="text-[10px] font-mono text-muted-foreground block truncate">{p.phoneNumber || p.id}</span>
-                                                </div>
+                                                {targetJid && (
+                                                    <Button
+                                                        type="button"
+                                                        variant="ghost"
+                                                        size="sm"
+                                                        className="h-7 px-2.5 text-[11px] text-[#00a884] hover:bg-[#00a884]/10 gap-1 shrink-0 cursor-pointer"
+                                                        onClick={() => {
+                                                            window.dispatchEvent(new CustomEvent("zapflow:open-chat", {
+                                                                detail: { jid: targetJid, name: p.name || rawNum }
+                                                            }));
+                                                            onClose();
+                                                        }}
+                                                    >
+                                                        <MessageCircle className="h-3.5 w-3.5" />
+                                                        Conversar
+                                                    </Button>
+                                                )}
                                             </div>
-                                        </div>
-                                    ))
+                                        );
+                                    })
                                 )}
                             </div>
                         </div>
@@ -1260,6 +1282,7 @@ function ChatInputBar({
     onSend,
     onSendAudio,
     onUpload,
+    onPasteFile,
     replyingTo,
     onCancelReply,
     jid,
@@ -1270,6 +1293,7 @@ function ChatInputBar({
     onSend: (text: string, mentions?: string[]) => void;
     onSendAudio?: (blob: Blob, mimeType: string) => void;
     onUpload: (type: string) => void;
+    onPasteFile?: (file: File) => void;
     replyingTo: Message | null;
     onCancelReply: () => void;
     jid: string;
@@ -1279,6 +1303,7 @@ function ChatInputBar({
 }) {
     const [input, setInput] = useState("");
     const inputRef = useRef<HTMLTextAreaElement>(null);
+    const lastTypingSentRef = useRef<number>(0);
 
     // Audio recording state
     const [isRecording, setIsRecording] = useState(false);
@@ -1375,6 +1400,9 @@ function ChatInputBar({
             recorder.start(250);
             setIsRecording(true);
             setRecordingTime(0);
+            if (sessionId && jid) {
+                sendChatPresence(sessionId, jid, "recording").catch(() => {});
+            }
 
             if (recordingTimerRef.current) clearInterval(recordingTimerRef.current);
             recordingTimerRef.current = setInterval(() => {
@@ -1491,6 +1519,15 @@ function ChatInputBar({
         const el = e.target;
         el.style.height = "auto";
         el.style.height = Math.min(el.scrollHeight, 120) + "px";
+
+        // Send typing presence (throttled every 4 seconds)
+        if (sessionId && jid && val.trim().length > 0) {
+            const now = Date.now();
+            if (now - lastTypingSentRef.current > 4000) {
+                lastTypingSentRef.current = now;
+                sendChatPresence(sessionId, jid, "composing").catch(() => {});
+            }
+        }
 
         const cursor = el.selectionStart || 0;
         const textBefore = val.slice(0, cursor);
@@ -1864,7 +1901,29 @@ function ChatInputBar({
                             value={input}
                             onChange={handleInputChange}
                             onKeyDown={handleKeyDown}
-                            placeholder={isGroup ? "Digite uma mensagem, / para respostas rápidas ou @..." : "Digite uma mensagem ou / para respostas rápidas..."}
+                            onPaste={(e) => {
+                                if (!onPasteFile) return;
+                                const items = e.clipboardData?.items;
+                                if (items) {
+                                    for (let i = 0; i < items.length; i++) {
+                                        const item = items[i];
+                                        if (item.kind === "file") {
+                                            const file = item.getAsFile();
+                                            if (file) {
+                                                e.preventDefault();
+                                                onPasteFile(file);
+                                                return;
+                                            }
+                                        }
+                                    }
+                                }
+                                const files = e.clipboardData?.files;
+                                if (files && files.length > 0) {
+                                    e.preventDefault();
+                                    onPasteFile(files[0]);
+                                }
+                            }}
+                            placeholder={isGroup ? "Digite uma mensagem, / para respostas rápidas, @ ou Ctrl+V para colar print..." : "Digite uma mensagem, / para respostas rápidas ou Ctrl+V para colar print..."}
                             rows={1}
                             style={{ minHeight: "26px", maxHeight: "120px" }}
                             className="w-full resize-none bg-transparent text-[15px] text-[#111b21] dark:text-[#e9edef] placeholder-[#8696a0] focus:outline-none leading-relaxed py-1"
@@ -2182,18 +2241,38 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
                 let filtered = prev;
                 for (const nm of relevant) {
                     if (nm.fromMe) {
-                        filtered = filtered.filter(p => !(p.keyId.startsWith("temp-") && p.content === nm.content));
+                        filtered = filtered.filter(p => !(p.keyId.startsWith("temp-") && (p.content === nm.content || p.type === nm.type)));
                     }
                 }
 
-                const combined = [...filtered, ...relevant];
-                const unique = Array.from(new Map(combined.map(m => [m.keyId, m])).values());
+                // Merge by keyId so two-phase updates (instant text/thumb -> full mediaUrl) preserve existing fields
+                const mapByKey = new Map<string, Message>();
+                for (const m of filtered) {
+                    mapByKey.set(m.keyId, m);
+                }
+                for (const nm of relevant) {
+                    const existing = mapByKey.get(nm.keyId);
+                    if (existing) {
+                        mapByKey.set(nm.keyId, {
+                            ...existing,
+                            ...nm,
+                            mediaUrl: nm.mediaUrl || existing.mediaUrl,
+                            quoted: nm.quoted || existing.quoted,
+                            reactions: nm.reactions || existing.reactions,
+                            userReaction: nm.userReaction || existing.userReaction
+                        });
+                    } else {
+                        mapByKey.set(nm.keyId, nm);
+                    }
+                }
+                const unique = Array.from(mapByKey.values());
                 const sorted = unique.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
 
                 // Keep cache in sync
                 const cacheKey = `${sessionId}:${jid}`;
                 const cached = chatCache.get(cacheKey);
                 chatCache.set(cacheKey, {
+                    ...(cached || {}),
                     messages: sorted,
                     hasMore: cached?.hasMore ?? false,
                     oldestTimestamp: sorted.length > 0 ? sorted[0].timestamp : null,
@@ -2204,6 +2283,30 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
             });
         };
         socket.on("message.update", handler);
+
+        const statusHandler = (data: { keyId: string; remoteJid?: string; status: string }) => {
+            if (!data?.keyId || !data?.status) return;
+            setMessages(prev => {
+                let updatedAny = false;
+                const next = prev.map(m => {
+                    if (m.keyId === data.keyId && m.status !== data.status) {
+                        updatedAny = true;
+                        return { ...m, status: data.status };
+                    }
+                    return m;
+                });
+                if (updatedAny) {
+                    const cacheKey = `${sessionId}:${jid}`;
+                    const cached = chatCache.get(cacheKey);
+                    if (cached) {
+                        cached.messages = next;
+                    }
+                    return next;
+                }
+                return prev;
+            });
+        };
+        socket.on("message.status", statusHandler);
 
         const reactionHandler = (data: { keyId: string; emoji: string; fromMe?: boolean }) => {
             if (!data?.keyId) return;
@@ -2271,6 +2374,7 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
         return () => {
             socket.off("connect", onConnect);
             socket.off("message.update", handler);
+            socket.off("message.status", statusHandler);
             socket.off("message.reaction", reactionHandler);
             socket.off("message.edit", editHandler);
             socket.off("presence.update", presenceHandler);
@@ -2409,13 +2513,44 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
         formData.append("sessionId", sessionId);
         formData.append("jid", jid);
         if (caption) formData.append("caption", caption);
+
+        // 0ms Optimistic Media Render (Image, Video, Document, Audio)
+        const localBlobUrl = URL.createObjectURL(file);
+        const tempKeyId = `temp-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+        const nowIso = new Date().toISOString();
+        const mappedMsgType = type === "image" ? "IMAGE" : type === "video" ? "VIDEO" : type === "audio" ? "AUDIO" : "DOCUMENT";
+        const displayContent = caption || (mappedMsgType === "DOCUMENT" ? file.name : "");
+
+        const optimisticMsg: Message = {
+            id: tempKeyId,
+            keyId: tempKeyId,
+            remoteJid: jid,
+            fromMe: true,
+            pushName: undefined,
+            type: mappedMsgType,
+            content: displayContent,
+            mediaUrl: localBlobUrl,
+            status: "PENDING",
+            timestamp: nowIso,
+            quoteId: replyingTo?.keyId || null,
+        };
+
+        setReplyingTo(null);
+        setMessages(prev => [...prev, optimisticMsg]);
+        requestAnimationFrame(() => scrollToBottom(true));
+
+        if (typeof window !== "undefined") {
+            window.dispatchEvent(new CustomEvent("zapflow:local-message-sent", {
+                detail: { jid, content: displayContent || file.name, timestamp: nowIso, type: mappedMsgType, keyId: tempKeyId }
+            }));
+        }
+
         try {
-            toast.info(`Enviando ${file.name}...`);
-            await sendMediaMessage(formData);
-            toast.success("Mídia enviada!");
-            setTimeout(() => fetchMessages(), 800);
+            const res = await sendMediaMessage(formData);
+            setMessages(prev => prev.map(m => m.keyId === tempKeyId ? { ...m, keyId: res?.keyId || m.keyId, status: "SENT" } : m));
         } catch (error: any) {
             toast.error(error.message || "Falha ao enviar a mídia");
+            setMessages(prev => prev.map(m => m.keyId === tempKeyId ? { ...m, status: "FAILED" } : m));
         }
     };
 
@@ -3386,12 +3521,33 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
                 onSend={handleSend}
                 onSendAudio={handleSendAudio}
                 onUpload={triggerUpload}
+                onPasteFile={(file) => initiateFilePreview(file)}
                 replyingTo={replyingTo}
                 onCancelReply={() => setReplyingTo(null)}
                 jid={jid}
                 sessionId={sessionId}
                 isGroup={isGroup}
                 participants={participantsList}
+            />
+
+            {/* Group / Contact Info, Media, Links, Docs & Members Modal (#C7) */}
+            <ChatInfoAndMediaModal
+                isOpen={isChatInfoModalOpen}
+                onClose={() => setIsChatInfoModalOpen(false)}
+                name={displayName}
+                jid={jid}
+                profilePic={profilePic || undefined}
+                isGroup={isGroup}
+                messages={messages}
+                participants={participantsList}
+                sessionId={sessionId}
+                initialTab={chatInfoModalTab}
+                onPreviewMedia={(src, caption) => {
+                    setIsChatInfoModalOpen(false);
+                    setLightboxMedia({ src, caption });
+                }}
+                onExportParticipants={exportGroupParticipants}
+                onSendBroadcastToMembers={sendBroadcastToGroupMembers}
             />
 
             {/* Lightbox Modal (WhatsApp Web Style) */}

@@ -24,13 +24,14 @@ export class ChatService {
             timestamp: Date;
             type: string;
             fromMe: boolean;
+            status?: string;
         }> = [];
 
         if (isPostgres) {
             const sql = `
-                SELECT "remoteJid", "content", "timestamp", "type", "fromMe"
+                SELECT "remoteJid", "content", "timestamp", "type", "fromMe", "status"
                 FROM (
-                    SELECT DISTINCT ON ("remoteJid") "remoteJid", "content", "timestamp", "type", "fromMe"
+                    SELECT DISTINCT ON ("remoteJid") "remoteJid", "content", "timestamp", "type", "fromMe", "status"
                     FROM "Message"
                     WHERE "sessionId" = $1
                     ${before ? 'AND "timestamp" < $2' : ''}
@@ -54,8 +55,9 @@ export class ChatService {
                 timestamp: Date;
                 type: string;
                 fromMe: boolean;
+                status?: string;
             }>>(`
-                SELECT m1.remoteJid, m1.content, m1.timestamp, m1.type, m1.fromMe
+                SELECT m1.remoteJid, m1.content, m1.timestamp, m1.type, m1.fromMe, m1.status
                 FROM Message m1
                 INNER JOIN (
                     SELECT remoteJid, MAX(timestamp) as max_ts
@@ -70,28 +72,46 @@ export class ChatService {
             `, ...qParams);
         }
 
-        // Fast return if no messages
-        if (rawLastMessages.length === 0) return [];
-
-        // 2. Batch fetch contacts & groups ONLY for JIDs that have messages
+        // 2. Fetch all groups and contacts in parallel so ALL groups and contacts load instantaneously (0ms)
         const jids = rawLastMessages.map(m => m.remoteJid);
-        const [contacts, groups] = await Promise.all([
-            prisma.contact.findMany({
-                where: { sessionId: dbSessionId, jid: { in: jids } },
-                select: { jid: true, name: true, notify: true, profilePic: true }
-            }),
-            prisma.group.findMany({
-                where: { sessionId: dbSessionId, jid: { in: jids } },
-                select: { jid: true, subject: true }
-            })
+        const [contactsForMessages, allGroups, directoryContacts] = await Promise.all([
+            jids.length > 0
+                ? prisma.contact.findMany({
+                      where: { sessionId: dbSessionId, jid: { in: jids } },
+                      select: { jid: true, name: true, notify: true, profilePic: true }
+                  })
+                : Promise.resolve([]),
+            !before
+                ? prisma.group.findMany({
+                      where: { sessionId: dbSessionId },
+                      select: { jid: true, subject: true, updatedAt: true },
+                      orderBy: { subject: "asc" }
+                  })
+                : prisma.group.findMany({
+                      where: { sessionId: dbSessionId, jid: { in: jids } },
+                      select: { jid: true, subject: true, updatedAt: true }
+                  }),
+            !before
+                ? prisma.contact.findMany({
+                      where: {
+                          sessionId: dbSessionId,
+                          jid: { endsWith: "@s.whatsapp.net" },
+                          OR: [{ name: { not: null } }, { notify: { not: null } }]
+                      },
+                      select: { jid: true, name: true, notify: true, profilePic: true },
+                      orderBy: { name: "asc" },
+                      take: 500
+                  })
+                : Promise.resolve([])
         ]);
 
         // Build lookup map
         const infoMap = new Map<string, { name: string | null; notify: string | null; profilePic: string | null }>();
-        contacts.forEach(c => infoMap.set(c.jid, { name: c.name, notify: c.notify, profilePic: (c.profilePic && c.profilePic.startsWith("http")) ? c.profilePic : null }));
-        groups.forEach(g => infoMap.set(g.jid, { name: g.subject, notify: g.subject, profilePic: null }));
+        directoryContacts.forEach(c => infoMap.set(c.jid, { name: c.name, notify: c.notify, profilePic: (c.profilePic && c.profilePic.startsWith("http")) ? c.profilePic : null }));
+        contactsForMessages.forEach(c => infoMap.set(c.jid, { name: c.name, notify: c.notify, profilePic: (c.profilePic && c.profilePic.startsWith("http")) ? c.profilePic : null }));
+        allGroups.forEach(g => infoMap.set(g.jid, { name: g.subject, notify: g.subject, profilePic: null }));
 
-        // 3. Build result array (already sorted by SQL DESC)
+        // 3. Build result array: first chats with messages (sorted by latest timestamp DESC)
         const result: any[] = [];
         const seenJids = new Set<string>();
         for (const msg of rawLastMessages) {
@@ -110,9 +130,38 @@ export class ChatService {
                         ? msg.timestamp.toISOString()
                         : String(msg.timestamp),
                     type: msg.type,
-                    fromMe: Boolean(msg.fromMe)
+                    fromMe: Boolean(msg.fromMe),
+                    status: msg.status || "SENT"
                 }
             });
+        }
+
+        // 4. Append all remaining groups (even without messages yet) so "Grupos" tab & search are 100% complete in 0ms
+        if (!before) {
+            for (const g of allGroups) {
+                if (seenJids.has(g.jid)) continue;
+                seenJids.add(g.jid);
+                result.push({
+                    jid: g.jid,
+                    name: g.subject,
+                    notify: g.subject,
+                    profilePic: null,
+                    lastMessage: undefined
+                });
+            }
+
+            // 5. Append saved directory contacts so "Contatos" tab & search are 100% immediate in 0ms
+            for (const c of directoryContacts) {
+                if (seenJids.has(c.jid)) continue;
+                seenJids.add(c.jid);
+                result.push({
+                    jid: c.jid,
+                    name: c.name || c.notify || null,
+                    notify: c.notify || null,
+                    profilePic: (c.profilePic && c.profilePic.startsWith("http")) ? c.profilePic : null,
+                    lastMessage: undefined
+                });
+            }
         }
 
         // 4. Apply in-memory search filter if needed
