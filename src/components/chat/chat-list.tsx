@@ -400,6 +400,20 @@ function ChatRow({
                                 </span>
                             )}
 
+                            {/* Mark Read / Unread Button on Hover (#C18) */}
+                            <Button
+                                variant="ghost"
+                                size="icon"
+                                title={unreadCount > 0 ? "Marcar como lida" : "Marcar como não lida"}
+                                className="h-6 w-6 rounded-full opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground hover:text-[#25d366] shrink-0"
+                                onClick={(e) => {
+                                    e.stopPropagation();
+                                    onToggleRead(chat.jid, unreadCount > 0);
+                                }}
+                            >
+                                {unreadCount > 0 ? <CheckCheck className="h-3.5 w-3.5 text-[#25d366]" /> : <Eye className="h-3.5 w-3.5" />}
+                            </Button>
+
                             {/* Pin / Unpin Button on Hover */}
                             <Button
                                 variant="ghost"
@@ -650,10 +664,21 @@ export function ChatList({ sessionId, onSelectChat, selectedJid }: ChatListProps
             savePersistedChatList(sessionId, next);
             return next;
         });
+        if (typeof window !== "undefined") {
+            try {
+                const raw = localStorage.getItem(`zapflow_unread_${sessionId}`);
+                if (raw) {
+                    const list: string[] = JSON.parse(raw);
+                    if (Array.isArray(list) && list.includes(jid)) {
+                        localStorage.setItem(`zapflow_unread_${sessionId}`, JSON.stringify(list.filter(x => x !== jid)));
+                    }
+                }
+            } catch {}
+        }
         onSelectChat(jid, name, profilePic);
     }, [onSelectChat, sessionId]);
 
-    // Mark Chat as Read / Unread manually
+    // Mark Chat as Read / Unread manually (#C18)
     const handleToggleRead = useCallback(async (jid: string, currentlyUnread: boolean) => {
         const nextStatus = !currentlyUnread;
         setChats(prev => {
@@ -661,18 +686,24 @@ export function ChatList({ sessionId, onSelectChat, selectedJid }: ChatListProps
             savePersistedChatList(sessionId, next);
             return next;
         });
+        if (typeof window !== "undefined") {
+            try {
+                const raw = localStorage.getItem(`zapflow_unread_${sessionId}`);
+                const list: string[] = raw ? JSON.parse(raw) : [];
+                const updated = currentlyUnread
+                    ? list.filter(x => x !== jid)
+                    : Array.from(new Set([...list, jid]));
+                localStorage.setItem(`zapflow_unread_${sessionId}`, JSON.stringify(updated));
+            } catch {}
+        }
+        toast.success(currentlyUnread ? "Conversa marcada como lida" : "Conversa marcada como não lida");
         try {
-            const res = await fetch(`/api/chat/${sessionId}/${encodeURIComponent(jid)}/read`, {
+            await fetch(`/api/chat/${sessionId}/${encodeURIComponent(jid)}/read`, {
                 method: "PUT",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ markRead: nextStatus })
             });
-            if (res.ok) {
-                toast.success(currentlyUnread ? "Conversa marcada como lida" : "Conversa marcada como não lida");
-            }
-        } catch {
-            toast.error("Erro ao alterar status da conversa");
-        }
+        } catch {}
     }, [sessionId]);
 
     // Toggle Pin / Unpin (Unlimited)
@@ -728,11 +759,22 @@ export function ChatList({ sessionId, onSelectChat, selectedJid }: ChatListProps
             const rawChats: any = await getChatsStatus(sessionId, PAGE_SIZE, cursor || undefined);
 
             const processChats = (newChatsList: ChatContact[], existingChatsList: ChatContact[] = []) => {
+                let manualUnreadSet = new Set<string>();
+                if (typeof window !== "undefined") {
+                    try {
+                        const raw = localStorage.getItem(`zapflow_unread_${sessionId}`);
+                        if (raw) {
+                            const parsed = JSON.parse(raw);
+                            if (Array.isArray(parsed)) manualUnreadSet = new Set(parsed);
+                        }
+                    } catch {}
+                }
                 const merged = new Map(existingChatsList.map(c => [c.jid, c]));
                 (newChatsList || []).forEach((c: any) => {
                     const existing = merged.get(c.jid);
+                    const forcedUnread = manualUnreadSet.has(c.jid) ? 1 : 0;
                     if (!existing) {
-                        merged.set(c.jid, c);
+                        merged.set(c.jid, { ...c, unreadCount: Math.max(c.unreadCount || 0, forcedUnread) });
                     } else {
                         const newTs = c.lastMessage?.timestamp ? new Date(c.lastMessage.timestamp).getTime() : 0;
                         const oldTs = existing.lastMessage?.timestamp ? new Date(existing.lastMessage.timestamp).getTime() : 0;
@@ -742,7 +784,7 @@ export function ChatList({ sessionId, onSelectChat, selectedJid }: ChatListProps
                             name: c.name || existing.name,
                             notify: c.notify || existing.notify,
                             profilePic: c.profilePic || existing.profilePic,
-                            unreadCount: existing.unreadCount || 0,
+                            unreadCount: Math.max(existing.unreadCount || 0, forcedUnread),
                             lastMessage: newTs >= oldTs ? (c.lastMessage || existing.lastMessage) : existing.lastMessage
                         });
                     }

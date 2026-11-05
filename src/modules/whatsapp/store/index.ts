@@ -487,12 +487,23 @@ async function processAndSaveMessage(
         text = messageContent.conversation;
     } else if (messageContent?.extendedTextMessage?.text) {
         text = messageContent.extendedTextMessage.text;
-    } else if (messageContent?.locationMessage) {
+    } else if (messageContent?.locationMessage || (messageContent as any)?.liveLocationMessage) {
+        const loc = messageContent?.locationMessage || (messageContent as any)?.liveLocationMessage;
         messageType = "LOCATION";
-        text = `${messageContent.locationMessage.degreesLatitude},${messageContent.locationMessage.degreesLongitude}`;
-    } else if (messageContent?.contactMessage) {
+        const lat = loc?.degreesLatitude ?? "";
+        const lng = loc?.degreesLongitude ?? "";
+        const locName = loc?.name || loc?.caption || "";
+        const locAddress = loc?.address || "";
+        text = locName || locAddress ? `${lat},${lng}|${locName}|${locAddress}` : `${lat},${lng}`;
+    } else if (messageContent?.contactMessage || (messageContent as any)?.contactsArrayMessage) {
         messageType = "CONTACT";
-        text = messageContent.contactMessage.displayName || "";
+        const cMsg = messageContent?.contactMessage || (messageContent as any)?.contactsArrayMessage?.contacts?.[0];
+        const dName = cMsg?.displayName || "Contato";
+        const vcard: string = cMsg?.vcard || "";
+        const waidMatch = vcard.match(/waid=(\d+)/i);
+        const telMatch = vcard.match(/TEL[^:]*:([+\d\s\-()]+)/i);
+        const extractedPhone = waidMatch?.[1] || (telMatch?.[1] ? telMatch[1].replace(/\D/g, "") : "");
+        text = extractedPhone ? `${dName}|${extractedPhone}` : dName;
     }
 
     // Determine effective participant for groups

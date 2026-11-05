@@ -46,7 +46,15 @@ import {
     MessageCircle,
     Pencil,
     Star,
-    Eye
+    Eye,
+    ZoomIn,
+    ZoomOut,
+    RotateCw,
+    ChevronLeft,
+    ChevronRight,
+    MapPin,
+    StickyNote,
+    CheckSquare
 } from "lucide-react";
 import { LabelAssignPopover, LabelData } from "./label-assign-popover";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -451,6 +459,7 @@ function ContextMenu({
     onTogglePin,
     onToggleStar,
     onForward,
+    onSelectMessages,
     isPinned,
     isStarred
 }: {
@@ -462,6 +471,7 @@ function ContextMenu({
     onTogglePin: (msg: Message) => void;
     onToggleStar?: (msg: Message) => void;
     onForward: (msg: Message) => void;
+    onSelectMessages?: (msg: Message) => void;
     isPinned: boolean;
     isStarred?: boolean;
 }) {
@@ -492,6 +502,7 @@ function ContextMenu({
         { label: "Responder", icon: CornerUpLeft, action: () => { onReply(state.msg); onClose(); } },
         ...(canEdit && onEdit ? [{ label: "Editar mensagem", icon: Pencil, action: () => { onEdit(state.msg); onClose(); } }] : []),
         { label: "Encaminhar", icon: Forward, action: () => { onForward(state.msg); onClose(); } },
+        ...(onSelectMessages ? [{ label: "Selecionar mensagens", icon: CheckSquare, action: () => { onSelectMessages(state.msg); onClose(); } }] : []),
         { label: isPinned ? "Desafixar mensagem" : "Fixar mensagem", icon: Pin, action: () => { onTogglePin(state.msg); onClose(); } },
         ...(onToggleStar ? [{ label: isStarred ? "Remover dos favoritos" : "Favoritar mensagem", icon: Star, action: () => { onToggleStar(state.msg); onClose(); } }] : []),
         { label: "Copiar texto", icon: Copy, action: handleCopy },
@@ -526,15 +537,22 @@ function ContextMenu({
 
 
 
-// ─── Forward Message Modal ──────────────────
+// ─── Forward Message Modal (Single or Multi-Message #C11 & #C19) ────────
 interface ForwardModalProps {
     sessionId: string;
-    message: Message | null;
+    message?: Message | null;
+    messagesList?: Message[];
     onClose: () => void;
     onForwardComplete?: () => void;
 }
 
-function ForwardModal({ sessionId, message, onClose, onForwardComplete }: ForwardModalProps) {
+function ForwardModal({ sessionId, message, messagesList, onClose, onForwardComplete }: ForwardModalProps) {
+    const itemsToForward = useMemo(() => {
+        if (messagesList && messagesList.length > 0) return messagesList;
+        if (message) return [message];
+        return [];
+    }, [message, messagesList]);
+
     const [searchQuery, setSearchQuery] = useState("");
     const [selectedJids, setSelectedJids] = useState<string[]>([]);
     const [isSending, setIsSending] = useState(false);
@@ -587,15 +605,21 @@ function ForwardModal({ sessionId, message, onClose, onForwardComplete }: Forwar
     };
 
     const handleConfirmForward = async () => {
-        if (selectedJids.length === 0 || !message) return;
+        if (selectedJids.length === 0 || itemsToForward.length === 0) return;
         setIsSending(true);
         try {
-            const res = await forwardChatMessage(sessionId, selectedJids, {
-                content: message.content,
-                type: message.type,
-                mediaUrl: message.mediaUrl
-            });
-            toast.success(`Mensagem encaminhada para ${res?.count || selectedJids.length} conversa(s)!`);
+            for (const msg of itemsToForward) {
+                await forwardChatMessage(sessionId, selectedJids, {
+                    content: msg.content,
+                    type: msg.type,
+                    mediaUrl: msg.mediaUrl
+                });
+            }
+            toast.success(
+                itemsToForward.length > 1
+                    ? `${itemsToForward.length} mensagens encaminhadas para ${selectedJids.length} conversa(s)!`
+                    : `Mensagem encaminhada para ${selectedJids.length} conversa(s)!`
+            );
             onForwardComplete?.();
             onClose();
         } catch (e: any) {
@@ -605,7 +629,8 @@ function ForwardModal({ sessionId, message, onClose, onForwardComplete }: Forwar
         }
     };
 
-    if (!message) return null;
+    if (itemsToForward.length === 0) return null;
+    const firstMsg = itemsToForward[0];
 
     return (
         <Dialog open={true} onOpenChange={(open) => { if (!open) onClose(); }}>
@@ -613,20 +638,32 @@ function ForwardModal({ sessionId, message, onClose, onForwardComplete }: Forwar
                 <DialogHeader className="p-4 pb-2 border-b border-border/20">
                     <DialogTitle className="text-base font-semibold flex items-center gap-2 text-foreground">
                         <Forward className="h-5 w-5 text-[#00a884]" />
-                        <span>Encaminhar mensagem</span>
+                        <span>
+                            {itemsToForward.length > 1
+                                ? `Encaminhar ${itemsToForward.length} mensagens`
+                                : "Encaminhar mensagem"}
+                        </span>
                     </DialogTitle>
                 </DialogHeader>
 
                 {/* Message preview snippet */}
                 <div className="mx-4 my-2 p-2.5 rounded-lg bg-muted/60 border border-border/30 text-xs text-muted-foreground flex items-center gap-2.5 border-l-4 border-l-[#00a884]">
-                    {message.type === "IMAGE" && message.mediaUrl && (
-                        <img src={message.mediaUrl} alt="Preview" className="h-9 w-9 rounded object-cover shrink-0" />
+                    {itemsToForward.length === 1 && firstMsg.type === "IMAGE" && firstMsg.mediaUrl && (
+                        <img src={firstMsg.mediaUrl} alt="Preview" className="h-9 w-9 rounded object-cover shrink-0" />
                     )}
                     <div className="min-w-0 flex-1 truncate">
-                        <span className="font-semibold text-foreground mr-1">
-                            {message.type === "IMAGE" ? "📷 Foto:" : message.type === "VIDEO" ? "🎥 Vídeo:" : message.type === "AUDIO" ? "🎤 Áudio:" : message.type === "DOCUMENT" ? "📄 Documento:" : "Mensagem:"}
-                        </span>
-                        <span>{message.content || (message.type === "IMAGE" ? "Imagem" : message.type === "AUDIO" ? "Mensagem de voz" : "Arquivo de mídia")}</span>
+                        {itemsToForward.length > 1 ? (
+                            <span className="font-semibold text-foreground">
+                                {itemsToForward.length} mensagens selecionadas para encaminhar
+                            </span>
+                        ) : (
+                            <>
+                                <span className="font-semibold text-foreground mr-1">
+                                    {firstMsg.type === "IMAGE" ? "📷 Foto:" : firstMsg.type === "VIDEO" ? "🎥 Vídeo:" : firstMsg.type === "AUDIO" ? "🎤 Áudio:" : firstMsg.type === "DOCUMENT" ? "📄 Documento:" : "Mensagem:"}
+                                </span>
+                                <span>{firstMsg.content || (firstMsg.type === "IMAGE" ? "Imagem" : firstMsg.type === "AUDIO" ? "Mensagem de voz" : "Arquivo de mídia")}</span>
+                            </>
+                        )}
                     </div>
                 </div>
 
@@ -1423,9 +1460,10 @@ function ChatInputBar({
     const inputRef = useRef<HTMLTextAreaElement>(null);
     const lastTypingSentRef = useRef<number>(0);
 
-    // Audio recording state
+    // Audio recording state (#C20)
     const [isRecording, setIsRecording] = useState(false);
     const [recordingTime, setRecordingTime] = useState(0);
+    const [recordedPreview, setRecordedPreview] = useState<{ blob: Blob; url: string; mimeType: string } | null>(null);
     const mediaRecorderRef = useRef<MediaRecorder | null>(null);
     const audioChunksRef = useRef<Blob[]>([]);
     const recordingTimerRef = useRef<NodeJS.Timeout | null>(null);
@@ -1557,12 +1595,51 @@ function ChatInputBar({
             }
             mediaRecorderRef.current.stream?.getTracks().forEach(t => t.stop());
         }
+        if (recordedPreview?.url) {
+            URL.revokeObjectURL(recordedPreview.url);
+        }
+        setRecordedPreview(null);
         audioChunksRef.current = [];
         setIsRecording(false);
         setRecordingTime(0);
     };
 
+    const pauseAndPreviewRecording = () => {
+        if (recordingTimerRef.current) clearInterval(recordingTimerRef.current);
+        const recorder = mediaRecorderRef.current;
+        if (!recorder) return;
+
+        const currentStream = recorder.stream;
+        const actualMime = recorder.mimeType || 'audio/ogg';
+
+        recorder.onstop = () => {
+            currentStream?.getTracks().forEach(t => t.stop());
+            const audioBlob = new Blob(audioChunksRef.current, { type: actualMime });
+            audioChunksRef.current = [];
+            if (audioBlob.size > 0) {
+                const url = URL.createObjectURL(audioBlob);
+                setRecordedPreview({ blob: audioBlob, url, mimeType: actualMime });
+            }
+        };
+
+        if (recorder.state !== 'inactive') {
+            recorder.stop();
+        }
+    };
+
     const stopAndSendRecording = () => {
+        if (recordedPreview) {
+            const { blob, mimeType, url } = recordedPreview;
+            URL.revokeObjectURL(url);
+            setRecordedPreview(null);
+            setIsRecording(false);
+            setRecordingTime(0);
+            if (blob.size > 0 && onSendAudio) {
+                onSendAudio(blob, mimeType);
+            }
+            return;
+        }
+
         if (recordingTimerRef.current) clearInterval(recordingTimerRef.current);
         const recorder = mediaRecorderRef.current;
         if (!recorder) return;
@@ -1931,32 +2008,50 @@ function ChatInputBar({
             )}
 
             {isRecording ? (
-                /* WhatsApp Web Recording Bar */
-                <div className="flex items-center justify-between gap-3 max-w-4xl mx-auto bg-white dark:bg-[#202c33] rounded-2xl px-4 py-2 shadow-md border border-red-500/20 animate-in fade-in duration-150">
+                /* WhatsApp Web Recording & Audio Preview Bar (#C20) */
+                <div className="flex items-center justify-between gap-2.5 max-w-4xl mx-auto bg-white dark:bg-[#202c33] rounded-2xl px-3.5 py-2 shadow-md border border-red-500/20 animate-in fade-in duration-150">
                     {/* Discard recording */}
                     <Button
                         type="button"
                         variant="ghost"
                         size="icon"
                         onClick={cancelRecording}
-                        className="h-10 w-10 rounded-full text-red-500 hover:text-red-600 hover:bg-red-500/10 cursor-pointer shrink-0 transition-colors"
-                        title="Cancelar gravação"
+                        className="h-9 w-9 rounded-full text-red-500 hover:text-red-600 hover:bg-red-500/10 cursor-pointer shrink-0 transition-colors"
+                        title="Descartar gravação"
                     >
                         <Trash2 className="h-5 w-5" />
                     </Button>
 
-                    {/* Recording indicators */}
-                    <div className="flex items-center gap-3 flex-1 min-w-0">
-                        <span className="h-3 w-3 rounded-full bg-red-500 animate-pulse shrink-0" />
-                        <span className="font-mono text-sm font-semibold text-red-500 shrink-0">
-                            {formatRecordingTime(recordingTime)}
-                        </span>
-                        <div className="flex-1 flex items-center gap-1 overflow-hidden px-2">
-                            <span className="text-xs text-muted-foreground select-none truncate">
-                                Gravando áudio...
-                            </span>
+                    {recordedPreview ? (
+                        /* Inline Audio Preview Player before sending */
+                        <div className="flex-1 flex items-center gap-2 min-w-0 px-1">
+                            <audio src={recordedPreview.url} controls className="w-full h-9" />
                         </div>
-                    </div>
+                    ) : (
+                        /* Live Recording Indicators + Pause/Preview button */
+                        <div className="flex items-center gap-3 flex-1 min-w-0">
+                            <span className="h-3 w-3 rounded-full bg-red-500 animate-pulse shrink-0" />
+                            <span className="font-mono text-sm font-semibold text-red-500 shrink-0">
+                                {formatRecordingTime(recordingTime)}
+                            </span>
+                            <div className="flex-1 flex items-center gap-1 overflow-hidden px-1">
+                                <span className="text-xs text-muted-foreground select-none truncate">
+                                    Gravando áudio...
+                                </span>
+                            </div>
+                            <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                onClick={pauseAndPreviewRecording}
+                                className="h-8 px-2.5 rounded-full text-xs gap-1.5 border-red-500/30 text-red-500 hover:bg-red-500/10 cursor-pointer shrink-0"
+                                title="Pausar e ouvir o áudio antes de enviar"
+                            >
+                                <Pause className="h-3.5 w-3.5 fill-current" />
+                                <span className="hidden sm:inline">Ouvir prévia</span>
+                            </Button>
+                        </div>
+                    )}
 
                     {/* Send Voice Note */}
                     <Button
@@ -2171,13 +2266,27 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
     // Reply state
     const [replyingTo, setReplyingTo] = useState<Message | null>(null);
 
-    // Media preview modal before sending
-    const [previewFile, setPreviewFile] = useState<{
+    // Media preview modal before sending (Multi-file queue #C15)
+    const [previewFiles, setPreviewFiles] = useState<{
         file: File;
         type: string;
         previewUrl: string;
         caption: string;
-    } | null>(null);
+    }[]>([]);
+    const [activePreviewIdx, setActivePreviewIdx] = useState<number>(0);
+    const previewFile = previewFiles[activePreviewIdx] || null;
+
+    // Lightbox Zoom & Rotate state (#C16)
+    const [lightboxZoom, setLightboxZoom] = useState<number>(1);
+    const [lightboxRotation, setLightboxRotation] = useState<number>(0);
+
+    // Multi-Select Messages state (#C19)
+    const [isSelectMode, setIsSelectMode] = useState<boolean>(false);
+    const [selectedMsgIds, setSelectedMsgIds] = useState<string[]>([]);
+    const [forwardingMessagesList, setForwardingMessagesList] = useState<Message[] | null>(null);
+
+    // Internal Chat Notes state (#C21)
+    const [chatNote, setChatNote] = useState<string>("");
 
     // Context menu state
     const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
@@ -2281,8 +2390,28 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
             setPinnedMessageId(saved || null);
             const rawStars = localStorage.getItem(`zapflow_starred_${sessionId}_${jid}`);
             setStarredIds(rawStars ? JSON.parse(rawStars) : []);
+            const savedNote = localStorage.getItem(`zapflow_notes_${sessionId}_${jid}`);
+            setChatNote(savedNote || "");
+        } catch {}
+        setIsSelectMode(false);
+        setSelectedMsgIds([]);
+    }, [sessionId, jid]);
+
+    const handleSaveChatNote = useCallback((val: string) => {
+        setChatNote(val);
+        if (typeof window === "undefined") return;
+        try {
+            if (val.trim()) {
+                localStorage.setItem(`zapflow_notes_${sessionId}_${jid}`, val);
+            } else {
+                localStorage.removeItem(`zapflow_notes_${sessionId}_${jid}`);
+            }
         } catch {}
     }, [sessionId, jid]);
+
+    const toggleSelectMessage = useCallback((keyId: string) => {
+        setSelectedMsgIds(prev => prev.includes(keyId) ? prev.filter(id => id !== keyId) : [...prev, keyId]);
+    }, []);
 
     const handleToggleStar = useCallback((msg: Message) => {
         setStarredIds(prev => {
@@ -2322,16 +2451,53 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
         toast.success("Mensagem desafixada");
     }, [sessionId, jid]);
 
-    // Close Lightbox on ESC
+    // Gallery images & Lightbox keyboard navigation (#C16)
+    const galleryImages = useMemo(() => {
+        return messages.filter(m => m.type === "IMAGE" && m.mediaUrl);
+    }, [messages]);
+
+    const currentGalleryIdx = useMemo(() => {
+        if (!lightboxMedia) return -1;
+        return galleryImages.findIndex(m => m.mediaUrl === lightboxMedia.src);
+    }, [lightboxMedia, galleryImages]);
+
+    const handleLightboxNav = useCallback((dir: 1 | -1) => {
+        if (galleryImages.length <= 1 || currentGalleryIdx === -1) return;
+        const nextIdx = (currentGalleryIdx + dir + galleryImages.length) % galleryImages.length;
+        const target = galleryImages[nextIdx];
+        if (target?.mediaUrl) {
+            setLightboxZoom(1);
+            setLightboxRotation(0);
+            setLightboxMedia({ src: target.mediaUrl, caption: target.content });
+        }
+    }, [galleryImages, currentGalleryIdx]);
+
     useEffect(() => {
+        if (!lightboxMedia) {
+            setLightboxZoom(1);
+            setLightboxRotation(0);
+            return;
+        }
         const handleKeyDown = (e: KeyboardEvent) => {
-            if (e.key === "Escape" && lightboxMedia) {
+            if (e.key === "Escape") {
                 setLightboxMedia(null);
+            } else if (e.key === "ArrowRight") {
+                e.preventDefault();
+                handleLightboxNav(1);
+            } else if (e.key === "ArrowLeft") {
+                e.preventDefault();
+                handleLightboxNav(-1);
+            } else if (e.key === "+" || e.key === "=") {
+                e.preventDefault();
+                setLightboxZoom(z => Math.min(4, +(z + 0.25).toFixed(2)));
+            } else if (e.key === "-") {
+                e.preventDefault();
+                setLightboxZoom(z => Math.max(0.5, +(z - 0.25).toFixed(2)));
             }
         };
         window.addEventListener("keydown", handleKeyDown);
         return () => window.removeEventListener("keydown", handleKeyDown);
-    }, [lightboxMedia]);
+    }, [lightboxMedia, handleLightboxNav]);
 
     // Request desktop notifications permission quietly
     useEffect(() => {
@@ -2681,12 +2847,18 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
                 if (isSearching) {
                     setIsSearching(false);
                     setSearchQuery("");
+                } else if (isSelectMode) {
+                    setIsSelectMode(false);
+                    setSelectedMsgIds([]);
                 } else if (replyingTo) {
                     setReplyingTo(null);
-                } else if (previewFile) {
-                    setPreviewFile(null);
-                } else if (forwardingMessage) {
+                } else if (previewFiles.length > 0) {
+                    previewFiles.forEach(p => p.previewUrl && URL.revokeObjectURL(p.previewUrl));
+                    setPreviewFiles([]);
+                    setActivePreviewIdx(0);
+                } else if (forwardingMessage || forwardingMessagesList) {
                     setForwardingMessage(null);
+                    setForwardingMessagesList(null);
                 }
             }
 
@@ -2705,7 +2877,7 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
 
         window.addEventListener("keydown", handleKeyDown);
         return () => window.removeEventListener("keydown", handleKeyDown);
-    }, [isSearching, replyingTo, previewFile, forwardingMessage]);
+    }, [isSearching, isSelectMode, replyingTo, previewFiles, forwardingMessage, forwardingMessagesList]);
 
 
     const processFileUpload = async (file: File, explicitType?: string, caption?: string) => {
@@ -2763,42 +2935,71 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
         }
     };
 
+    const initiateFilesPreview = (fileList: File[] | FileList, explicitType?: string) => {
+        const filesArr = Array.from(fileList);
+        if (filesArr.length === 0) return;
+
+        const newItems = filesArr.map(file => {
+            let type = explicitType;
+            if (!type || type === '*') {
+                if (file.type.startsWith('image/')) type = 'image';
+                else if (file.type.startsWith('video/')) type = 'video';
+                else if (file.type.startsWith('audio/')) type = 'audio';
+                else type = 'document';
+            }
+            const previewUrl = URL.createObjectURL(file);
+            return {
+                file,
+                type: type || 'document',
+                previewUrl,
+                caption: ""
+            };
+        });
+
+        setPreviewFiles(prev => {
+            const next = [...prev, ...newItems];
+            return next;
+        });
+        setActivePreviewIdx(prev => (previewFiles.length === 0 ? 0 : prev));
+    };
+
     const initiateFilePreview = (file: File, explicitType?: string) => {
-        let type = explicitType;
-        if (!type || type === '*') {
-            if (file.type.startsWith('image/')) type = 'image';
-            else if (file.type.startsWith('video/')) type = 'video';
-            else if (file.type.startsWith('audio/')) type = 'audio';
-            else type = 'document';
-        }
-        const previewUrl = URL.createObjectURL(file);
-        setPreviewFile({
-            file,
-            type: type || 'document',
-            previewUrl,
-            caption: ""
+        initiateFilesPreview([file], explicitType);
+    };
+
+    const handleRemovePreviewFile = (idxToRemove: number) => {
+        setPreviewFiles(prev => {
+            const item = prev[idxToRemove];
+            if (item?.previewUrl) URL.revokeObjectURL(item.previewUrl);
+            const next = prev.filter((_, i) => i !== idxToRemove);
+            setActivePreviewIdx(curr => Math.min(curr, Math.max(0, next.length - 1)));
+            return next;
         });
     };
 
     const handleSendPreviewFile = async () => {
-        if (!previewFile) return;
-        const { file, type, caption } = previewFile;
-        if (previewFile.previewUrl) URL.revokeObjectURL(previewFile.previewUrl);
-        setPreviewFile(null);
-        await processFileUpload(file, type, caption);
+        if (previewFiles.length === 0) return;
+        const itemsToSend = [...previewFiles];
+        setPreviewFiles([]);
+        setActivePreviewIdx(0);
+        for (const item of itemsToSend) {
+            await processFileUpload(item.file, item.type, item.caption);
+            if (item.previewUrl) URL.revokeObjectURL(item.previewUrl);
+        }
     };
 
     const handleCancelPreviewFile = () => {
-        if (previewFile?.previewUrl) {
-            URL.revokeObjectURL(previewFile.previewUrl);
-        }
-        setPreviewFile(null);
+        previewFiles.forEach(p => {
+            if (p.previewUrl) URL.revokeObjectURL(p.previewUrl);
+        });
+        setPreviewFiles([]);
+        setActivePreviewIdx(0);
     };
 
     const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-        const file = e.target.files?.[0];
-        if (!file) return;
-        initiateFilePreview(file, uploadType);
+        const files = e.target.files;
+        if (!files || files.length === 0) return;
+        initiateFilesPreview(files, uploadType);
         if (fileInputRef.current) fileInputRef.current.value = "";
     };
 
@@ -2998,16 +3199,23 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
             onDrop={(e) => {
                 e.preventDefault();
                 setIsDragging(false);
-                const f = e.dataTransfer.files?.[0];
-                if (f) initiateFilePreview(f);
+                if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+                    initiateFilesPreview(e.dataTransfer.files);
+                }
             }}
         >
             {/* Context menu */}
-            {forwardingMessage && (
+            {(forwardingMessage || (forwardingMessagesList && forwardingMessagesList.length > 0)) && (
                 <ForwardModal
                     sessionId={sessionId}
                     message={forwardingMessage}
-                    onClose={() => setForwardingMessage(null)}
+                    messagesList={forwardingMessagesList || undefined}
+                    onClose={() => {
+                        setForwardingMessage(null);
+                        setForwardingMessagesList(null);
+                        setIsSelectMode(false);
+                        setSelectedMsgIds([]);
+                    }}
                 />
             )}
             {contextMenu && (
@@ -3020,6 +3228,10 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
                     onTogglePin={handleTogglePin}
                     onToggleStar={handleToggleStar}
                     onForward={msg => setForwardingMessage(msg)}
+                    onSelectMessages={(msg) => {
+                        setIsSelectMode(true);
+                        setSelectedMsgIds([msg.keyId]);
+                    }}
                     isPinned={pinnedMessageId === contextMenu.msg.keyId}
                     isStarred={starredIds.includes(contextMenu.msg.keyId)}
                 />
@@ -3029,7 +3241,7 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
             {isDragging && (
                 <div className="absolute inset-0 z-50 bg-[#00a884]/90 backdrop-blur-sm border-2 border-dashed border-white flex items-center justify-center flex-col gap-3 rounded-lg m-2 text-white">
                     <Paperclip className="h-10 w-10 animate-bounce" />
-                    <p className="text-lg font-semibold">Solte o arquivo para enviar</p>
+                    <p className="text-lg font-semibold">Solte um ou mais arquivos para enviar</p>
                 </div>
             )}
 
@@ -3244,6 +3456,56 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
                             <span>Exportar ({participantsList.length})</span>
                         </Button>
                     )}
+                    {/* Internal Chat Notes Popover (#C21) */}
+                    <Popover>
+                        <PopoverTrigger asChild>
+                            <Button
+                                variant="ghost"
+                                size="icon"
+                                className={cn(
+                                    "h-9 w-9 rounded-full hover:bg-black/5 dark:hover:bg-white/10 cursor-pointer relative",
+                                    chatNote.trim().length > 0 && "text-amber-500 bg-amber-500/10"
+                                )}
+                                title={chatNote.trim().length > 0 ? "Notas internas da conversa (com anotação)" : "Adicionar nota interna da conversa"}
+                            >
+                                <StickyNote className="h-4 w-4" />
+                                {chatNote.trim().length > 0 && (
+                                    <span className="absolute top-1.5 right-1.5 h-2 w-2 rounded-full bg-amber-500" />
+                                )}
+                            </Button>
+                        </PopoverTrigger>
+                        <PopoverContent align="end" className="w-80 p-3 rounded-2xl shadow-2xl bg-white dark:bg-[#233138] border border-border/30 z-50">
+                            <div className="flex items-center justify-between mb-2">
+                                <span className="text-xs font-semibold flex items-center gap-1.5 text-amber-600 dark:text-amber-400">
+                                    <StickyNote className="h-3.5 w-3.5" />
+                                    Bloco de Notas Interno
+                                </span>
+                                {chatNote.trim().length > 0 && (
+                                    <button
+                                        type="button"
+                                        onClick={() => {
+                                            handleSaveChatNote("");
+                                            toast.info("Nota interna limpa");
+                                        }}
+                                        className="text-[10px] text-muted-foreground hover:text-destructive cursor-pointer"
+                                    >
+                                        Limpar
+                                    </button>
+                                )}
+                            </div>
+                            <textarea
+                                value={chatNote}
+                                onChange={(e) => handleSaveChatNote(e.target.value)}
+                                rows={4}
+                                placeholder="Anote informações sobre este cliente/grupo (visível apenas para você no painel)..."
+                                className="w-full rounded-xl bg-amber-50/60 dark:bg-amber-950/20 border border-amber-500/30 px-3 py-2 text-xs text-foreground placeholder:text-muted-foreground outline-none focus:border-amber-500 resize-none"
+                            />
+                            <p className="text-[10px] text-muted-foreground mt-1.5">
+                                Salvo automaticamente neste navegador para esta conversa.
+                            </p>
+                        </PopoverContent>
+                    </Popover>
+
                     <Button
                         variant="ghost"
                         size="icon"
@@ -3342,6 +3604,18 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
 
                             <button
                                 type="button"
+                                onClick={() => {
+                                    setIsSelectMode(true);
+                                    setSelectedMsgIds([]);
+                                }}
+                                className="w-full flex items-center gap-2.5 px-3 py-2 text-xs font-medium text-foreground rounded-xl hover:bg-black/5 dark:hover:bg-white/10 transition-colors text-left cursor-pointer"
+                            >
+                                <CheckSquare className="h-4 w-4 text-[#00a884]" />
+                                <span>Selecionar mensagens</span>
+                            </button>
+
+                            <button
+                                type="button"
                                 onClick={handleExportConversation}
                                 className="w-full flex items-center gap-2.5 px-3 py-2 text-xs font-medium text-foreground rounded-xl hover:bg-black/5 dark:hover:bg-white/10 transition-colors text-left cursor-pointer"
                             >
@@ -3353,6 +3627,17 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
                     </Popover>
                 </div>
             </div>
+
+            {/* Internal Note Sticky Banner (#C21) */}
+            {chatNote.trim().length > 0 && (
+                <div className="shrink-0 px-4 py-1.5 bg-amber-50/95 dark:bg-amber-950/35 border-b border-amber-500/25 flex items-center justify-between gap-2 z-15 text-xs">
+                    <div className="flex items-center gap-2 min-w-0 text-amber-800 dark:text-amber-300">
+                        <StickyNote className="h-3.5 w-3.5 shrink-0 text-amber-500" />
+                        <span className="font-semibold shrink-0">Nota interna:</span>
+                        <span className="truncate">{chatNote}</span>
+                    </div>
+                </div>
+            )}
 
             {/* In-chat Search Bar (WhatsApp Web style) */}
             {isSearching && (
@@ -3507,7 +3792,33 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
                                         </span>
                                     </div>
                                 )}
-                                <div className={cn("flex gap-2 group items-start", msg.fromMe ? "justify-end" : "justify-start")}>
+                                <div
+                                    onClick={() => {
+                                        if (isSelectMode) toggleSelectMessage(msg.keyId);
+                                    }}
+                                    className={cn(
+                                        "flex gap-2 group items-start rounded-lg transition-colors",
+                                        msg.fromMe ? "justify-end" : "justify-start",
+                                        isSelectMode && "cursor-pointer px-2 py-1 hover:bg-[#00a884]/10",
+                                        isSelectMode && selectedMsgIds.includes(msg.keyId) && "bg-[#00a884]/15"
+                                    )}
+                                >
+                                    {/* Multi-select checkbox (#C19) */}
+                                    {isSelectMode && (
+                                        <div className="self-center shrink-0 mr-1 order-first">
+                                            <div
+                                                className={cn(
+                                                    "h-5 w-5 rounded-md border-2 flex items-center justify-center transition-colors",
+                                                    selectedMsgIds.includes(msg.keyId)
+                                                        ? "bg-[#00a884] border-[#00a884] text-white"
+                                                        : "border-slate-400 dark:border-slate-500 bg-white/80 dark:bg-slate-800/80"
+                                                )}
+                                            >
+                                                {selectedMsgIds.includes(msg.keyId) && <Check className="h-3.5 w-3.5 stroke-[3]" />}
+                                            </div>
+                                        </div>
+                                    )}
+
                                     {/* Sender Avatar for incoming group messages on left (WhatsApp Web style) */}
                                     {!msg.fromMe && isGroup && (() => {
                                         const sJid = msg.senderJid || "";
@@ -3729,10 +4040,109 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
                                             </div>
                                         )}
 
+                                        {/* LOCATION Card (WhatsApp Web Rich Location Card #C17) */}
+                                        {msg.type === 'LOCATION' && (() => {
+                                            const [coordsRaw, locName, locAddr] = (msg.content || "").split("|");
+                                            const coords = (coordsRaw || "").trim();
+                                            const mapsUrl = coords ? `https://www.google.com/maps?q=${encodeURIComponent(coords)}` : "https://www.google.com/maps";
+                                            return (
+                                                <div
+                                                    className={cn(
+                                                        "flex flex-col rounded-xl overflow-hidden mb-1.5 min-w-[240px] max-w-[300px] border border-black/10 dark:border-white/10 select-none",
+                                                        msg.fromMe ? "bg-black/5 dark:bg-black/25" : "bg-black/5 dark:bg-white/5"
+                                                    )}
+                                                >
+                                                    <a
+                                                        href={mapsUrl}
+                                                        target="_blank"
+                                                        rel="noopener noreferrer"
+                                                        onClick={(e) => e.stopPropagation()}
+                                                        className="relative h-28 w-full bg-emerald-950/20 dark:bg-emerald-900/30 flex flex-col items-center justify-center gap-1.5 group/map overflow-hidden"
+                                                    >
+                                                        <div className="absolute inset-0 opacity-25 bg-[radial-gradient(#00a884_1px,transparent_1px)] [background-size:12px_12px]" />
+                                                        <div className="h-10 w-10 rounded-full bg-red-500/90 text-white flex items-center justify-center shadow-lg group-hover/map:scale-110 transition-transform z-10">
+                                                            <MapPin className="h-5 w-5" />
+                                                        </div>
+                                                        <span className="text-[11px] font-semibold text-[#00a884] dark:text-[#25d366] bg-white/90 dark:bg-[#202c33]/90 px-2.5 py-0.5 rounded-full shadow-xs z-10">
+                                                            🗺️ Abrir no Google Maps
+                                                        </span>
+                                                    </a>
+                                                    <div className="px-3 py-2 flex flex-col gap-0.5">
+                                                        <p className="text-xs font-semibold text-foreground truncate">
+                                                            {locName || "Localização compartilhada"}
+                                                        </p>
+                                                        <p className="text-[11px] text-muted-foreground truncate">
+                                                            {locAddr || coords || "Ver no mapa"}
+                                                        </p>
+                                                    </div>
+                                                </div>
+                                            );
+                                        })()}
+
+                                        {/* CONTACT Card (WhatsApp Web vCard #C17) */}
+                                        {msg.type === 'CONTACT' && (() => {
+                                            const [contactNameRaw, contactPhoneRaw] = (msg.content || "Contato").split("|");
+                                            const contactName = (contactNameRaw || "Contato").trim();
+                                            const contactPhone = (contactPhoneRaw || "").replace(/\D/g, "");
+                                            return (
+                                                <div
+                                                    className={cn(
+                                                        "flex flex-col rounded-xl overflow-hidden mb-1.5 min-w-[240px] max-w-[300px] border border-black/10 dark:border-white/10 select-none",
+                                                        msg.fromMe ? "bg-black/5 dark:bg-black/25" : "bg-black/5 dark:bg-white/5"
+                                                    )}
+                                                >
+                                                    <div className="flex items-center gap-3 p-3">
+                                                        <div className="h-10 w-10 rounded-full bg-[#00a884]/20 text-[#00a884] flex items-center justify-center font-bold text-sm shrink-0">
+                                                            {contactName.slice(0, 2).toUpperCase()}
+                                                        </div>
+                                                        <div className="min-w-0 flex-1">
+                                                            <p className="text-xs font-semibold text-foreground truncate">
+                                                                {contactName}
+                                                            </p>
+                                                            <p className="text-[11px] text-muted-foreground truncate">
+                                                                {contactPhone ? `+${contactPhone}` : "Cartão de contato WhatsApp"}
+                                                            </p>
+                                                        </div>
+                                                    </div>
+                                                    <div className="grid grid-cols-2 border-t border-black/10 dark:border-white/10 divide-x divide-black/10 dark:divide-white/10 text-center">
+                                                        <button
+                                                            type="button"
+                                                            onClick={(e) => {
+                                                                e.stopPropagation();
+                                                                if (contactPhone) {
+                                                                    const targetJid = `${contactPhone}@s.whatsapp.net`;
+                                                                    window.dispatchEvent(new CustomEvent("zapflow:open-chat", {
+                                                                        detail: { jid: targetJid, name: contactName }
+                                                                    }));
+                                                                } else {
+                                                                    navigator.clipboard.writeText(contactName);
+                                                                    toast.info("Nome do contato copiado");
+                                                                }
+                                                            }}
+                                                            className="py-2 text-[11.5px] font-semibold text-[#00a884] hover:bg-black/5 dark:hover:bg-white/5 transition-colors cursor-pointer"
+                                                        >
+                                                            💬 Conversar
+                                                        </button>
+                                                        <button
+                                                            type="button"
+                                                            onClick={(e) => {
+                                                                e.stopPropagation();
+                                                                navigator.clipboard.writeText(contactPhone || contactName);
+                                                                toast.success("Contato copiado!");
+                                                            }}
+                                                            className="py-2 text-[11.5px] font-medium text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5 transition-colors cursor-pointer"
+                                                        >
+                                                            📋 Copiar
+                                                        </button>
+                                                    </div>
+                                                </div>
+                                            );
+                                        })()}
+
                                         {/* DOCUMENT (WhatsApp Web Rich File Card #C10) */}
-                                        {msg.type !== 'TEXT' && msg.type !== 'IMAGE' && msg.type !== 'STICKER' && msg.type !== 'VIDEO' && msg.type !== 'AUDIO' && (() => {
+                                        {msg.type !== 'TEXT' && msg.type !== 'IMAGE' && msg.type !== 'STICKER' && msg.type !== 'VIDEO' && msg.type !== 'AUDIO' && msg.type !== 'LOCATION' && msg.type !== 'CONTACT' && (() => {
                                             const rawFileName = (msg.type === 'DOCUMENT' && msg.content ? msg.content.trim() : "") ||
-                                                ({ LOCATION: "Localização", CONTACT: "Contato" }[msg.type] || `DOCUMENTO-${msg.keyId.slice(-6)}.pdf`);
+                                                `DOCUMENTO-${msg.keyId.slice(-6)}.pdf`;
                                             const extMatch = rawFileName.match(/\.([a-zA-Z0-9]{2,5})$/);
                                             const ext = (extMatch ? extMatch[1] : (msg.mediaUrl?.split('.').pop() || "DOC")).toUpperCase().slice(0, 4);
                                             const badgeColor =
@@ -3795,7 +4205,7 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
 
                                         {/* Text content with mentions & Timestamp + status checks */}
                                         <div className="flex flex-wrap items-end justify-end gap-x-2 gap-y-0.5">
-                                            {msg.type !== 'DOCUMENT' && (
+                                            {msg.type !== 'DOCUMENT' && msg.type !== 'LOCATION' && msg.type !== 'CONTACT' && (
                                                 <span className="flex-1 break-words whitespace-pre-wrap text-[14.2px]">
                                                     {renderMessageContent(msg.content, contactMap, searchQuery)}
                                                 </span>
@@ -3889,8 +4299,114 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
                 </button>
             )}
 
+            {/* Multi-Select Messages Action Bar (#C19) */}
+            {isSelectMode && (
+                <div className="shrink-0 px-4 py-2.5 bg-[#f0f2f5] dark:bg-[#202c33] border-t border-border/25 flex items-center justify-between gap-3 z-20 select-none animate-in slide-in-from-bottom-2 duration-150">
+                    <div className="flex items-center gap-3">
+                        <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-8 w-8 rounded-full text-muted-foreground hover:text-foreground cursor-pointer"
+                            onClick={() => {
+                                setIsSelectMode(false);
+                                setSelectedMsgIds([]);
+                            }}
+                            title="Cancelar seleção (Esc)"
+                        >
+                            <X className="h-4.5 w-4.5" />
+                        </Button>
+                        <span className="text-sm font-semibold text-foreground">
+                            {selectedMsgIds.length} selecionada{selectedMsgIds.length === 1 ? "" : "s"}
+                        </span>
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                        <Button
+                            variant="ghost"
+                            size="sm"
+                            disabled={selectedMsgIds.length === 0}
+                            onClick={() => {
+                                const selectedObjs = messages.filter(m => selectedMsgIds.includes(m.keyId));
+                                if (selectedObjs.length > 0) setForwardingMessagesList(selectedObjs);
+                            }}
+                            className="h-8 px-2.5 text-xs font-medium gap-1.5 rounded-lg hover:bg-black/5 dark:hover:bg-white/10 cursor-pointer"
+                            title="Encaminhar selecionadas"
+                        >
+                            <Forward className="h-4 w-4 text-[#00a884]" />
+                            <span className="hidden sm:inline">Encaminhar</span>
+                        </Button>
+                        <Button
+                            variant="ghost"
+                            size="sm"
+                            disabled={selectedMsgIds.length === 0}
+                            onClick={() => {
+                                setStarredIds(prev => {
+                                    const next = Array.from(new Set([...prev, ...selectedMsgIds]));
+                                    try {
+                                        localStorage.setItem(`zapflow_starred_${sessionId}_${jid}`, JSON.stringify(next));
+                                    } catch {}
+                                    return next;
+                                });
+                                toast.success(`⭐ ${selectedMsgIds.length} mensagem(ns) favoritada(s)!`);
+                                setIsSelectMode(false);
+                                setSelectedMsgIds([]);
+                            }}
+                            className="h-8 px-2.5 text-xs font-medium gap-1.5 rounded-lg hover:bg-black/5 dark:hover:bg-white/10 cursor-pointer"
+                            title="Favoritar selecionadas"
+                        >
+                            <Star className="h-4 w-4 text-amber-500" />
+                            <span className="hidden sm:inline">Favoritar</span>
+                        </Button>
+                        <Button
+                            variant="ghost"
+                            size="sm"
+                            disabled={selectedMsgIds.length === 0}
+                            onClick={() => {
+                                const selectedObjs = messages.filter(m => selectedMsgIds.includes(m.keyId));
+                                const combined = selectedObjs
+                                    .map(m => m.content || "")
+                                    .filter(Boolean)
+                                    .join("\n\n");
+                                if (combined) {
+                                    navigator.clipboard.writeText(combined);
+                                    toast.success(`${selectedObjs.length} mensagem(ns) copiada(s)!`);
+                                }
+                                setIsSelectMode(false);
+                                setSelectedMsgIds([]);
+                            }}
+                            className="h-8 px-2.5 text-xs font-medium gap-1.5 rounded-lg hover:bg-black/5 dark:hover:bg-white/10 cursor-pointer"
+                            title="Copiar textos selecionados"
+                        >
+                            <Copy className="h-4 w-4 text-blue-500" />
+                            <span className="hidden sm:inline">Copiar</span>
+                        </Button>
+                        <Button
+                            variant="ghost"
+                            size="sm"
+                            disabled={selectedMsgIds.length === 0}
+                            onClick={async () => {
+                                const idsToDel = [...selectedMsgIds];
+                                setIsSelectMode(false);
+                                setSelectedMsgIds([]);
+                                for (const id of idsToDel) {
+                                    try {
+                                        await fetch(`/api/messages/${sessionId}/${encodeURIComponent(jid)}/${encodeURIComponent(id)}`, { method: "DELETE" });
+                                    } catch {}
+                                }
+                                setMessages(prev => prev.filter(m => !idsToDel.includes(m.keyId)));
+                                toast.success(`${idsToDel.length} mensagem(ns) excluída(s)`);
+                            }}
+                            className="h-8 px-2.5 text-xs font-medium gap-1.5 rounded-lg text-destructive hover:bg-destructive/10 cursor-pointer"
+                            title="Apagar selecionadas"
+                        >
+                            <Trash2 className="h-4 w-4" />
+                            <span className="hidden sm:inline">Apagar</span>
+                        </Button>
+                    </div>
+                </div>
+            )}
+
             {/* WhatsApp Styled Bottom Input Bar */}
-            <input type="file" ref={fileInputRef} className="hidden" onChange={handleFileUpload} />
+            <input type="file" multiple ref={fileInputRef} className="hidden" onChange={handleFileUpload} />
             <ChatInputBar
                 onSend={handleSend}
                 onSendAudio={handleSendAudio}
@@ -3925,31 +4441,71 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
                 onSendBroadcastToMembers={sendBroadcastToGroupMembers}
             />
 
-            {/* Lightbox Modal (WhatsApp Web Style) */}
+            {/* Lightbox Modal with Zoom, Rotate & Gallery Navigation (WhatsApp Web Style #C16) */}
             {lightboxMedia && (
                 <div
                     className="fixed inset-0 z-[99999] bg-black/95 backdrop-blur-md flex flex-col items-center justify-between p-4 select-none animate-in fade-in duration-150"
                     onClick={() => setLightboxMedia(null)}
                 >
                     {/* Top Action Bar */}
-                    <div className="w-full flex items-center justify-between px-2 pt-1 pb-3 z-10" onClick={(e) => e.stopPropagation()}>
-                        <div className="text-white/80 text-xs font-medium">
-                            {name || "Visualizador de Imagem"}
+                    <div className="w-full flex items-center justify-between px-2 pt-1 pb-3 z-20" onClick={(e) => e.stopPropagation()}>
+                        <div className="flex items-center gap-2 text-white/85 text-xs font-medium">
+                            <span>{name || "Visualizador de Imagem"}</span>
+                            {galleryImages.length > 1 && currentGalleryIdx !== -1 && (
+                                <span className="px-2 py-0.5 rounded-full bg-white/10 text-[11px] tabular-nums">
+                                    {currentGalleryIdx + 1} de {galleryImages.length}
+                                </span>
+                            )}
                         </div>
-                        <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-1.5">
                             <Button
                                 size="icon"
                                 variant="ghost"
-                                className="h-10 w-10 text-white/80 hover:text-white hover:bg-white/10 rounded-full"
-                                onClick={() => handleDownload(lightboxMedia.src, 'imagem-whatsapp.jpg')}
-                                title="Baixar imagem"
+                                className="h-9 w-9 text-white/80 hover:text-white hover:bg-white/10 rounded-full cursor-pointer"
+                                onClick={() => setLightboxZoom(z => Math.max(0.5, +(z - 0.25).toFixed(2)))}
+                                title="Diminuir Zoom (-)"
                             >
-                                <Download className="h-5 w-5" />
+                                <ZoomOut className="h-4.5 w-4.5" />
+                            </Button>
+                            <button
+                                type="button"
+                                onClick={() => { setLightboxZoom(1); setLightboxRotation(0); }}
+                                className="px-2 py-1 rounded-md text-[11px] font-semibold text-white/80 hover:text-white hover:bg-white/10 tabular-nums cursor-pointer"
+                                title="Resetar Zoom e Rotação"
+                            >
+                                {Math.round(lightboxZoom * 100)}%
+                            </button>
+                            <Button
+                                size="icon"
+                                variant="ghost"
+                                className="h-9 w-9 text-white/80 hover:text-white hover:bg-white/10 rounded-full cursor-pointer"
+                                onClick={() => setLightboxZoom(z => Math.min(4, +(z + 0.25).toFixed(2)))}
+                                title="Aumentar Zoom (+)"
+                            >
+                                <ZoomIn className="h-4.5 w-4.5" />
                             </Button>
                             <Button
                                 size="icon"
                                 variant="ghost"
-                                className="h-10 w-10 text-white/80 hover:text-white hover:bg-white/10 rounded-full"
+                                className="h-9 w-9 text-white/80 hover:text-white hover:bg-white/10 rounded-full cursor-pointer"
+                                onClick={() => setLightboxRotation(r => (r + 90) % 360)}
+                                title="Girar 90°"
+                            >
+                                <RotateCw className="h-4.5 w-4.5" />
+                            </Button>
+                            <Button
+                                size="icon"
+                                variant="ghost"
+                                className="h-9 w-9 text-white/80 hover:text-white hover:bg-white/10 rounded-full cursor-pointer"
+                                onClick={() => handleDownload(lightboxMedia.src, 'imagem-whatsapp.jpg')}
+                                title="Baixar imagem"
+                            >
+                                <Download className="h-4.5 w-4.5" />
+                            </Button>
+                            <Button
+                                size="icon"
+                                variant="ghost"
+                                className="h-9 w-9 text-white/80 hover:text-white hover:bg-white/10 rounded-full cursor-pointer"
                                 onClick={() => setLightboxMedia(null)}
                                 title="Fechar (ESC)"
                             >
@@ -3958,57 +4514,123 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
                         </div>
                     </div>
 
-                    {/* Image View */}
-                    <div className="flex-1 flex items-center justify-center max-w-5xl max-h-[80vh] overflow-hidden" onClick={(e) => e.stopPropagation()}>
+                    {/* Image View with Left/Right Gallery Navigation & Wheel Zoom */}
+                    <div
+                        className="relative flex-1 w-full flex items-center justify-center max-h-[72vh] overflow-hidden"
+                        onClick={(e) => e.stopPropagation()}
+                        onWheel={(e) => {
+                            e.preventDefault();
+                            if (e.deltaY < 0) setLightboxZoom(z => Math.min(4, +(z + 0.2).toFixed(2)));
+                            else setLightboxZoom(z => Math.max(0.5, +(z - 0.2).toFixed(2)));
+                        }}
+                    >
+                        {galleryImages.length > 1 && (
+                            <button
+                                type="button"
+                                onClick={() => handleLightboxNav(-1)}
+                                className="absolute left-3 z-20 h-11 w-11 rounded-full bg-black/60 hover:bg-black/80 text-white flex items-center justify-center shadow-lg transition-transform active:scale-95 cursor-pointer"
+                                title="Foto anterior (←)"
+                            >
+                                <ChevronLeft className="h-6 w-6" />
+                            </button>
+                        )}
+
                         <img
                             src={lightboxMedia.src}
                             alt="Visualização"
-                            className="max-w-full max-h-[80vh] object-contain rounded-lg shadow-2xl transition-transform duration-200"
+                            style={{
+                                transform: `scale(${lightboxZoom}) rotate(${lightboxRotation}deg)`
+                            }}
+                            className="max-w-full max-h-[70vh] object-contain rounded-lg shadow-2xl transition-transform duration-150"
                         />
+
+                        {galleryImages.length > 1 && (
+                            <button
+                                type="button"
+                                onClick={() => handleLightboxNav(1)}
+                                className="absolute right-3 z-20 h-11 w-11 rounded-full bg-black/60 hover:bg-black/80 text-white flex items-center justify-center shadow-lg transition-transform active:scale-95 cursor-pointer"
+                                title="Próxima foto (→)"
+                            >
+                                <ChevronRight className="h-6 w-6" />
+                            </button>
+                        )}
                     </div>
 
-                    {/* Bottom Caption */}
-                    {lightboxMedia.caption ? (
-                        <div className="mt-2 max-w-3xl text-center text-sm text-white/95 whitespace-pre-wrap px-4 py-2.5 bg-black/70 backdrop-blur-sm rounded-lg max-h-32 overflow-y-auto" onClick={(e) => e.stopPropagation()}>
-                            {renderMessageContent(lightboxMedia.caption, contactMap)}
-                        </div>
-                    ) : <div className="h-6" />}
+                    {/* Bottom Caption & Gallery Thumbnail Strip */}
+                    <div className="w-full flex flex-col items-center gap-2 z-20" onClick={(e) => e.stopPropagation()}>
+                        {lightboxMedia.caption && (
+                            <div className="max-w-3xl text-center text-sm text-white/95 whitespace-pre-wrap px-4 py-2 bg-black/70 backdrop-blur-sm rounded-lg max-h-24 overflow-y-auto">
+                                {renderMessageContent(lightboxMedia.caption, contactMap)}
+                            </div>
+                        )}
+                        {galleryImages.length > 1 && (
+                            <div className="flex items-center gap-1.5 overflow-x-auto max-w-2xl py-1 px-2 rounded-xl bg-white/5">
+                                {galleryImages.map((imgMsg) => {
+                                    const isCurrent = imgMsg.mediaUrl === lightboxMedia.src;
+                                    return (
+                                        <button
+                                            key={imgMsg.keyId}
+                                            type="button"
+                                            onClick={() => {
+                                                setLightboxZoom(1);
+                                                setLightboxRotation(0);
+                                                setLightboxMedia({ src: imgMsg.mediaUrl!, caption: imgMsg.content });
+                                            }}
+                                            className={cn(
+                                                "h-12 w-12 rounded-lg overflow-hidden shrink-0 border-2 transition-all cursor-pointer",
+                                                isCurrent ? "border-[#00a884] scale-105 opacity-100" : "border-transparent opacity-50 hover:opacity-85"
+                                            )}
+                                        >
+                                            <img src={imgMsg.mediaUrl!} alt="" className="h-full w-full object-cover" />
+                                        </button>
+                                    );
+                                })}
+                            </div>
+                        )}
+                    </div>
                 </div>
             )}
 
-            {/* WhatsApp Web Style Media Preview Modal before Sending */}
-            {previewFile && (
+            {/* WhatsApp Web Style Multi-File Media Preview Modal before Sending (#C15) */}
+            {previewFiles.length > 0 && previewFile && (
                 <div className="fixed inset-0 z-[99999] bg-black/90 backdrop-blur-md flex flex-col justify-between p-4 sm:p-6 animate-in fade-in duration-150 select-none">
-                    {/* Top bar with file name and close button */}
+                    {/* Top bar with file name, count badge and close button */}
                     <div className="w-full flex items-center justify-between z-10">
-                        <span className="text-white/80 text-xs font-medium truncate max-w-md">
-                            {previewFile.file.name} ({(previewFile.file.size / (1024 * 1024)).toFixed(2)} MB)
-                        </span>
+                        <div className="flex items-center gap-2 min-w-0">
+                            <span className="text-white/90 text-xs font-medium truncate max-w-md">
+                                {previewFile.file.name} ({(previewFile.file.size / (1024 * 1024)).toFixed(2)} MB)
+                            </span>
+                            {previewFiles.length > 1 && (
+                                <span className="px-2 py-0.5 rounded-full bg-[#00a884]/30 text-[#25d366] text-[11px] font-semibold">
+                                    {activePreviewIdx + 1} de {previewFiles.length} arquivos
+                                </span>
+                            )}
+                        </div>
                         <Button
                             variant="ghost"
                             size="icon"
                             className="h-9 w-9 rounded-full text-white/80 hover:text-white hover:bg-white/10 cursor-pointer"
                             onClick={handleCancelPreviewFile}
-                            title="Cancelar (Esc)"
+                            title="Cancelar tudo (Esc)"
                         >
                             <X className="h-5 w-5" />
                         </Button>
                     </div>
 
                     {/* Media Preview centered */}
-                    <div className="flex-1 flex items-center justify-center p-4 max-h-[70vh] overflow-hidden">
+                    <div className="flex-1 flex items-center justify-center p-4 max-h-[62vh] overflow-hidden">
                         {previewFile.type === 'image' && (
                             <img
                                 src={previewFile.previewUrl}
                                 alt="Pré-visualização"
-                                className="max-w-full max-h-[65vh] object-contain rounded-xl shadow-2xl"
+                                className="max-w-full max-h-[58vh] object-contain rounded-xl shadow-2xl"
                             />
                         )}
                         {previewFile.type === 'video' && (
                             <video
                                 src={previewFile.previewUrl}
                                 controls
-                                className="max-w-full max-h-[65vh] rounded-xl shadow-2xl"
+                                className="max-w-full max-h-[58vh] rounded-xl shadow-2xl"
                             />
                         )}
                         {previewFile.type !== 'image' && previewFile.type !== 'video' && (
@@ -4020,33 +4642,78 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
                         )}
                     </div>
 
-                    {/* Bottom Caption Input & Send button */}
-                    <div className="w-full max-w-2xl mx-auto flex items-center gap-2 bg-[#2a3942] rounded-2xl p-1.5 shadow-2xl">
-                        <input
-                            type="text"
-                            value={previewFile.caption}
-                            onChange={(e) => setPreviewFile(prev => prev ? { ...prev, caption: e.target.value } : null)}
-                            onKeyDown={(e) => {
-                                if (e.key === "Enter") {
-                                    e.preventDefault();
-                                    handleSendPreviewFile();
-                                } else if (e.key === "Escape") {
-                                    e.preventDefault();
-                                    handleCancelPreviewFile();
-                                }
-                            }}
-                            placeholder="Adicione uma legenda..."
-                            className="flex-1 bg-transparent px-3 py-2 text-sm text-white placeholder:text-white/50 outline-none"
-                            autoFocus
-                        />
-                        <button
-                            type="button"
-                            onClick={handleSendPreviewFile}
-                            className="h-10 w-10 rounded-full bg-[#00a884] hover:bg-[#00a884]/90 text-white flex items-center justify-center shrink-0 shadow-md cursor-pointer transition-transform active:scale-95"
-                            title="Enviar (Enter)"
-                        >
-                            <Send className="h-5 w-5 fill-current ml-0.5" />
-                        </button>
+                    {/* Bottom Queue Strip + Caption Input + Send Button (#C15) */}
+                    <div className="w-full max-w-2xl mx-auto flex flex-col gap-3">
+                        {/* Thumbnail Strip of queued files + Add More button */}
+                        <div className="flex items-center justify-center gap-2 overflow-x-auto py-1">
+                            {previewFiles.map((item, idx) => (
+                                <div
+                                    key={idx}
+                                    onClick={() => setActivePreviewIdx(idx)}
+                                    className={cn(
+                                        "relative h-14 w-14 rounded-xl overflow-hidden border-2 flex items-center justify-center bg-white/10 cursor-pointer shrink-0 group/thumb transition-all",
+                                        idx === activePreviewIdx ? "border-[#00a884] scale-105" : "border-white/20 opacity-70 hover:opacity-100"
+                                    )}
+                                >
+                                    {item.type === 'image' ? (
+                                        <img src={item.previewUrl} alt="" className="h-full w-full object-cover" />
+                                    ) : (
+                                        <FileText className="h-6 w-6 text-white/80" />
+                                    )}
+                                    <button
+                                        type="button"
+                                        onClick={(e) => {
+                                            e.stopPropagation();
+                                            handleRemovePreviewFile(idx);
+                                        }}
+                                        className="absolute top-0.5 right-0.5 h-4.5 w-4.5 rounded-full bg-black/75 text-white flex items-center justify-center opacity-0 group-hover/thumb:opacity-100 transition-opacity cursor-pointer"
+                                        title="Remover arquivo"
+                                    >
+                                        <X className="h-3 w-3" />
+                                    </button>
+                                </div>
+                            ))}
+                            <button
+                                type="button"
+                                onClick={() => triggerUpload(uploadType || "*")}
+                                className="h-14 w-14 rounded-xl border-2 border-dashed border-white/30 hover:border-[#00a884] text-white/70 hover:text-[#00a884] flex items-center justify-center shrink-0 transition-colors cursor-pointer"
+                                title="Adicionar mais arquivos"
+                            >
+                                <Plus className="h-6 w-6" />
+                            </button>
+                        </div>
+
+                        <div className="w-full flex items-center gap-2 bg-[#2a3942] rounded-2xl p-1.5 shadow-2xl">
+                            <input
+                                type="text"
+                                value={previewFile.caption}
+                                onChange={(e) => {
+                                    const val = e.target.value;
+                                    setPreviewFiles(prev => prev.map((item, i) => i === activePreviewIdx ? { ...item, caption: val } : item));
+                                }}
+                                onKeyDown={(e) => {
+                                    if (e.key === "Enter") {
+                                        e.preventDefault();
+                                        handleSendPreviewFile();
+                                    } else if (e.key === "Escape") {
+                                        e.preventDefault();
+                                        handleCancelPreviewFile();
+                                    }
+                                }}
+                                placeholder="Adicione uma legenda..."
+                                className="flex-1 bg-transparent px-3 py-2 text-sm text-white placeholder:text-white/50 outline-none"
+                                autoFocus
+                            />
+                            <button
+                                type="button"
+                                onClick={handleSendPreviewFile}
+                                className="h-10 px-4 rounded-full bg-[#00a884] hover:bg-[#00a884]/90 text-white flex items-center justify-center gap-1.5 shrink-0 shadow-md cursor-pointer transition-transform active:scale-95 text-xs font-semibold"
+                                title="Enviar todos (Enter)"
+                            >
+                                <Send className="h-4 w-4 fill-current" />
+                                {previewFiles.length > 1 && <span>({previewFiles.length})</span>}
+                            </button>
+                        </div>
                     </div>
                 </div>
             )}
