@@ -436,6 +436,7 @@ export function ChatList({ sessionId, onSelectChat, selectedJid }: ChatListProps
 
     // Unlimited pinned chats (persisted per sessionId in localStorage)
     const [pinnedJids, setPinnedJids] = useState<string[]>([]);
+    const searchInputRef = useRef<HTMLInputElement>(null);
 
     // Contacts searched from the 4,613 address book contacts
     const [extraContacts, setExtraContacts] = useState<ChatContact[]>([]);
@@ -730,6 +731,34 @@ export function ChatList({ sessionId, onSelectChat, selectedJid }: ChatListProps
         return [...pinnedList, ...unpinnedList];
     }, [chats, searchInput, extraContacts, filterType, pinnedJids]);
 
+    // Keyboard shortcuts listeners (Ctrl+Shift+F to search, Alt+Up/Down to navigate chats)
+    useEffect(() => {
+        const handleFocusSearch = () => {
+            searchInputRef.current?.focus();
+            searchInputRef.current?.select();
+        };
+
+        const handleNavChat = (e: Event) => {
+            const customEvent = e as CustomEvent<{ direction: number }>;
+            const direction = customEvent.detail?.direction || 1;
+            if (filteredAndSortedChats.length === 0) return;
+            const currentIndex = filteredAndSortedChats.findIndex(c => c.jid === selectedJid);
+            let nextIndex = currentIndex + direction;
+            if (nextIndex < 0) nextIndex = filteredAndSortedChats.length - 1;
+            if (nextIndex >= filteredAndSortedChats.length) nextIndex = 0;
+            const targetChat = filteredAndSortedChats[nextIndex];
+            if (targetChat) onSelectChat(targetChat.jid);
+        };
+
+        window.addEventListener("zapflow:focus-search", handleFocusSearch);
+        window.addEventListener("zapflow:nav-chat", handleNavChat as EventListener);
+        return () => {
+            window.removeEventListener("zapflow:focus-search", handleFocusSearch);
+            window.removeEventListener("zapflow:nav-chat", handleNavChat as EventListener);
+        };
+    }, [filteredAndSortedChats, selectedJid, onSelectChat]);
+
+
     const handleEndReached = useCallback(() => {
         if (hasMore && !loading && !searchInput.trim()) {
             const last = chatsRef.current[chatsRef.current.length - 1];
@@ -810,6 +839,7 @@ export function ChatList({ sessionId, onSelectChat, selectedJid }: ChatListProps
                 <div className="relative">
                     <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-[#667781] dark:text-[#8696a0]" />
                     <Input
+                        ref={searchInputRef}
                         placeholder="Pesquisar conversa ou contato..."
                         value={searchInput}
                         onChange={(e) => setSearchInput(e.target.value)}
