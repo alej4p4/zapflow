@@ -14,6 +14,7 @@ import {
     Music,
     Video,
     Download,
+    ExternalLink,
     ArrowDown,
     CornerUpLeft,
     Copy,
@@ -718,6 +719,346 @@ function saveQuickReplies(items: QuickReplyItem[]) {
         localStorage.setItem(STORAGE_KEY_QUICK_REPLIES, JSON.stringify(items));
         window.dispatchEvent(new CustomEvent("zapflow:quick-replies-updated"));
     } catch {}
+}
+
+
+function ChatInfoAndMediaModal({
+    isOpen,
+    onClose,
+    name,
+    jid,
+    profilePic,
+    isGroup,
+    messages,
+    participants = [],
+    sessionId,
+    initialTab = "media",
+    onPreviewMedia,
+    onExportParticipants,
+    onSendBroadcastToMembers
+}: {
+    isOpen: boolean;
+    onClose: () => void;
+    name?: string;
+    jid: string;
+    profilePic?: string;
+    isGroup?: boolean;
+    messages: Message[];
+    participants?: GroupParticipant[];
+    sessionId: string;
+    initialTab?: "media" | "docs" | "audio" | "links" | "members";
+    onPreviewMedia: (src: string, caption?: string) => void;
+    onExportParticipants?: () => void;
+    onSendBroadcastToMembers?: () => void;
+}) {
+    const [tab, setTab] = useState<"media" | "docs" | "audio" | "links" | "members">(initialTab);
+    const [participantSearch, setParticipantSearch] = useState("");
+
+    useEffect(() => {
+        if (isOpen) setTab(initialTab);
+    }, [isOpen, initialTab]);
+
+    if (!isOpen) return null;
+
+    const mediaMessages = messages.filter(m => (m.type === 'IMAGE' || m.type === 'VIDEO') && m.mediaUrl);
+    const docMessages = messages.filter(m => m.type === 'DOCUMENT' && m.mediaUrl);
+    const audioMessages = messages.filter(m => m.type === 'AUDIO' && m.mediaUrl);
+
+    const linkItems: { url: string; text: string; timestamp: string }[] = [];
+    const urlRegex = /(https?:\/\/[^\s]+)/gi;
+    for (const m of messages) {
+        if (m.content) {
+            const matches = m.content.match(urlRegex);
+            if (matches) {
+                matches.forEach(u => linkItems.push({ url: u, text: m.content, timestamp: m.timestamp }));
+            }
+        }
+    }
+
+    const filteredParticipants = participants.filter(p =>
+        (p.name && p.name.toLowerCase().includes(participantSearch.toLowerCase())) ||
+        (p.phoneNumber && p.phoneNumber.includes(participantSearch))
+    );
+
+    const displayName = name || jid.split('@')[0];
+    const cleanNumber = jid.split('@')[0].replace(/\D/g, "");
+    const formattedPhone = cleanNumber.length >= 10 ? `+${cleanNumber}` : jid;
+
+    return (
+        <Dialog open={isOpen} onOpenChange={(open) => { if (!open) onClose(); }}>
+            <DialogContent className="max-w-2xl p-0 overflow-hidden rounded-2xl bg-white dark:bg-[#111b21] border border-border/40 shadow-2xl max-h-[88vh] flex flex-col">
+                <DialogHeader className="p-4 pb-3 border-b border-border/15 shrink-0 flex flex-row items-center justify-between">
+                    <DialogTitle className="text-base font-semibold flex items-center gap-2 text-foreground">
+                        <Info className="h-4.5 w-4.5 text-[#00a884]" />
+                        <span>Dados do {isGroup ? "Grupo" : "Contato"}</span>
+                    </DialogTitle>
+                </DialogHeader>
+
+                <div className="p-4 bg-muted/20 border-b border-border/15 flex items-center gap-4 shrink-0">
+                    <Avatar className="h-16 w-16 shrink-0 border-2 border-[#00a884]/30 shadow-sm">
+                        <AvatarImage src={profilePic && profilePic.startsWith("http") ? profilePic : `/api/avatar/${sessionId}/${encodeURIComponent(jid)}`} referrerPolicy="no-referrer" />
+                        <AvatarFallback className="text-lg font-bold bg-[#00a884]/20 text-[#00a884]">
+                            {isGroup ? <Users className="h-7 w-7" /> : displayName.slice(0, 2).toUpperCase()}
+                        </AvatarFallback>
+                    </Avatar>
+                    <div className="flex-1 min-w-0">
+                        <h2 className="text-lg font-bold text-foreground truncate">{displayName}</h2>
+                        <p className="text-xs font-mono text-muted-foreground truncate">{isGroup ? `Grupo (${participants.length} membros)` : formattedPhone}</p>
+                    </div>
+                    {isGroup && (
+                        <div className="flex items-center gap-1.5 shrink-0">
+                            {onExportParticipants && (
+                                <Button
+                                    type="button"
+                                    size="sm"
+                                    variant="outline"
+                                    onClick={onExportParticipants}
+                                    className="text-xs gap-1.5 h-8 text-[#00a884] border-[#00a884]/30 hover:bg-[#00a884]/10 cursor-pointer"
+                                    title="Exportar participantes para CSV"
+                                >
+                                    <FileDown className="h-3.5 w-3.5" />
+                                    <span className="hidden sm:inline">Exportar CSV</span>
+                                </Button>
+                            )}
+                            {onSendBroadcastToMembers && (
+                                <Button
+                                    type="button"
+                                    size="sm"
+                                    onClick={onSendBroadcastToMembers}
+                                    className="text-xs gap-1.5 h-8 bg-[#00a884] hover:bg-[#00a884]/90 text-white cursor-pointer"
+                                    title="Criar disparo com os membros deste grupo"
+                                >
+                                    <Zap className="h-3.5 w-3.5" />
+                                    <span className="hidden sm:inline">Disparo</span>
+                                </Button>
+                            )}
+                        </div>
+                    )}
+                </div>
+
+                <div className="flex items-center border-b border-border/15 px-4 gap-1 overflow-x-auto no-scrollbar shrink-0 bg-background text-xs font-medium">
+                    <button
+                        type="button"
+                        onClick={() => setTab("media")}
+                        className={cn(
+                            "py-2.5 px-3 border-b-2 transition-colors cursor-pointer flex items-center gap-1.5",
+                            tab === "media" ? "border-[#00a884] text-[#00a884] font-semibold" : "border-transparent text-muted-foreground hover:text-foreground"
+                        )}
+                    >
+                        <ImageIcon className="h-3.5 w-3.5" />
+                        <span>Mídias ({mediaMessages.length})</span>
+                    </button>
+                    <button
+                        type="button"
+                        onClick={() => setTab("docs")}
+                        className={cn(
+                            "py-2.5 px-3 border-b-2 transition-colors cursor-pointer flex items-center gap-1.5",
+                            tab === "docs" ? "border-[#00a884] text-[#00a884] font-semibold" : "border-transparent text-muted-foreground hover:text-foreground"
+                        )}
+                    >
+                        <FileText className="h-3.5 w-3.5" />
+                        <span>Documentos ({docMessages.length})</span>
+                    </button>
+                    <button
+                        type="button"
+                        onClick={() => setTab("audio")}
+                        className={cn(
+                            "py-2.5 px-3 border-b-2 transition-colors cursor-pointer flex items-center gap-1.5",
+                            tab === "audio" ? "border-[#00a884] text-[#00a884] font-semibold" : "border-transparent text-muted-foreground hover:text-foreground"
+                        )}
+                    >
+                        <Music className="h-3.5 w-3.5" />
+                        <span>Áudios ({audioMessages.length})</span>
+                    </button>
+                    <button
+                        type="button"
+                        onClick={() => setTab("links")}
+                        className={cn(
+                            "py-2.5 px-3 border-b-2 transition-colors cursor-pointer flex items-center gap-1.5",
+                            tab === "links" ? "border-[#00a884] text-[#00a884] font-semibold" : "border-transparent text-muted-foreground hover:text-foreground"
+                        )}
+                    >
+                        <ExternalLink className="h-3.5 w-3.5" />
+                        <span>Links ({linkItems.length})</span>
+                    </button>
+                    {isGroup && (
+                        <button
+                            type="button"
+                            onClick={() => setTab("members")}
+                            className={cn(
+                                "py-2.5 px-3 border-b-2 transition-colors cursor-pointer flex items-center gap-1.5",
+                                tab === "members" ? "border-[#00a884] text-[#00a884] font-semibold" : "border-transparent text-muted-foreground hover:text-foreground"
+                            )}
+                        >
+                            <Users className="h-3.5 w-3.5" />
+                            <span>Membros ({participants.length})</span>
+                        </button>
+                    )}
+                </div>
+
+                <div className="flex-1 overflow-y-auto p-4 styled-scrollbar min-h-[220px]">
+                    {tab === "media" && (
+                        mediaMessages.length === 0 ? (
+                            <div className="py-12 text-center text-muted-foreground">
+                                <ImageIcon className="h-10 w-10 mx-auto opacity-30 mb-2" />
+                                <p className="text-xs">Nenhuma foto ou vídeo compartilhado nesta conversa.</p>
+                            </div>
+                        ) : (
+                            <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
+                                {mediaMessages.map(m => (
+                                    <div
+                                        key={m.keyId}
+                                        className="relative group aspect-square rounded-xl overflow-hidden bg-black/10 cursor-pointer border border-border/20 shadow-xs"
+                                        onClick={() => onPreviewMedia(m.mediaUrl!, m.content)}
+                                    >
+                                        {m.type === 'VIDEO' ? (
+                                            <video src={m.mediaUrl} className="h-full w-full object-cover" />
+                                        ) : (
+                                            <img src={m.mediaUrl} alt="Mídia" className="h-full w-full object-cover transition-transform group-hover:scale-105 duration-200" loading="lazy" />
+                                        )}
+                                        {m.type === 'VIDEO' && (
+                                            <span className="absolute top-1.5 left-1.5 bg-black/60 rounded-md p-1 text-white">
+                                                <Video className="h-3 w-3" />
+                                            </span>
+                                        )}
+                                        <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2">
+                                            <a
+                                                href={m.mediaUrl}
+                                                download={`MEDIA-${m.keyId}`}
+                                                onClick={(e) => e.stopPropagation()}
+                                                className="p-1.5 rounded-full bg-white/90 text-black hover:bg-white transition-colors"
+                                                title="Baixar mídia"
+                                            >
+                                                <Download className="h-4 w-4" />
+                                            </a>
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        )
+                    )}
+
+                    {tab === "docs" && (
+                        docMessages.length === 0 ? (
+                            <div className="py-12 text-center text-muted-foreground">
+                                <FileText className="h-10 w-10 mx-auto opacity-30 mb-2" />
+                                <p className="text-xs">Nenhum documento compartilhado nesta conversa.</p>
+                            </div>
+                        ) : (
+                            <div className="flex flex-col gap-2">
+                                {docMessages.map(m => (
+                                    <div key={m.keyId} className="p-3 rounded-xl bg-muted/30 border border-border/25 flex items-center justify-between gap-3 hover:bg-muted/50 transition-colors">
+                                        <div className="h-9 w-9 rounded-lg bg-purple-500/15 text-purple-600 dark:text-purple-400 flex items-center justify-center shrink-0">
+                                            <FileText className="h-5 w-5" />
+                                        </div>
+                                        <div className="flex-1 min-w-0">
+                                            <p className="text-xs font-medium text-foreground truncate">{m.content || `DOCUMENTO-${m.keyId}`}</p>
+                                            <span className="text-[10px] text-muted-foreground">{new Date(m.timestamp).toLocaleDateString("pt-BR")} às {new Date(m.timestamp).toLocaleTimeString("pt-BR", { hour: '2-digit', minute: '2-digit' })}</span>
+                                        </div>
+                                        <a
+                                            href={m.mediaUrl}
+                                            download={m.content || `DOCUMENTO-${m.keyId}`}
+                                            className="h-8 w-8 rounded-full flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/10 transition-colors"
+                                            title="Baixar documento"
+                                        >
+                                            <Download className="h-4 w-4" />
+                                        </a>
+                                    </div>
+                                ))}
+                            </div>
+                        )
+                    )}
+
+                    {tab === "audio" && (
+                        audioMessages.length === 0 ? (
+                            <div className="py-12 text-center text-muted-foreground">
+                                <Music className="h-10 w-10 mx-auto opacity-30 mb-2" />
+                                <p className="text-xs">Nenhum áudio compartilhado nesta conversa.</p>
+                            </div>
+                        ) : (
+                            <div className="flex flex-col gap-2">
+                                {audioMessages.map(m => (
+                                    <div key={m.keyId} className="p-3 rounded-xl bg-muted/30 border border-border/25 flex items-center justify-between gap-3">
+                                        <div className="flex-1 min-w-0">
+                                            <span className="text-[10px] text-muted-foreground block mb-1">
+                                                {m.fromMe ? "Enviado por você" : (m.pushName || "Contato")} • {new Date(m.timestamp).toLocaleDateString("pt-BR")} às {new Date(m.timestamp).toLocaleTimeString("pt-BR", { hour: '2-digit', minute: '2-digit' })}
+                                            </span>
+                                            <audio src={m.mediaUrl} controls className="w-full h-8" preload="none" />
+                                        </div>
+                                        <a
+                                            href={m.mediaUrl}
+                                            download={`AUDIO-${m.keyId}.mp3`}
+                                            className="h-8 w-8 rounded-full flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/10 transition-colors shrink-0"
+                                            title="Baixar áudio"
+                                        >
+                                            <Download className="h-4 w-4" />
+                                        </a>
+                                    </div>
+                                ))}
+                            </div>
+                        )
+                    )}
+
+                    {tab === "links" && (
+                        linkItems.length === 0 ? (
+                            <div className="py-12 text-center text-muted-foreground">
+                                <ExternalLink className="h-10 w-10 mx-auto opacity-30 mb-2" />
+                                <p className="text-xs">Nenhum link encontrado nas mensagens.</p>
+                            </div>
+                        ) : (
+                            <div className="flex flex-col gap-2">
+                                {linkItems.map((item, idx) => (
+                                    <a
+                                        key={idx}
+                                        href={item.url}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        className="p-3 rounded-xl bg-muted/30 border border-border/25 flex items-center justify-between gap-3 hover:bg-muted/50 transition-colors group"
+                                    >
+                                        <div className="flex-1 min-w-0">
+                                            <span className="text-xs font-semibold text-[#00a884] dark:text-[#25d366] truncate block group-hover:underline">{item.url}</span>
+                                            <p className="text-[11px] text-muted-foreground truncate">{item.text}</p>
+                                        </div>
+                                        <ExternalLink className="h-4 w-4 text-muted-foreground group-hover:text-foreground shrink-0" />
+                                    </a>
+                                ))}
+                            </div>
+                        )
+                    )}
+
+                    {tab === "members" && isGroup && (
+                        <div className="flex flex-col gap-3">
+                            <Input
+                                placeholder="Pesquisar membro pelo nome ou número..."
+                                value={participantSearch}
+                                onChange={e => setParticipantSearch(e.target.value)}
+                                className="h-9 text-xs"
+                            />
+                            <div className="divide-y border rounded-xl overflow-hidden max-h-72 overflow-y-auto styled-scrollbar">
+                                {filteredParticipants.length === 0 ? (
+                                    <p className="p-4 text-xs text-muted-foreground text-center">Nenhum membro encontrado.</p>
+                                ) : (
+                                    filteredParticipants.map(p => (
+                                        <div key={p.id} className="p-2.5 flex items-center justify-between gap-3 hover:bg-muted/40 transition-colors">
+                                            <div className="flex items-center gap-2.5 min-w-0">
+                                                <div className="h-8 w-8 rounded-full bg-[#00a884]/20 text-[#00a884] font-bold text-xs flex items-center justify-center shrink-0">
+                                                    {(p.name || p.id).slice(0, 1).toUpperCase()}
+                                                </div>
+                                                <div className="min-w-0">
+                                                    <span className="text-xs font-medium text-foreground block truncate">{p.name || "Participante"}</span>
+                                                    <span className="text-[10px] font-mono text-muted-foreground block truncate">{p.phoneNumber || p.id}</span>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    ))
+                                )}
+                            </div>
+                        </div>
+                    )}
+                </div>
+            </DialogContent>
+        </Dialog>
+    );
 }
 
 function QuickRepliesManagerModal({
@@ -1595,6 +1936,8 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
 
     // In-chat message search (WhatsApp Web style)
     const [isSearching, setIsSearching] = useState(false);
+    const [isChatInfoModalOpen, setIsChatInfoModalOpen] = useState(false);
+    const [chatInfoModalTab, setChatInfoModalTab] = useState<"media" | "docs" | "audio" | "links" | "members">("media");
     const [searchQuery, setSearchQuery] = useState("");
     const [searchMatchIdx, setSearchMatchIdx] = useState(0);
     const searchInputRef = useRef<HTMLInputElement>(null);
@@ -2355,7 +2698,7 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
                             <ArrowLeft className="h-5 w-5" />
                         </Button>
                     )}
-                    <Avatar className="h-10 w-10 shrink-0 cursor-pointer">
+                    <Avatar className="h-10 w-10 shrink-0 cursor-pointer hover:opacity-85 transition-opacity" onClick={() => { setChatInfoModalTab("media"); setIsChatInfoModalOpen(true); }}>
                         <AvatarImage src={profilePic && profilePic.startsWith("http") ? profilePic : `/api/avatar/${sessionId}/${encodeURIComponent(jid)}`} referrerPolicy="no-referrer" />
                         <AvatarFallback className={cn(
                             "text-xs font-bold flex items-center justify-center",
@@ -2366,7 +2709,7 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
                             {isGroup ? <Users className="h-5 w-5" /> : displayName.slice(0, 2).toUpperCase()}
                         </AvatarFallback>
                     </Avatar>
-                    <div className="flex-1 min-w-0 cursor-pointer">
+                    <div className="flex-1 min-w-0 cursor-pointer" onClick={() => { setChatInfoModalTab("media"); setIsChatInfoModalOpen(true); }}>
                         <h3 className="text-[15px] font-semibold text-foreground truncate leading-snug">
                             {displayName}
                         </h3>
@@ -2463,11 +2806,19 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
                             )}
                             <button
                                 type="button"
-                                onClick={() => toast.info(`Conversa: ${displayName}`)}
+                                onClick={() => { setChatInfoModalTab(isGroup ? "members" : "media"); setIsChatInfoModalOpen(true); }}
                                 className="w-full flex items-center gap-2.5 px-3 py-2 text-xs font-medium text-foreground rounded-xl hover:bg-black/5 dark:hover:bg-white/10 transition-colors text-left cursor-pointer"
                             >
                                 <Info className="h-4 w-4 text-muted-foreground" />
                                 <span>Dados do {isGroup ? "grupo" : "contato"}</span>
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() => { setChatInfoModalTab("media"); setIsChatInfoModalOpen(true); }}
+                                className="w-full flex items-center gap-2.5 px-3 py-2 text-xs font-medium text-foreground rounded-xl hover:bg-black/5 dark:hover:bg-white/10 transition-colors text-left cursor-pointer"
+                            >
+                                <ImageIcon className="h-4 w-4 text-blue-500" />
+                                <span>Mídias, links e docs</span>
                             </button>
 
                             <button
