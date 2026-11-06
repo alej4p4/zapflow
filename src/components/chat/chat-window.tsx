@@ -6577,10 +6577,10 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
                                                 {msg.fromMe && <MessageStatusCheck status={msg.status} />}
                                             </div>
                                         </div>
+                                        )}
 
-
-
-{msg.reactions && Object.keys(msg.reactions).length > 0 && (
+                                        {/* Floating reaction pills at bottom corner of bubble */}
+                                        {msg.reactions && Object.keys(msg.reactions).length > 0 && (
     <div className={cn(
         "absolute -bottom-2.5 z-10 flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-white dark:bg-[#202c33] shadow-[0_1px_3px_rgba(0,0,0,0.25)] border border-border/25 text-[11px] select-none",
         msg.fromMe ? "right-2" : "left-2"
