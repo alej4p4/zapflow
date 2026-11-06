@@ -111,7 +111,8 @@ function getMessagePreview(chat: ChatContact): { text: string; isMedia: boolean;
             DOCUMENT: content || "Documento",
             STICKER: "Figurinha",
             LOCATION: "Localização",
-            CONTACT: "Contato"
+            CONTACT: "Contato",
+            POLL: content ? `📊 ${content.split("|")[0]}` : "📊 Enquete"
         };
         const label = types[chat.lastMessage.type] || "Mídia";
         return {
@@ -156,6 +157,7 @@ interface CtxMenuState {
     profilePic?: string | null;
     isPinned: boolean;
     isArchived: boolean;
+    isMuted: boolean;
     unreadCount?: number;
 }
 
@@ -165,6 +167,7 @@ function ChatContextMenu({
     onSelect,
     onTogglePin,
     onToggleArchive,
+    onToggleMute,
     onToggleRead
 }: {
     state: CtxMenuState;
@@ -172,6 +175,7 @@ function ChatContextMenu({
     onSelect: (jid: string, name?: string, profilePic?: string | null) => void;
     onTogglePin: (jid: string) => void;
     onToggleArchive: (jid: string) => void;
+    onToggleMute: (jid: string) => void;
     onToggleRead: (jid: string, isUnread: boolean) => void;
 }) {
     const ref = useRef<HTMLDivElement>(null);
@@ -192,6 +196,11 @@ function ChatContextMenu({
             label: state.isPinned ? "Desafixar conversa" : "Fixar conversa no topo",
             icon: state.isPinned ? PinOff : Pin,
             action: () => { onTogglePin(state.jid); onClose(); }
+        },
+        {
+            label: state.isMuted ? "Ativar notificações" : "Silenciar notificações",
+            icon: state.isMuted ? Volume2 : VolumeX,
+            action: () => { onToggleMute(state.jid); onClose(); }
         },
         {
             label: state.isArchived ? "Desarquivar conversa" : "Arquivar conversa",
@@ -216,11 +225,11 @@ function ChatContextMenu({
     const style: React.CSSProperties = { position: "fixed", top: state.y, left: state.x, zIndex: 9999 };
     if (typeof window !== "undefined") {
         if (state.x > window.innerWidth - 190) style.left = state.x - 190;
-        if (state.y > window.innerHeight - 190) style.top = state.y - 190;
+        if (state.y > window.innerHeight - 230) style.top = state.y - 230;
     }
 
     return (
-        <div ref={ref} style={style} className="w-52 rounded-xl bg-popover/95 backdrop-blur-md border border-border/60 shadow-2xl py-1 animate-in fade-in zoom-in-95 origin-top-left">
+        <div ref={ref} style={style} className="w-56 rounded-xl bg-popover/95 backdrop-blur-md border border-border/60 shadow-2xl py-1 animate-in fade-in zoom-in-95 origin-top-left">
             {items.map((item, i) => (
                 <button key={i} onClick={item.action} className="w-full flex items-center gap-2.5 px-3 py-2 text-sm transition-colors cursor-pointer text-foreground hover:bg-muted font-normal">
                     <item.icon className="h-4 w-4 shrink-0 text-muted-foreground" />
@@ -237,11 +246,13 @@ function ChatRow({
     isSelected,
     isPinned,
     isArchived,
+    isMuted,
     draftText,
     presence,
     onSelect,
     onTogglePin,
     onToggleArchive,
+    onToggleMute,
     onToggleRead,
     sessionId,
     labelDots
@@ -250,11 +261,13 @@ function ChatRow({
     isSelected: boolean;
     isPinned: boolean;
     isArchived: boolean;
+    isMuted: boolean;
     draftText?: string;
     presence?: { status: "composing" | "recording" };
     onSelect: (jid: string, name?: string, profilePic?: string | null) => void;
     onTogglePin: (jid: string, e?: React.MouseEvent) => void;
     onToggleArchive: (jid: string, e?: React.MouseEvent) => void;
+    onToggleMute: (jid: string, e?: React.MouseEvent) => void;
     onToggleRead: (jid: string, isUnread: boolean) => void;
     sessionId: string;
     labelDots: { colorHex: string; name?: string }[];
@@ -274,6 +287,7 @@ function ChatRow({
                     onSelect={onSelect}
                     onTogglePin={onTogglePin}
                     onToggleArchive={onToggleArchive}
+                    onToggleMute={onToggleMute}
                     onToggleRead={onToggleRead}
                 />
             )}
@@ -296,6 +310,7 @@ function ChatRow({
                         profilePic: chat.profilePic,
                         isPinned,
                         isArchived,
+                        isMuted,
                         unreadCount: chat.unreadCount
                     });
                 }}
@@ -390,6 +405,13 @@ function ChatRow({
                             {unreadCount > 0 && (
                                 <span className="min-w-[20px] h-5 px-1.5 rounded-full bg-[#25d366] text-white text-[11px] font-bold flex items-center justify-center tabular-nums shadow-xs">
                                     {unreadCount > 99 ? "99+" : unreadCount}
+                                </span>
+                            )}
+
+                            {/* Persistent Mute Indicator (#C26) */}
+                            {isMuted && (
+                                <span title="Notificações silenciadas" className="text-muted-foreground/75 p-0.5">
+                                    <VolumeX className="h-3.5 w-3.5" />
                                 </span>
                             )}
 
@@ -527,6 +549,10 @@ export function ChatList({ sessionId, onSelectChat, selectedJid }: ChatListProps
     const [pinnedJids, setPinnedJids] = useState<string[]>([]);
     // Archived chats (#C14)
     const [archivedJids, setArchivedJids] = useState<string[]>([]);
+    // Muted chats (#C26)
+    const [mutedJids, setMutedJids] = useState<string[]>([]);
+    const mutedJidsRef = useRef<string[]>([]);
+    mutedJidsRef.current = mutedJids;
     // Per-chat message drafts (#C13)
     const [draftMap, setDraftMap] = useState<Record<string, string>>({});
 
@@ -572,6 +598,11 @@ export function ChatList({ sessionId, onSelectChat, selectedJid }: ChatListProps
                 const parsed = JSON.parse(storedArchived);
                 if (Array.isArray(parsed)) setArchivedJids(parsed);
             }
+            const storedMuted = localStorage.getItem(`zapflow_muted_${sessionId}`);
+            if (storedMuted) {
+                const parsed = JSON.parse(storedMuted);
+                if (Array.isArray(parsed)) setMutedJids(parsed);
+            }
             const storedDrafts = localStorage.getItem(`zapflow_drafts_${sessionId}`);
             if (storedDrafts) {
                 const parsed = JSON.parse(storedDrafts);
@@ -580,6 +611,25 @@ export function ChatList({ sessionId, onSelectChat, selectedJid }: ChatListProps
         } catch (e) {
             console.error("Failed to load local chat preferences", e);
         }
+    }, [sessionId]);
+
+    // Sync mute changes initiated from ChatWindow (#C26)
+    useEffect(() => {
+        const handleMuteChanged = (e: Event) => {
+            const { jid: targetJid, muted } = (e as CustomEvent<{ jid: string; muted: boolean }>).detail || {};
+            if (!targetJid) return;
+            setMutedJids(prev => {
+                const next = muted
+                    ? Array.from(new Set([...prev, targetJid]))
+                    : prev.filter(id => id !== targetJid);
+                try {
+                    localStorage.setItem(`zapflow_muted_${sessionId}`, JSON.stringify(next));
+                } catch {}
+                return next;
+            });
+        };
+        window.addEventListener("zapflow:mute-changed", handleMuteChanged);
+        return () => window.removeEventListener("zapflow:mute-changed", handleMuteChanged);
     }, [sessionId]);
 
     // Listen for live draft updates from ChatInputBar (#C13)
@@ -750,6 +800,25 @@ export function ChatList({ sessionId, onSelectChat, selectedJid }: ChatListProps
         });
     }, [sessionId]);
 
+    // Toggle Mute / Unmute per Chat (#C26)
+    const handleToggleMute = useCallback((jid: string, e?: React.MouseEvent) => {
+        e?.stopPropagation();
+        setMutedJids(prev => {
+            const isCurrentlyMuted = prev.includes(jid);
+            const next = isCurrentlyMuted ? prev.filter(id => id !== jid) : [...prev, jid];
+            if (typeof window !== "undefined") {
+                try {
+                    localStorage.setItem(`zapflow_muted_${sessionId}`, JSON.stringify(next));
+                    window.dispatchEvent(new CustomEvent("zapflow:mute-changed", {
+                        detail: { jid, muted: !isCurrentlyMuted }
+                    }));
+                } catch {}
+            }
+            toast.success(isCurrentlyMuted ? "🔔 Notificações da conversa ativadas" : "🔇 Notificações da conversa silenciadas");
+            return next;
+        });
+    }, [sessionId]);
+
     // Initial and pagination fetch
     const fetchChats = useCallback(async (cursor?: string, append = false) => {
         if (fetchingRef.current) return;
@@ -849,7 +918,9 @@ export function ChatList({ sessionId, onSelectChat, selectedJid }: ChatListProps
 
                     const isIncomingFromOther = !msg.fromMe && jid !== selectedJidRef.current;
                     if (isIncomingFromOther && isNewKey) {
-                        shouldPlaySound = true;
+                        if (!mutedJidsRef.current.includes(jid)) {
+                            shouldPlaySound = true;
+                        }
                         // Automatically unarchive chat if a new message arrives (#C14)
                         setArchivedJids(prevArch => {
                             if (!prevArch.includes(jid)) return prevArch;
@@ -1072,9 +1143,12 @@ export function ChatList({ sessionId, onSelectChat, selectedJid }: ChatListProps
 
     // ─── INSTANT SEARCH & SORTING (0ms delay, no skeleton wipe, unlimited pinning) ───
     const archivedSet = useMemo(() => new Set(archivedJids), [archivedJids]);
+    const mutedSet = useMemo(() => new Set(mutedJids), [mutedJids]);
     const totalUnreadCount = useMemo(() => chats.filter(c => !archivedSet.has(c.jid) && (c.unreadCount || 0) > 0).length, [chats, archivedSet]);
     const totalGroupsCount = useMemo(() => chats.filter(c => !archivedSet.has(c.jid) && c.jid.endsWith("@g.us")).length, [chats, archivedSet]);
+    const unreadGroupsCount = useMemo(() => chats.filter(c => !archivedSet.has(c.jid) && c.jid.endsWith("@g.us") && (c.unreadCount || 0) > 0).length, [chats, archivedSet]);
     const totalContactsCount = useMemo(() => chats.filter(c => !archivedSet.has(c.jid) && !c.jid.endsWith("@g.us")).length, [chats, archivedSet]);
+    const unreadContactsCount = useMemo(() => chats.filter(c => !archivedSet.has(c.jid) && !c.jid.endsWith("@g.us") && (c.unreadCount || 0) > 0).length, [chats, archivedSet]);
 
     const filteredAndSortedChats = useMemo(() => {
         let list = chats;
@@ -1197,17 +1271,19 @@ export function ChatList({ sessionId, onSelectChat, selectedJid }: ChatListProps
                 isSelected={selectedJid === chat.jid}
                 isPinned={pinnedJids.includes(chat.jid)}
                 isArchived={archivedSet.has(chat.jid)}
+                isMuted={mutedSet.has(chat.jid)}
                 draftText={draftMap[chat.jid]}
                 presence={presenceMap[chat.jid]}
                 onSelect={handleSelectAndClearUnread}
                 onTogglePin={handleTogglePin}
                 onToggleArchive={handleToggleArchive}
+                onToggleMute={handleToggleMute}
                 onToggleRead={handleToggleRead}
                 sessionId={sessionId}
                 labelDots={chatLabelMap.get(chat.jid) || []}
             />
         ),
-        [selectedJid, pinnedJids, archivedSet, draftMap, presenceMap, handleSelectAndClearUnread, handleTogglePin, handleToggleArchive, handleToggleRead, sessionId, chatLabelMap]
+        [selectedJid, pinnedJids, archivedSet, mutedSet, draftMap, presenceMap, handleSelectAndClearUnread, handleTogglePin, handleToggleArchive, handleToggleMute, handleToggleRead, sessionId, chatLabelMap]
     );
 
     const handleStartNewChat = () => {
@@ -1337,9 +1413,16 @@ export function ChatList({ sessionId, onSelectChat, selectedJid }: ChatListProps
                     >
                         <User className="h-3 w-3" />
                         <span>Contatos</span>
-                        {totalContactsCount > 0 && (
+                        {unreadContactsCount > 0 ? (
+                            <span className={cn(
+                                "px-1.5 py-0.2 rounded-full text-[10px] font-bold tabular-nums",
+                                filterType === "contacts" && !selectedLabelId ? "bg-white text-[#00a884]" : "bg-[#25d366] text-white"
+                            )}>
+                                {unreadContactsCount}
+                            </span>
+                        ) : totalContactsCount > 0 ? (
                             <span className="text-[10px] opacity-80">({totalContactsCount})</span>
-                        )}
+                        ) : null}
                     </button>
                     <button
                         onClick={() => { setFilterType("groups"); setSelectedLabelId(null); }}
@@ -1352,9 +1435,16 @@ export function ChatList({ sessionId, onSelectChat, selectedJid }: ChatListProps
                     >
                         <Users className="h-3 w-3" />
                         <span>Grupos</span>
-                        {totalGroupsCount > 0 && (
+                        {unreadGroupsCount > 0 ? (
+                            <span className={cn(
+                                "px-1.5 py-0.2 rounded-full text-[10px] font-bold tabular-nums",
+                                filterType === "groups" && !selectedLabelId ? "bg-white text-[#00a884]" : "bg-[#25d366] text-white"
+                            )}>
+                                {unreadGroupsCount}
+                            </span>
+                        ) : totalGroupsCount > 0 ? (
                             <span className="text-[10px] opacity-80">({totalGroupsCount})</span>
-                        )}
+                        ) : null}
                     </button>
                     <button
                         onClick={() => { setFilterType("pinned"); setSelectedLabelId(null); }}

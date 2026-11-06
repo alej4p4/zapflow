@@ -54,7 +54,16 @@ import {
     ChevronRight,
     MapPin,
     StickyNote,
-    CheckSquare
+    CheckSquare,
+    BarChart2,
+    CalendarClock,
+    Bold,
+    Italic,
+    Strikethrough,
+    Code,
+    Quote,
+    Volume2,
+    VolumeX
 } from "lucide-react";
 import { LabelAssignPopover, LabelData } from "./label-assign-popover";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -82,7 +91,17 @@ import { globalChatListCache } from "./chat-list";
 
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
-import { sendChatMessage, sendMediaMessage, reactToChatMessage, sendChatPresence, forwardChatMessage } from "@/app/dashboard/chat/actions";
+import {
+    sendChatMessage,
+    sendMediaMessage,
+    reactToChatMessage,
+    sendChatPresence,
+    forwardChatMessage,
+    sendContactCardMessage,
+    sendLocationPinMessage,
+    sendPollMessage,
+    scheduleDirectChatMessage
+} from "@/app/dashboard/chat/actions";
 import { useSocket } from "./socket-context";
 import { chatCache, fetchOrGetChatMessages, type Message, type GroupParticipant } from "./chat-cache";
 
@@ -129,7 +148,7 @@ function MessageStatusCheck({ status }: { status: string }) {
     }
 }
 
-// ─── Lazy media ────────
+// ─── Lazy media & WhatsApp Markdown Formatting (#C24) ────────
 function highlightText(text: string, query?: string): React.ReactNode {
     if (!query || !query.trim()) return text;
     const q = query.trim();
@@ -143,6 +162,60 @@ function highlightText(text: string, query?: string): React.ReactNode {
             </mark>
         ) : seg
     );
+}
+
+function formatWhatsAppInline(text: string, query?: string): React.ReactNode {
+    if (!text) return text;
+    // Matches `code`, *bold*, _italic_, ~strike~
+    const mdRegex = /(`[^`\n]+`|\*[^*\n]+\*|_[^_\n]+_|~[^~\n]+~)/g;
+    const segments = text.split(mdRegex);
+    if (segments.length === 1) return highlightText(text, query);
+
+    return segments.map((seg, idx) => {
+        if (seg.length >= 3) {
+            if (seg.startsWith("`") && seg.endsWith("`")) {
+                return (
+                    <code key={idx} className="px-1.5 py-0.5 rounded bg-black/10 dark:bg-white/15 font-mono text-[12.5px]">
+                        {highlightText(seg.slice(1, -1), query)}
+                    </code>
+                );
+            }
+            if (seg.startsWith("*") && seg.endsWith("*")) {
+                return <strong key={idx} className="font-bold">{highlightText(seg.slice(1, -1), query)}</strong>;
+            }
+            if (seg.startsWith("_") && seg.endsWith("_")) {
+                return <em key={idx} className="italic">{highlightText(seg.slice(1, -1), query)}</em>;
+            }
+            if (seg.startsWith("~") && seg.endsWith("~")) {
+                return <del key={idx} className="line-through opacity-85">{highlightText(seg.slice(1, -1), query)}</del>;
+            }
+        }
+        return <span key={idx}>{highlightText(seg, query)}</span>;
+    });
+}
+
+function formatSegmentWithQuotes(text: string, query?: string): React.ReactNode {
+    if (!text.includes("> ")) return formatWhatsAppInline(text, query);
+    const lines = text.split("\n");
+    return lines.map((line, i) => {
+        const isLast = i === lines.length - 1;
+        if (line.startsWith("> ")) {
+            return (
+                <div
+                    key={i}
+                    className="border-l-3 border-[#00a884] pl-2.5 py-0.5 my-0.5 text-foreground/85 italic bg-black/5 dark:bg-white/5 rounded-r-md"
+                >
+                    {formatWhatsAppInline(line.slice(2), query)}
+                </div>
+            );
+        }
+        return (
+            <span key={i}>
+                {formatWhatsAppInline(line, query)}
+                {!isLast && "\n"}
+            </span>
+        );
+    });
 }
 
 // ─── Helper for rendering text with links and @mentions ───
@@ -172,7 +245,7 @@ function renderMessageContent(content: string | null | undefined, contactMap?: R
     while ((match = tokenRegex.exec(content)) !== null) {
         const matchIndex = match.index;
         if (matchIndex > lastIndex) {
-            parts.push(highlightText(content.substring(lastIndex, matchIndex), highlightQuery));
+            parts.push(formatSegmentWithQuotes(content.substring(lastIndex, matchIndex), highlightQuery));
         }
 
         if (match[1]) {
@@ -226,7 +299,7 @@ function renderMessageContent(content: string | null | undefined, contactMap?: R
     }
 
     if (lastIndex < content.length) {
-        parts.push(highlightText(content.substring(lastIndex), highlightQuery));
+        parts.push(formatSegmentWithQuotes(content.substring(lastIndex), highlightQuery));
     }
 
     return parts;
@@ -460,6 +533,7 @@ function ContextMenu({
     onToggleStar,
     onForward,
     onSelectMessages,
+    onInspectMessage,
     isPinned,
     isStarred
 }: {
@@ -472,6 +546,7 @@ function ContextMenu({
     onToggleStar?: (msg: Message) => void;
     onForward: (msg: Message) => void;
     onSelectMessages?: (msg: Message) => void;
+    onInspectMessage?: (msg: Message) => void;
     isPinned: boolean;
     isStarred?: boolean;
 }) {
@@ -499,6 +574,7 @@ function ContextMenu({
     const canEdit = state.msg.fromMe && state.msg.type === "TEXT" && !state.msg.keyId.startsWith("temp-");
 
     const items = [
+        { label: "Dados da mensagem", icon: Info, action: () => { if (onInspectMessage) onInspectMessage(state.msg); onClose(); } },
         { label: "Responder", icon: CornerUpLeft, action: () => { onReply(state.msg); onClose(); } },
         ...(canEdit && onEdit ? [{ label: "Editar mensagem", icon: Pencil, action: () => { onEdit(state.msg); onClose(); } }] : []),
         { label: "Encaminhar", icon: Forward, action: () => { onForward(state.msg); onClose(); } },
@@ -507,7 +583,6 @@ function ContextMenu({
         ...(onToggleStar ? [{ label: isStarred ? "Remover dos favoritos" : "Favoritar mensagem", icon: Star, action: () => { onToggleStar(state.msg); onClose(); } }] : []),
         { label: "Copiar texto", icon: Copy, action: handleCopy },
         { label: state.msg.fromMe ? "Apagar para todos" : "Excluir mensagem", icon: Trash2, action: () => { onDelete(state.msg); onClose(); }, dangerous: true },
-        { label: "Informações", icon: Info, action: () => { toast.info(`Status: ${state.msg.status}\nHorário: ${new Date(state.msg.timestamp).toLocaleString("pt-BR")}`); onClose(); } },
     ];
 
     const style: React.CSSProperties = { position: "fixed", top: state.y, left: state.x, zIndex: 9999 };
@@ -1437,6 +1512,10 @@ function ChatInputBar({
     onSendAudio,
     onUpload,
     onPasteFile,
+    onOpenSendContact,
+    onOpenSendLocation,
+    onOpenSendPoll,
+    onOpenScheduleMessage,
     replyingTo,
     onCancelReply,
     jid,
@@ -1448,6 +1527,10 @@ function ChatInputBar({
     onSendAudio?: (blob: Blob, mimeType: string) => void;
     onUpload: (type: string) => void;
     onPasteFile?: (file: File) => void;
+    onOpenSendContact?: () => void;
+    onOpenSendLocation?: () => void;
+    onOpenSendPoll?: () => void;
+    onOpenScheduleMessage?: (draftText: string) => void;
     replyingTo: Message | null;
     onCancelReply: () => void;
     jid: string;
@@ -1534,6 +1617,30 @@ function ChatInputBar({
                 inputRef.current.focus();
                 const pos = start + emoji.length;
                 inputRef.current.setSelectionRange(pos, pos);
+            }
+        }, 10);
+    };
+
+    // WhatsApp Text Formatting helper (#C24)
+    const applyFormatting = (prefix: string, suffix = prefix) => {
+        const el = inputRef.current;
+        const start = el?.selectionStart ?? input.length;
+        const end = el?.selectionEnd ?? input.length;
+        const selected = input.slice(start, end);
+        const placeholder = selected || "texto";
+        const replacement = `${prefix}${placeholder}${suffix}`;
+        const nextInput = input.slice(0, start) + replacement + input.slice(end);
+        setInput(nextInput);
+        persistChatDraft(sessionId, jid, nextInput);
+        setTimeout(() => {
+            if (inputRef.current) {
+                inputRef.current.focus();
+                if (selected) {
+                    const pos = start + replacement.length;
+                    inputRef.current.setSelectionRange(pos, pos);
+                } else {
+                    inputRef.current.setSelectionRange(start + prefix.length, start + prefix.length + placeholder.length);
+                }
             }
         }, 10);
     };
@@ -1860,6 +1967,18 @@ function ChatInputBar({
             }
         }
 
+        // WhatsApp formatting keyboard shortcuts (#C24: Ctrl+B = *bold*, Ctrl+I = _italic_)
+        if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "b") {
+            e.preventDefault();
+            applyFormatting("*", "*");
+            return;
+        }
+        if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "i") {
+            e.preventDefault();
+            applyFormatting("_", "_");
+            return;
+        }
+
         if (e.key === "Enter" && !e.shiftKey) {
             e.preventDefault();
             handleSend();
@@ -2112,39 +2231,130 @@ function ChatInputBar({
                         </PopoverContent>
                     </Popover>
 
-                    {/* Attachment Popover */}
+                    {/* Attachment Popover (#C22 & #C23) */}
                     <Popover>
                         <PopoverTrigger asChild>
                             <Button
                                 variant="ghost"
                                 size="icon"
-                                className="h-10 w-10 rounded-full shrink-0 text-[#54656f] dark:text-[#8696a0] hover:text-foreground hover:bg-black/5 dark:hover:bg-white/10"
-                                title="Anexar arquivo"
+                                className="h-10 w-10 rounded-full shrink-0 text-[#54656f] dark:text-[#8696a0] hover:text-foreground hover:bg-black/5 dark:hover:bg-white/10 cursor-pointer"
+                                title="Anexar (Fotos, Documento, Áudio, Contato, Localização, Enquete)"
                             >
                                 <Paperclip className="h-5 w-5" />
                             </Button>
                         </PopoverTrigger>
-                        <PopoverContent className="w-52 p-2 rounded-2xl bg-white dark:bg-[#233138] border border-border/40 shadow-xl" side="top" align="start">
+                        <PopoverContent className="w-56 p-2 rounded-2xl bg-white dark:bg-[#233138] border border-border/40 shadow-xl" side="top" align="start">
                             <div className="flex flex-col gap-1">
-                                <Button variant="ghost" size="sm" className="justify-start gap-3 h-9 text-xs rounded-xl" onClick={() => onUpload('image')}>
+                                <Button variant="ghost" size="sm" className="justify-start gap-3 h-9 text-xs rounded-xl cursor-pointer" onClick={() => onUpload('image')}>
                                     <span className="h-7 w-7 rounded-full bg-blue-500/15 text-blue-500 flex items-center justify-center">
                                         <ImageIcon className="h-4 w-4" />
                                     </span>
                                     Fotos e vídeos
                                 </Button>
-                                <Button variant="ghost" size="sm" className="justify-start gap-3 h-9 text-xs rounded-xl" onClick={() => onUpload('document')}>
+                                <Button variant="ghost" size="sm" className="justify-start gap-3 h-9 text-xs rounded-xl cursor-pointer" onClick={() => onUpload('document')}>
                                     <span className="h-7 w-7 rounded-full bg-purple-500/15 text-purple-500 flex items-center justify-center">
                                         <FileText className="h-4 w-4" />
                                     </span>
                                     Documento
                                 </Button>
-                                <Button variant="ghost" size="sm" className="justify-start gap-3 h-9 text-xs rounded-xl" onClick={() => onUpload('audio')}>
+                                <Button variant="ghost" size="sm" className="justify-start gap-3 h-9 text-xs rounded-xl cursor-pointer" onClick={() => onUpload('audio')}>
                                     <span className="h-7 w-7 rounded-full bg-orange-500/15 text-orange-500 flex items-center justify-center">
                                         <Music className="h-4 w-4" />
                                     </span>
                                     Áudio
                                 </Button>
+                                <div className="h-px bg-border/20 my-0.5" />
+                                <Button variant="ghost" size="sm" className="justify-start gap-3 h-9 text-xs rounded-xl cursor-pointer" onClick={() => onOpenSendContact?.()}>
+                                    <span className="h-7 w-7 rounded-full bg-cyan-500/15 text-cyan-500 flex items-center justify-center">
+                                        <User className="h-4 w-4" />
+                                    </span>
+                                    Contato (vCard)
+                                </Button>
+                                <Button variant="ghost" size="sm" className="justify-start gap-3 h-9 text-xs rounded-xl cursor-pointer" onClick={() => onOpenSendLocation?.()}>
+                                    <span className="h-7 w-7 rounded-full bg-emerald-500/15 text-emerald-500 flex items-center justify-center">
+                                        <MapPin className="h-4 w-4" />
+                                    </span>
+                                    Localização
+                                </Button>
+                                <Button variant="ghost" size="sm" className="justify-start gap-3 h-9 text-xs rounded-xl cursor-pointer" onClick={() => onOpenSendPoll?.()}>
+                                    <span className="h-7 w-7 rounded-full bg-amber-500/15 text-amber-500 flex items-center justify-center">
+                                        <BarChart2 className="h-4 w-4" />
+                                    </span>
+                                    Enquete
+                                </Button>
                             </div>
+                        </PopoverContent>
+                    </Popover>
+
+                    {/* WhatsApp Text Formatting Toolbar Popover (#C24) */}
+                    <Popover>
+                        <PopoverTrigger asChild>
+                            <Button
+                                type="button"
+                                variant="ghost"
+                                size="icon"
+                                className="hidden sm:inline-flex h-10 w-10 rounded-full shrink-0 text-[#54656f] dark:text-[#8696a0] hover:text-foreground hover:bg-black/5 dark:hover:bg-white/10 cursor-pointer"
+                                title="Formatar texto (*Negrito*, _Itálico_, ~Tachado~, `Código`, > Citação)"
+                            >
+                                <Bold className="h-4.5 w-4.5" />
+                            </Button>
+                        </PopoverTrigger>
+                        <PopoverContent side="top" align="start" className="w-auto p-1.5 rounded-2xl bg-white dark:bg-[#233138] border border-border/40 shadow-2xl flex items-center gap-1">
+                            <Button
+                                type="button"
+                                variant="ghost"
+                                size="sm"
+                                className="h-8 px-2.5 text-xs gap-1 rounded-xl cursor-pointer"
+                                onClick={() => applyFormatting("*", "*")}
+                                title="Negrito (Ctrl+B)"
+                            >
+                                <Bold className="h-3.5 w-3.5" />
+                                <span>Negrito</span>
+                            </Button>
+                            <Button
+                                type="button"
+                                variant="ghost"
+                                size="sm"
+                                className="h-8 px-2.5 text-xs gap-1 rounded-xl cursor-pointer"
+                                onClick={() => applyFormatting("_", "_")}
+                                title="Itálico (Ctrl+I)"
+                            >
+                                <Italic className="h-3.5 w-3.5" />
+                                <span>Itálico</span>
+                            </Button>
+                            <Button
+                                type="button"
+                                variant="ghost"
+                                size="sm"
+                                className="h-8 px-2.5 text-xs gap-1 rounded-xl cursor-pointer"
+                                onClick={() => applyFormatting("~", "~")}
+                                title="Tachado"
+                            >
+                                <Strikethrough className="h-3.5 w-3.5" />
+                                <span>Tachado</span>
+                            </Button>
+                            <Button
+                                type="button"
+                                variant="ghost"
+                                size="sm"
+                                className="h-8 px-2.5 text-xs gap-1 rounded-xl cursor-pointer"
+                                onClick={() => applyFormatting("`", "`")}
+                                title="Monoespaçado"
+                            >
+                                <Code className="h-3.5 w-3.5" />
+                                <span>Código</span>
+                            </Button>
+                            <Button
+                                type="button"
+                                variant="ghost"
+                                size="sm"
+                                className="h-8 px-2.5 text-xs gap-1 rounded-xl cursor-pointer"
+                                onClick={() => applyFormatting("> ", "")}
+                                title="Bloco de citação"
+                            >
+                                <Quote className="h-3.5 w-3.5" />
+                                <span>Citar</span>
+                            </Button>
                         </PopoverContent>
                     </Popover>
 
@@ -2209,6 +2419,18 @@ function ChatInputBar({
                             className="w-full resize-none bg-transparent text-[15px] text-[#111b21] dark:text-[#e9edef] placeholder-[#8696a0] focus:outline-none leading-relaxed py-1"
                         />
                     </div>
+
+                    {/* Schedule Message Directly Button (#C25) */}
+                    <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => onOpenScheduleMessage?.(input)}
+                        className="h-10 w-10 rounded-full shrink-0 text-[#54656f] dark:text-[#8696a0] hover:text-[#00a884] hover:bg-[#00a884]/10 transition-colors cursor-pointer"
+                        title="Agendar mensagem para este contato/grupo"
+                    >
+                        <CalendarClock className="h-5 w-5" />
+                    </Button>
 
                     {/* WhatsApp Send Button or Mic Button */}
                     {input.trim() ? (
@@ -2287,6 +2509,42 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
 
     // Internal Chat Notes state (#C21)
     const [chatNote, setChatNote] = useState<string>("");
+
+    // Mute Chat state (#C26)
+    const [isChatMuted, setIsChatMuted] = useState<boolean>(false);
+    const isChatMutedRef = useRef<boolean>(false);
+    isChatMutedRef.current = isChatMuted;
+
+    // Message Info / Details modal (#C27)
+    const [inspectingMessage, setInspectingMessage] = useState<Message | null>(null);
+
+    // Send Contact (vCard) modal state (#C22)
+    const [isSendContactOpen, setIsSendContactOpen] = useState(false);
+    const [contactSearchQuery, setContactSearchQuery] = useState("");
+    const [customContactName, setCustomContactName] = useState("");
+    const [customContactPhone, setCustomContactPhone] = useState("");
+    const [isSendingSpecial, setIsSendingSpecial] = useState(false);
+
+    // Send Location modal state (#C22)
+    const [isSendLocationOpen, setIsSendLocationOpen] = useState(false);
+    const [locLat, setLocLat] = useState("");
+    const [locLng, setLocLng] = useState("");
+    const [locName, setLocName] = useState("");
+    const [locAddress, setLocAddress] = useState("");
+    const [isGettingGeo, setIsGettingGeo] = useState(false);
+
+    // Send Poll modal state (#C23)
+    const [isSendPollOpen, setIsSendPollOpen] = useState(false);
+    const [pollQuestion, setPollQuestion] = useState("");
+    const [pollOptions, setPollOptions] = useState<string[]>(["", ""]);
+    const [pollAllowMultiple, setPollAllowMultiple] = useState(false);
+    const [votedPolls, setVotedPolls] = useState<Record<string, string[]>>({});
+
+    // Schedule Message modal state (#C25)
+    const [isScheduleModalOpen, setIsScheduleModalOpen] = useState(false);
+    const [scheduleText, setScheduleText] = useState("");
+    const [scheduleDateTime, setScheduleDateTime] = useState("");
+    const [isSavingSchedule, setIsSavingSchedule] = useState(false);
 
     // Context menu state
     const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
@@ -2392,9 +2650,39 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
             setStarredIds(rawStars ? JSON.parse(rawStars) : []);
             const savedNote = localStorage.getItem(`zapflow_notes_${sessionId}_${jid}`);
             setChatNote(savedNote || "");
+            const rawMuted = localStorage.getItem(`zapflow_muted_${sessionId}`);
+            const mutedList: string[] = rawMuted ? JSON.parse(rawMuted) : [];
+            setIsChatMuted(Array.isArray(mutedList) && mutedList.includes(jid));
         } catch {}
         setIsSelectMode(false);
         setSelectedMsgIds([]);
+    }, [sessionId, jid]);
+
+    // Sync mute changes initiated from ChatList (#C26)
+    useEffect(() => {
+        const handleMuteChanged = (e: Event) => {
+            const { jid: targetJid, muted } = (e as CustomEvent<{ jid: string; muted: boolean }>).detail || {};
+            if (targetJid === jid) {
+                setIsChatMuted(Boolean(muted));
+            }
+        };
+        window.addEventListener("zapflow:mute-changed", handleMuteChanged);
+        return () => window.removeEventListener("zapflow:mute-changed", handleMuteChanged);
+    }, [jid]);
+
+    const handleToggleChatMute = useCallback(() => {
+        setIsChatMuted(prev => {
+            const next = !prev;
+            try {
+                const rawMuted = localStorage.getItem(`zapflow_muted_${sessionId}`);
+                const list: string[] = rawMuted ? JSON.parse(rawMuted) : [];
+                const updated = next ? Array.from(new Set([...list, jid])) : list.filter(x => x !== jid);
+                localStorage.setItem(`zapflow_muted_${sessionId}`, JSON.stringify(updated));
+                window.dispatchEvent(new CustomEvent("zapflow:mute-changed", { detail: { jid, muted: next } }));
+            } catch {}
+            toast.success(next ? "🔇 Notificações desta conversa silenciadas" : "🔔 Notificações desta conversa ativadas");
+            return next;
+        });
     }, [sessionId, jid]);
 
     const handleSaveChatNote = useCallback((val: string) => {
@@ -2591,9 +2879,9 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
                 const relevant = newMessages.filter(m => m.remoteJid === normalizedJid || prev.some(p => p.remoteJid === m.remoteJid));
                 if (relevant.length === 0) return prev;
 
-                // Play chime and desktop notification if there are incoming messages from someone else
+                // Play chime and desktop notification if there are incoming messages from someone else (unless muted #C26)
                 const incomingFromOthers = relevant.filter(m => !m.fromMe && !m.keyId.startsWith("temp-"));
-                if (incomingFromOthers.length > 0) {
+                if (incomingFromOthers.length > 0 && !isChatMutedRef.current) {
                     playNotificationChime();
                     if (typeof document !== "undefined" && document.hidden) {
                         const lastMsg = incomingFromOthers[incomingFromOthers.length - 1];
@@ -3189,6 +3477,184 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
         router.push("/dashboard/broadcast");
     };
 
+    // Send vCard Contact (#C22)
+    const handleSendContactCard = async (cName: string, cPhone: string) => {
+        const cleanPhone = cPhone.replace(/\D/g, "");
+        if (!cleanPhone) {
+            toast.error("Informe um número de telefone válido");
+            return;
+        }
+        const safeName = (cName || cleanPhone).trim();
+        setIsSendingSpecial(true);
+        const tempKeyId = `temp-${Date.now()}`;
+        const nowIso = new Date().toISOString();
+        const contentPayload = `${safeName}|${cleanPhone}`;
+
+        const optimisticMsg: Message = {
+            id: tempKeyId,
+            keyId: tempKeyId,
+            remoteJid: jid,
+            fromMe: true,
+            type: "CONTACT",
+            content: contentPayload,
+            status: "PENDING",
+            timestamp: nowIso,
+        };
+        setMessages(prev => [...prev, optimisticMsg]);
+        setIsSendContactOpen(false);
+        setCustomContactName("");
+        setCustomContactPhone("");
+        requestAnimationFrame(() => scrollToBottom(true));
+
+        try {
+            const res = await sendContactCardMessage(sessionId, jid, safeName, cleanPhone);
+            setMessages(prev => prev.map(m => m.keyId === tempKeyId ? { ...m, keyId: res?.keyId || m.keyId, status: "SENT" } : m));
+            toast.success("Cartão de contato enviado!");
+        } catch (err: any) {
+            toast.error(err?.message || "Erro ao enviar contato");
+            setMessages(prev => prev.map(m => m.keyId === tempKeyId ? { ...m, status: "FAILED" } : m));
+        } finally {
+            setIsSendingSpecial(false);
+        }
+    };
+
+    // Capture Browser Geolocation (#C22)
+    const handleCaptureBrowserGeo = () => {
+        if (typeof navigator === "undefined" || !navigator.geolocation) {
+            toast.error("Geolocalização não suportada pelo navegador");
+            return;
+        }
+        setIsGettingGeo(true);
+        navigator.geolocation.getCurrentPosition(
+            (pos) => {
+                setLocLat(pos.coords.latitude.toFixed(6));
+                setLocLng(pos.coords.longitude.toFixed(6));
+                if (!locName) setLocName("Minha localização atual");
+                setIsGettingGeo(false);
+                toast.success("Localização capturada com sucesso!");
+            },
+            () => {
+                setIsGettingGeo(false);
+                toast.error("Permissão de localização negada ou indisponível");
+            },
+            { enableHighAccuracy: true, timeout: 10000 }
+        );
+    };
+
+    // Send Location Pin (#C22)
+    const handleSendLocationPin = async () => {
+        const latNum = parseFloat(locLat.replace(",", "."));
+        const lngNum = parseFloat(locLng.replace(",", "."));
+        if (isNaN(latNum) || isNaN(lngNum)) {
+            toast.error("Informe coordenadas válidas de Latitude e Longitude");
+            return;
+        }
+        setIsSendingSpecial(true);
+        const tempKeyId = `temp-${Date.now()}`;
+        const nowIso = new Date().toISOString();
+        const contentPayload = locName || locAddress
+            ? `${latNum},${lngNum}|${locName.trim()}|${locAddress.trim()}`
+            : `${latNum},${lngNum}`;
+
+        const optimisticMsg: Message = {
+            id: tempKeyId,
+            keyId: tempKeyId,
+            remoteJid: jid,
+            fromMe: true,
+            type: "LOCATION",
+            content: contentPayload,
+            status: "PENDING",
+            timestamp: nowIso,
+        };
+        setMessages(prev => [...prev, optimisticMsg]);
+        setIsSendLocationOpen(false);
+        requestAnimationFrame(() => scrollToBottom(true));
+
+        try {
+            const res = await sendLocationPinMessage(sessionId, jid, latNum, lngNum, locName, locAddress);
+            setMessages(prev => prev.map(m => m.keyId === tempKeyId ? { ...m, keyId: res?.keyId || m.keyId, status: "SENT" } : m));
+            toast.success("Localização enviada!");
+            setLocLat("");
+            setLocLng("");
+            setLocName("");
+            setLocAddress("");
+        } catch (err: any) {
+            toast.error(err?.message || "Erro ao enviar localização");
+            setMessages(prev => prev.map(m => m.keyId === tempKeyId ? { ...m, status: "FAILED" } : m));
+        } finally {
+            setIsSendingSpecial(false);
+        }
+    };
+
+    // Send Native Poll (#C23)
+    const handleSendPoll = async () => {
+        const cleanQ = pollQuestion.trim();
+        const cleanOpts = pollOptions.map(o => o.trim()).filter(Boolean);
+        if (!cleanQ || cleanOpts.length < 2) {
+            toast.error("Informe a pergunta e pelo menos 2 opções");
+            return;
+        }
+        setIsSendingSpecial(true);
+        const tempKeyId = `temp-${Date.now()}`;
+        const nowIso = new Date().toISOString();
+        const contentPayload = `${cleanQ}|${cleanOpts.join(";;")}`;
+
+        const optimisticMsg: Message = {
+            id: tempKeyId,
+            keyId: tempKeyId,
+            remoteJid: jid,
+            fromMe: true,
+            type: "POLL",
+            content: contentPayload,
+            status: "PENDING",
+            timestamp: nowIso,
+        };
+        setMessages(prev => [...prev, optimisticMsg]);
+        setIsSendPollOpen(false);
+        requestAnimationFrame(() => scrollToBottom(true));
+
+        try {
+            const res = await sendPollMessage(
+                sessionId,
+                jid,
+                cleanQ,
+                cleanOpts,
+                pollAllowMultiple ? cleanOpts.length : 1
+            );
+            setMessages(prev => prev.map(m => m.keyId === tempKeyId ? { ...m, keyId: res?.keyId || m.keyId, status: "SENT" } : m));
+            toast.success("📊 Enquete enviada!");
+            setPollQuestion("");
+            setPollOptions(["", ""]);
+            setPollAllowMultiple(false);
+        } catch (err: any) {
+            toast.error(err?.message || "Erro ao enviar enquete");
+            setMessages(prev => prev.map(m => m.keyId === tempKeyId ? { ...m, status: "FAILED" } : m));
+        } finally {
+            setIsSendingSpecial(false);
+        }
+    };
+
+    // Confirm Direct Schedule Message (#C25)
+    const handleConfirmSchedule = async () => {
+        if (!scheduleText.trim() || !scheduleDateTime) {
+            toast.error("Preencha o texto da mensagem e o horário do agendamento");
+            return;
+        }
+        setIsSavingSchedule(true);
+        try {
+            const sendAtIso = new Date(scheduleDateTime).toISOString();
+            await scheduleDirectChatMessage(sessionId, jid, scheduleText.trim(), sendAtIso);
+            toast.success(`🕒 Mensagem agendada para ${new Date(scheduleDateTime).toLocaleString("pt-BR")}!`);
+            setIsScheduleModalOpen(false);
+            setScheduleText("");
+            setScheduleDateTime("");
+        } catch (err: any) {
+            toast.error(err?.message || "Falha ao agendar mensagem");
+        } finally {
+            setIsSavingSchedule(false);
+        }
+    };
+
     const displayName = name || jid.split('@')[0];
 
     return (
@@ -3232,10 +3698,409 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
                         setIsSelectMode(true);
                         setSelectedMsgIds([msg.keyId]);
                     }}
+                    onInspectMessage={(msg) => setInspectingMessage(msg)}
                     isPinned={pinnedMessageId === contextMenu.msg.keyId}
                     isStarred={starredIds.includes(contextMenu.msg.keyId)}
                 />
             )}
+
+            {/* Dados da Mensagem Modal (#C27) */}
+            <Dialog open={!!inspectingMessage} onOpenChange={(open) => { if (!open) setInspectingMessage(null); }}>
+                <DialogContent className="max-w-md rounded-2xl bg-white dark:bg-[#202c33] border border-border/40 shadow-2xl">
+                    <DialogHeader>
+                        <DialogTitle className="text-base font-semibold flex items-center gap-2 text-foreground">
+                            <Info className="h-4.5 w-4.5 text-[#00a884]" />
+                            <span>Dados da mensagem</span>
+                        </DialogTitle>
+                    </DialogHeader>
+                    {inspectingMessage && (
+                        <div className="space-y-3 py-1">
+                            <div
+                                className={cn(
+                                    "p-3 rounded-xl text-sm shadow-xs border border-black/5 dark:border-white/10",
+                                    inspectingMessage.fromMe
+                                        ? "bg-[#d9fdd3] dark:bg-[#005c4b] text-[#111b21] dark:text-[#e9edef]"
+                                        : "bg-muted/60 dark:bg-[#111b21] text-foreground"
+                                )}
+                            >
+                                <p className="whitespace-pre-wrap break-words text-xs">
+                                    {inspectingMessage.content || `[${inspectingMessage.type}]`}
+                                </p>
+                            </div>
+                            <div className="divide-y border rounded-xl overflow-hidden text-xs">
+                                <div className="p-2.5 flex items-center justify-between">
+                                    <span className="text-muted-foreground font-medium">Status</span>
+                                    <span className="font-semibold flex items-center gap-1.5">
+                                        {inspectingMessage.fromMe ? (
+                                            <>
+                                                <MessageStatusCheck status={inspectingMessage.status} />
+                                                <span>
+                                                    {inspectingMessage.status === "READ"
+                                                        ? "Lida pelo destinatário"
+                                                        : inspectingMessage.status === "DELIVERED"
+                                                            ? "Entregue"
+                                                            : inspectingMessage.status === "SENT"
+                                                                ? "Enviada"
+                                                                : "Pendente"}
+                                                </span>
+                                            </>
+                                        ) : (
+                                            <span className="text-[#00a884]">Recebida</span>
+                                        )}
+                                    </span>
+                                </div>
+                                <div className="p-2.5 flex items-center justify-between">
+                                    <span className="text-muted-foreground font-medium">Data e horário exatos</span>
+                                    <span className="font-mono font-medium">
+                                        {new Date(inspectingMessage.timestamp).toLocaleDateString("pt-BR")} às {new Date(inspectingMessage.timestamp).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
+                                    </span>
+                                </div>
+                                <div className="p-2.5 flex items-center justify-between">
+                                    <span className="text-muted-foreground font-medium">Tipo</span>
+                                    <span className="font-mono uppercase">{inspectingMessage.type}</span>
+                                </div>
+                                <div className="p-2.5 flex items-center justify-between">
+                                    <span className="text-muted-foreground font-medium">ID da Mensagem</span>
+                                    <span className="font-mono text-[11px] truncate max-w-[200px]" title={inspectingMessage.keyId}>
+                                        {inspectingMessage.keyId}
+                                    </span>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+                </DialogContent>
+            </Dialog>
+
+            {/* Send Contact (vCard) Modal (#C22) */}
+            <Dialog open={isSendContactOpen} onOpenChange={setIsSendContactOpen}>
+                <DialogContent className="max-w-md rounded-2xl bg-white dark:bg-[#202c33] border border-border/40 shadow-2xl">
+                    <DialogHeader>
+                        <DialogTitle className="text-base font-semibold flex items-center gap-2 text-foreground">
+                            <User className="h-4.5 w-4.5 text-[#00a884]" />
+                            <span>Enviar Cartão de Contato (vCard)</span>
+                        </DialogTitle>
+                    </DialogHeader>
+                    <div className="space-y-3 py-1">
+                        <div className="space-y-1.5">
+                            <label className="text-xs font-medium text-muted-foreground">Selecionar da sua lista de conversas/agenda:</label>
+                            <Input
+                                placeholder="Pesquisar contato pelo nome ou número..."
+                                value={contactSearchQuery}
+                                onChange={(e) => setContactSearchQuery(e.target.value)}
+                                className="h-8 text-xs"
+                            />
+                            <div className="max-h-36 overflow-y-auto divide-y border rounded-xl styled-scrollbar">
+                                {(globalChatListCache.get(sessionId) || [])
+                                    .filter(c => !c.jid.endsWith("@g.us"))
+                                    .filter(c => {
+                                        const q = contactSearchQuery.trim().toLowerCase();
+                                        if (!q) return true;
+                                        return (c.name || c.notify || "").toLowerCase().includes(q) || c.jid.includes(q);
+                                    })
+                                    .slice(0, 20)
+                                    .map(c => {
+                                        const cName = c.name || c.notify || c.jid.split("@")[0];
+                                        const cPhone = c.jid.split("@")[0].replace(/\D/g, "");
+                                        return (
+                                            <button
+                                                key={c.jid}
+                                                type="button"
+                                                disabled={isSendingSpecial}
+                                                onClick={() => handleSendContactCard(cName, cPhone)}
+                                                className="w-full px-3 py-2 flex items-center justify-between text-left hover:bg-muted/50 transition-colors cursor-pointer text-xs"
+                                            >
+                                                <div className="truncate">
+                                                    <p className="font-semibold text-foreground truncate">{cName}</p>
+                                                    <p className="text-[10px] font-mono text-muted-foreground">+{cPhone}</p>
+                                                </div>
+                                                <span className="text-[#00a884] font-semibold shrink-0">Enviar</span>
+                                            </button>
+                                        );
+                                    })}
+                            </div>
+                        </div>
+
+                        <div className="relative flex py-1 items-center">
+                            <div className="flex-grow border-t border-border/30" />
+                            <span className="flex-shrink mx-2 text-[10px] uppercase text-muted-foreground">ou digite manualmente</span>
+                            <div className="flex-grow border-t border-border/30" />
+                        </div>
+
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                            <Input
+                                placeholder="Nome do contato"
+                                value={customContactName}
+                                onChange={(e) => setCustomContactName(e.target.value)}
+                                className="h-9 text-xs"
+                            />
+                            <Input
+                                placeholder="Telefone (ex: 5566999999999)"
+                                value={customContactPhone}
+                                onChange={(e) => setCustomContactPhone(e.target.value)}
+                                className="h-9 text-xs"
+                            />
+                        </div>
+                        <div className="flex justify-end gap-2 pt-1">
+                            <Button variant="ghost" size="sm" onClick={() => setIsSendContactOpen(false)}>
+                                Cancelar
+                            </Button>
+                            <Button
+                                size="sm"
+                                disabled={!customContactPhone.trim() || isSendingSpecial}
+                                className="bg-[#00a884] hover:bg-[#00a884]/90 text-white"
+                                onClick={() => handleSendContactCard(customContactName || customContactPhone, customContactPhone)}
+                            >
+                                Enviar Contato
+                            </Button>
+                        </div>
+                    </div>
+                </DialogContent>
+            </Dialog>
+
+            {/* Send Location Pin Modal (#C22) */}
+            <Dialog open={isSendLocationOpen} onOpenChange={setIsSendLocationOpen}>
+                <DialogContent className="max-w-md rounded-2xl bg-white dark:bg-[#202c33] border border-border/40 shadow-2xl">
+                    <DialogHeader>
+                        <DialogTitle className="text-base font-semibold flex items-center gap-2 text-foreground">
+                            <MapPin className="h-4.5 w-4.5 text-[#00a884]" />
+                            <span>Enviar Localização no WhatsApp</span>
+                        </DialogTitle>
+                    </DialogHeader>
+                    <div className="space-y-3 py-1">
+                        <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            disabled={isGettingGeo}
+                            onClick={handleCaptureBrowserGeo}
+                            className="w-full justify-center gap-2 h-9 text-xs border-[#00a884]/40 text-[#00a884] hover:bg-[#00a884]/10 cursor-pointer"
+                        >
+                            <MapPin className="h-4 w-4" />
+                            <span>{isGettingGeo ? "Obtendo localização do GPS..." : "📍 Usar minha localização atual (GPS)"}</span>
+                        </Button>
+                        <div className="grid grid-cols-2 gap-2">
+                            <div>
+                                <label className="text-[11px] text-muted-foreground">Latitude</label>
+                                <Input
+                                    placeholder="-15.550000"
+                                    value={locLat}
+                                    onChange={(e) => setLocLat(e.target.value)}
+                                    className="h-8 text-xs"
+                                />
+                            </div>
+                            <div>
+                                <label className="text-[11px] text-muted-foreground">Longitude</label>
+                                <Input
+                                    placeholder="-54.300000"
+                                    value={locLng}
+                                    onChange={(e) => setLocLng(e.target.value)}
+                                    className="h-8 text-xs"
+                                />
+                            </div>
+                        </div>
+                        <div>
+                            <label className="text-[11px] text-muted-foreground">Nome do Local (opcional)</label>
+                            <Input
+                                placeholder="Ex: Escritório / Fazenda / Galpão"
+                                value={locName}
+                                onChange={(e) => setLocName(e.target.value)}
+                                className="h-8 text-xs"
+                            />
+                        </div>
+                        <div>
+                            <label className="text-[11px] text-muted-foreground">Endereço completo (opcional)</label>
+                            <Input
+                                placeholder="Ex: Av. Brasil, 1000 - Centro"
+                                value={locAddress}
+                                onChange={(e) => setLocAddress(e.target.value)}
+                                className="h-8 text-xs"
+                            />
+                        </div>
+                        <div className="flex justify-end gap-2 pt-1">
+                            <Button variant="ghost" size="sm" onClick={() => setIsSendLocationOpen(false)}>
+                                Cancelar
+                            </Button>
+                            <Button
+                                size="sm"
+                                disabled={!locLat.trim() || !locLng.trim() || isSendingSpecial}
+                                className="bg-[#00a884] hover:bg-[#00a884]/90 text-white"
+                                onClick={handleSendLocationPin}
+                            >
+                                Enviar Localização
+                            </Button>
+                        </div>
+                    </div>
+                </DialogContent>
+            </Dialog>
+
+            {/* Create & Send Poll Modal (#C23) */}
+            <Dialog open={isSendPollOpen} onOpenChange={setIsSendPollOpen}>
+                <DialogContent className="max-w-md rounded-2xl bg-white dark:bg-[#202c33] border border-border/40 shadow-2xl">
+                    <DialogHeader>
+                        <DialogTitle className="text-base font-semibold flex items-center gap-2 text-foreground">
+                            <BarChart2 className="h-4.5 w-4.5 text-[#00a884]" />
+                            <span>Criar Enquete</span>
+                        </DialogTitle>
+                    </DialogHeader>
+                    <div className="space-y-3 py-1">
+                        <div>
+                            <label className="text-xs font-medium text-muted-foreground">Pergunta</label>
+                            <Input
+                                placeholder="Faça uma pergunta..."
+                                value={pollQuestion}
+                                onChange={(e) => setPollQuestion(e.target.value)}
+                                className="h-9 text-xs mt-1"
+                            />
+                        </div>
+                        <div className="space-y-2 max-h-52 overflow-y-auto pr-1 styled-scrollbar">
+                            <label className="text-xs font-medium text-muted-foreground">Opções</label>
+                            {pollOptions.map((opt, idx) => (
+                                <div key={idx} className="flex items-center gap-1.5">
+                                    <Input
+                                        placeholder={`Opção ${idx + 1}`}
+                                        value={opt}
+                                        onChange={(e) => {
+                                            const val = e.target.value;
+                                            setPollOptions(prev => prev.map((o, i) => i === idx ? val : o));
+                                        }}
+                                        className="h-8 text-xs"
+                                    />
+                                    {pollOptions.length > 2 && (
+                                        <Button
+                                            type="button"
+                                            variant="ghost"
+                                            size="icon"
+                                            className="h-8 w-8 shrink-0 text-muted-foreground hover:text-destructive"
+                                            onClick={() => setPollOptions(prev => prev.filter((_, i) => i !== idx))}
+                                        >
+                                            <X className="h-3.5 w-3.5" />
+                                        </Button>
+                                    )}
+                                </div>
+                            ))}
+                            {pollOptions.length < 12 && (
+                                <Button
+                                    type="button"
+                                    variant="outline"
+                                    size="sm"
+                                    onClick={() => setPollOptions(prev => [...prev, ""])}
+                                    className="w-full h-8 text-xs gap-1.5 border-dashed cursor-pointer"
+                                >
+                                    <Plus className="h-3.5 w-3.5" />
+                                    Adicionar opção
+                                </Button>
+                            )}
+                        </div>
+                        <label className="flex items-center gap-2 text-xs cursor-pointer select-none pt-1">
+                            <Checkbox
+                                checked={pollAllowMultiple}
+                                onCheckedChange={(c) => setPollAllowMultiple(Boolean(c))}
+                            />
+                            <span>Permitir várias respostas</span>
+                        </label>
+                        <div className="flex justify-end gap-2 pt-1">
+                            <Button variant="ghost" size="sm" onClick={() => setIsSendPollOpen(false)}>
+                                Cancelar
+                            </Button>
+                            <Button
+                                size="sm"
+                                disabled={!pollQuestion.trim() || pollOptions.filter(o => o.trim()).length < 2 || isSendingSpecial}
+                                className="bg-[#00a884] hover:bg-[#00a884]/90 text-white"
+                                onClick={handleSendPoll}
+                            >
+                                Enviar Enquete
+                            </Button>
+                        </div>
+                    </div>
+                </DialogContent>
+            </Dialog>
+
+            {/* Schedule Direct Chat Message Modal (#C25) */}
+            <Dialog open={isScheduleModalOpen} onOpenChange={setIsScheduleModalOpen}>
+                <DialogContent className="max-w-md rounded-2xl bg-white dark:bg-[#202c33] border border-border/40 shadow-2xl">
+                    <DialogHeader>
+                        <DialogTitle className="text-base font-semibold flex items-center gap-2 text-foreground">
+                            <CalendarClock className="h-4.5 w-4.5 text-[#00a884]" />
+                            <span>Agendar mensagem para {displayName}</span>
+                        </DialogTitle>
+                    </DialogHeader>
+                    <div className="space-y-3 py-1">
+                        <div>
+                            <label className="text-xs font-medium text-muted-foreground">Mensagem a ser enviada</label>
+                            <textarea
+                                rows={3}
+                                value={scheduleText}
+                                onChange={(e) => setScheduleText(e.target.value)}
+                                placeholder="Digite a mensagem que será enviada automaticamente..."
+                                className="w-full mt-1 rounded-xl bg-muted/40 dark:bg-[#2a3942] border border-border/40 px-3 py-2 text-xs text-foreground outline-none focus:border-[#00a884] resize-none"
+                            />
+                        </div>
+                        <div className="space-y-1.5">
+                            <label className="text-xs font-medium text-muted-foreground">Atalhos rápidos de horário</label>
+                            <div className="flex flex-wrap gap-1.5">
+                                {[
+                                    { label: "+30 min", fn: () => new Date(Date.now() + 30 * 60000) },
+                                    { label: "+1 hora", fn: () => new Date(Date.now() + 60 * 60000) },
+                                    {
+                                        label: "Amanhã 08:00",
+                                        fn: () => {
+                                            const d = new Date();
+                                            d.setDate(d.getDate() + 1);
+                                            d.setHours(8, 0, 0, 0);
+                                            return d;
+                                        }
+                                    },
+                                    {
+                                        label: "Amanhã 14:00",
+                                        fn: () => {
+                                            const d = new Date();
+                                            d.setDate(d.getDate() + 1);
+                                            d.setHours(14, 0, 0, 0);
+                                            return d;
+                                        }
+                                    }
+                                ].map((preset, i) => (
+                                    <button
+                                        key={i}
+                                        type="button"
+                                        onClick={() => {
+                                            const d = preset.fn();
+                                            const tzOffset = d.getTimezoneOffset() * 60000;
+                                            const localIso = new Date(d.getTime() - tzOffset).toISOString().slice(0, 16);
+                                            setScheduleDateTime(localIso);
+                                        }}
+                                        className="px-2.5 py-1 rounded-full text-[11px] font-medium bg-[#00a884]/15 text-[#00a884] hover:bg-[#00a884]/25 transition-colors cursor-pointer"
+                                    >
+                                        {preset.label}
+                                    </button>
+                                ))}
+                            </div>
+                        </div>
+                        <div>
+                            <label className="text-xs font-medium text-muted-foreground">Data e Hora do Disparo</label>
+                            <Input
+                                type="datetime-local"
+                                value={scheduleDateTime}
+                                onChange={(e) => setScheduleDateTime(e.target.value)}
+                                className="h-9 text-xs mt-1"
+                            />
+                        </div>
+                        <div className="flex justify-end gap-2 pt-1">
+                            <Button variant="ghost" size="sm" onClick={() => setIsScheduleModalOpen(false)}>
+                                Cancelar
+                            </Button>
+                            <Button
+                                size="sm"
+                                disabled={!scheduleText.trim() || !scheduleDateTime || isSavingSchedule}
+                                className="bg-[#00a884] hover:bg-[#00a884]/90 text-white"
+                                onClick={handleConfirmSchedule}
+                            >
+                                {isSavingSchedule ? "Agendando..." : "Confirmar Agendamento"}
+                            </Button>
+                        </div>
+                    </div>
+                </DialogContent>
+            </Dialog>
 
             {/* Drag overlay */}
             {isDragging && (
@@ -3375,6 +4240,11 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
                             <h3 className="text-[15px] font-semibold text-foreground truncate leading-snug">
                                 {displayName}
                             </h3>
+                            {isChatMuted && (
+                                <span title="Notificações desta conversa silenciadas" className="text-muted-foreground shrink-0">
+                                    <VolumeX className="h-3.5 w-3.5" />
+                                </span>
+                            )}
                             {/* Contact Labels in Header */}
                             {chatLabels.length > 0 && (
                                 <div className="hidden sm:flex items-center gap-1 shrink-0 overflow-hidden" onClick={e => e.stopPropagation()}>
@@ -3601,6 +4471,15 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
                                     <span>Etiquetas da conversa</span>
                                 </button>
                             </LabelAssignPopover>
+
+                            <button
+                                type="button"
+                                onClick={handleToggleChatMute}
+                                className="w-full flex items-center gap-2.5 px-3 py-2 text-xs font-medium text-foreground rounded-xl hover:bg-black/5 dark:hover:bg-white/10 transition-colors text-left cursor-pointer"
+                            >
+                                {isChatMuted ? <Volume2 className="h-4 w-4 text-[#00a884]" /> : <VolumeX className="h-4 w-4 text-amber-500" />}
+                                <span>{isChatMuted ? "Ativar notificações" : "Silenciar notificações"}</span>
+                            </button>
 
                             <button
                                 type="button"
@@ -4139,8 +5018,76 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
                                             );
                                         })()}
 
+                                        {/* POLL Card (WhatsApp Web Native Poll #C23) */}
+                                        {msg.type === 'POLL' && (() => {
+                                            const [qRaw, optsRaw] = (msg.content || "Enquete").split("|");
+                                            const pollQ = (qRaw || "Enquete").trim();
+                                            const pollOpts = (optsRaw || "").split(";;").map(o => o.trim()).filter(Boolean);
+                                            const selectedOpts = votedPolls[msg.keyId] || [];
+                                            return (
+                                                <div
+                                                    className={cn(
+                                                        "flex flex-col rounded-xl p-3 mb-1.5 min-w-[240px] max-w-[310px] border border-black/10 dark:border-white/10 select-none gap-2",
+                                                        msg.fromMe ? "bg-black/5 dark:bg-black/25" : "bg-black/5 dark:bg-white/5"
+                                                    )}
+                                                >
+                                                    <div className="flex items-start gap-2">
+                                                        <BarChart2 className="h-4 w-4 text-[#00a884] shrink-0 mt-0.5" />
+                                                        <div className="min-w-0 flex-1">
+                                                            <p className="text-xs font-bold text-foreground leading-snug break-words">
+                                                                {pollQ}
+                                                            </p>
+                                                            <span className="text-[10px] text-muted-foreground">
+                                                                Selecione uma ou mais opções
+                                                            </span>
+                                                        </div>
+                                                    </div>
+                                                    <div className="flex flex-col gap-1.5 mt-0.5">
+                                                        {pollOpts.map((opt, oIdx) => {
+                                                            const isChecked = selectedOpts.includes(opt);
+                                                            return (
+                                                                <button
+                                                                    key={oIdx}
+                                                                    type="button"
+                                                                    onClick={(e) => {
+                                                                        e.stopPropagation();
+                                                                        setVotedPolls(prev => {
+                                                                            const curr = prev[msg.keyId] || [];
+                                                                            const next = curr.includes(opt)
+                                                                                ? curr.filter(x => x !== opt)
+                                                                                : [...curr, opt];
+                                                                            return { ...prev, [msg.keyId]: next };
+                                                                        });
+                                                                    }}
+                                                                    className={cn(
+                                                                        "w-full flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-lg border text-left text-xs transition-all cursor-pointer",
+                                                                        isChecked
+                                                                            ? "border-[#00a884] bg-[#00a884]/15 font-semibold text-foreground"
+                                                                            : "border-black/10 dark:border-white/10 bg-white/50 dark:bg-white/5 hover:bg-black/5"
+                                                                    )}
+                                                                >
+                                                                    <div className="flex items-center gap-2 truncate">
+                                                                        <span className={cn(
+                                                                            "h-4 w-4 rounded-full border flex items-center justify-center shrink-0",
+                                                                            isChecked ? "bg-[#00a884] border-[#00a884] text-white" : "border-slate-400"
+                                                                        )}>
+                                                                            {isChecked && <Check className="h-2.5 w-2.5 stroke-[3]" />}
+                                                                        </span>
+                                                                        <span className="truncate">{opt}</span>
+                                                                    </div>
+                                                                    {isChecked && (
+                                                                        <span className="text-[10px] font-bold text-[#00a884]">1</span>
+                                                                    )}
+                                                                </button>
+                                                            );
+                                                        })}
+                                                    </div>
+                                                </div>
+                                            );
+                                        })()}
+
                                         {/* DOCUMENT (WhatsApp Web Rich File Card #C10) */}
-                                        {msg.type !== 'TEXT' && msg.type !== 'IMAGE' && msg.type !== 'STICKER' && msg.type !== 'VIDEO' && msg.type !== 'AUDIO' && msg.type !== 'LOCATION' && msg.type !== 'CONTACT' && (() => {
+                                        {msg.type !== 'TEXT' && msg.type !== 'IMAGE' && msg.type !== 'STICKER' && msg.type !== 'VIDEO' && msg.type !== 'AUDIO' && msg.type !== 'LOCATION' && msg.type !== 'CONTACT' && msg.type !== 'POLL' && (() => {
                                             const rawFileName = (msg.type === 'DOCUMENT' && msg.content ? msg.content.trim() : "") ||
                                                 `DOCUMENTO-${msg.keyId.slice(-6)}.pdf`;
                                             const extMatch = rawFileName.match(/\.([a-zA-Z0-9]{2,5})$/);
@@ -4205,7 +5152,7 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
 
                                         {/* Text content with mentions & Timestamp + status checks */}
                                         <div className="flex flex-wrap items-end justify-end gap-x-2 gap-y-0.5">
-                                            {msg.type !== 'DOCUMENT' && msg.type !== 'LOCATION' && msg.type !== 'CONTACT' && (
+                                            {msg.type !== 'DOCUMENT' && msg.type !== 'LOCATION' && msg.type !== 'CONTACT' && msg.type !== 'POLL' && (
                                                 <span className="flex-1 break-words whitespace-pre-wrap text-[14.2px]">
                                                     {renderMessageContent(msg.content, contactMap, searchQuery)}
                                                 </span>
@@ -4412,6 +5359,18 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
                 onSendAudio={handleSendAudio}
                 onUpload={triggerUpload}
                 onPasteFile={(file) => initiateFilePreview(file)}
+                onOpenSendContact={() => setIsSendContactOpen(true)}
+                onOpenSendLocation={() => setIsSendLocationOpen(true)}
+                onOpenSendPoll={() => setIsSendPollOpen(true)}
+                onOpenScheduleMessage={(draft) => {
+                    if (draft?.trim()) setScheduleText(draft.trim());
+                    if (!scheduleDateTime) {
+                        const d = new Date(Date.now() + 30 * 60000);
+                        const tzOffset = d.getTimezoneOffset() * 60000;
+                        setScheduleDateTime(new Date(d.getTime() - tzOffset).toISOString().slice(0, 16));
+                    }
+                    setIsScheduleModalOpen(true);
+                }}
                 replyingTo={replyingTo}
                 onCancelReply={() => setReplyingTo(null)}
                 jid={jid}

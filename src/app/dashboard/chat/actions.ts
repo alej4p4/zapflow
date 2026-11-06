@@ -314,3 +314,145 @@ export async function reactToChatMessage(sessionId: string, jid: string, message
         throw new Error(`Failed to send reaction: ${e.message}`);
     }
 }
+
+// Send a WhatsApp vCard Contact Card (#C22)
+export async function sendContactCardMessage(
+    sessionId: string,
+    jid: string,
+    contactName: string,
+    contactPhone: string
+) {
+    const user = await getAuthenticatedUserForAction();
+    if (!user) throw new Error("Unauthorized");
+
+    const canAccess = await canAccessSession(user.id, user.role, sessionId);
+    if (!canAccess) throw new Error("Forbidden");
+
+    const cleanPhone = contactPhone.replace(/\D/g, "");
+    if (!cleanPhone) throw new Error("Número de telefone inválido");
+
+    const safeName = (contactName || cleanPhone).trim();
+    const vcard = [
+        "BEGIN:VCARD",
+        "VERSION:3.0",
+        `FN:${safeName}`,
+        `TEL;type=CELL;type=VOICE;waid=${cleanPhone}:+${cleanPhone}`,
+        "END:VCARD"
+    ].join("\n");
+
+    const result = await ChatService.sendTextMessage(sessionId, jid, {
+        contacts: {
+            displayName: safeName,
+            contacts: [{ vcard }]
+        }
+    });
+
+    return {
+        success: true,
+        keyId: result?.key?.id
+    };
+}
+
+// Send a WhatsApp Location Pin (#C22)
+export async function sendLocationPinMessage(
+    sessionId: string,
+    jid: string,
+    latitude: number,
+    longitude: number,
+    name?: string,
+    address?: string
+) {
+    const user = await getAuthenticatedUserForAction();
+    if (!user) throw new Error("Unauthorized");
+
+    const canAccess = await canAccessSession(user.id, user.role, sessionId);
+    if (!canAccess) throw new Error("Forbidden");
+
+    const result = await ChatService.sendTextMessage(sessionId, jid, {
+        location: {
+            degreesLatitude: latitude,
+            degreesLongitude: longitude,
+            name: name?.trim() || undefined,
+            address: address?.trim() || undefined
+        }
+    });
+
+    return {
+        success: true,
+        keyId: result?.key?.id
+    };
+}
+
+// Send a WhatsApp Native Poll (#C23)
+export async function sendPollMessage(
+    sessionId: string,
+    jid: string,
+    question: string,
+    options: string[],
+    selectableCount = 1
+) {
+    const user = await getAuthenticatedUserForAction();
+    if (!user) throw new Error("Unauthorized");
+
+    const canAccess = await canAccessSession(user.id, user.role, sessionId);
+    if (!canAccess) throw new Error("Forbidden");
+
+    const cleanQuestion = question.trim();
+    const cleanOptions = options.map(o => o.trim()).filter(Boolean);
+    if (!cleanQuestion || cleanOptions.length < 2) {
+        throw new Error("Informe a pergunta e pelo menos 2 opções para a enquete");
+    }
+
+    const result = await ChatService.sendTextMessage(sessionId, jid, {
+        poll: {
+            name: cleanQuestion,
+            values: cleanOptions,
+            selectableCount: Math.max(1, Math.min(selectableCount, cleanOptions.length))
+        }
+    });
+
+    return {
+        success: true,
+        keyId: result?.key?.id
+    };
+}
+
+// Schedule a message directly from the Chat Window (#C25)
+export async function scheduleDirectChatMessage(
+    sessionId: string,
+    jid: string,
+    content: string,
+    sendAtIso: string
+) {
+    const user = await getAuthenticatedUserForAction();
+    if (!user) throw new Error("Unauthorized");
+
+    const canAccess = await canAccessSession(user.id, user.role, sessionId);
+    if (!canAccess) throw new Error("Forbidden");
+
+    const session = await prisma.session.findFirst({
+        where: { OR: [{ sessionId }, { id: sessionId }] },
+        select: { id: true }
+    });
+    if (!session) throw new Error("Sessão não encontrada");
+
+    const sendAtDate = new Date(sendAtIso);
+    if (isNaN(sendAtDate.getTime()) || sendAtDate.getTime() <= Date.now()) {
+        throw new Error("Escolha uma data e horário futuros para o agendamento");
+    }
+
+    const scheduled = await prisma.scheduledMessage.create({
+        data: {
+            sessionId: session.id,
+            jid,
+            content: content.trim(),
+            sendAt: sendAtDate,
+            status: "PENDING"
+        }
+    });
+
+    return {
+        success: true,
+        id: scheduled.id
+    };
+}

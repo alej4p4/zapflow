@@ -504,6 +504,12 @@ async function processAndSaveMessage(
         const telMatch = vcard.match(/TEL[^:]*:([+\d\s\-()]+)/i);
         const extractedPhone = waidMatch?.[1] || (telMatch?.[1] ? telMatch[1].replace(/\D/g, "") : "");
         text = extractedPhone ? `${dName}|${extractedPhone}` : dName;
+    } else if ((messageContent as any)?.pollCreationMessage || (messageContent as any)?.pollCreationMessageV2 || (messageContent as any)?.pollCreationMessageV3) {
+        const poll = (messageContent as any)?.pollCreationMessage || (messageContent as any)?.pollCreationMessageV2 || (messageContent as any)?.pollCreationMessageV3;
+        messageType = "POLL";
+        const pollTitle = poll?.name || "Enquete";
+        const pollOpts = Array.isArray(poll?.options) ? poll.options.map((o: any) => o?.optionName || "").filter(Boolean) : [];
+        text = `${pollTitle}|${pollOpts.join(";;")}`;
     }
 
     // Determine effective participant for groups
