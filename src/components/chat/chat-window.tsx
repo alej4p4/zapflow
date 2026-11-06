@@ -63,7 +63,10 @@ import {
     Code,
     Quote,
     Volume2,
-    VolumeX
+    VolumeX,
+    Sparkles,
+    Palette,
+    Loader2
 } from "lucide-react";
 import { LabelAssignPopover, LabelData } from "./label-assign-popover";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -100,8 +103,12 @@ import {
     sendContactCardMessage,
     sendLocationPinMessage,
     sendPollMessage,
-    scheduleDirectChatMessage
+    scheduleDirectChatMessage,
+    runChatAIAssistant,
+    transcribeChatAudioMessage,
+    type ChatAIAssistantMode
 } from "@/app/dashboard/chat/actions";
+import type { CustomFreeLLMKeys } from "@/lib/free-llm";
 import { useSocket } from "./socket-context";
 import { chatCache, fetchOrGetChatMessages, type Message, type GroupParticipant } from "./chat-cache";
 
@@ -382,13 +389,70 @@ function LazyVideo({ src }: { src: string }) {
     );
 }
 
-// ─── Authentic WhatsApp Voice Note Audio Player with Speed Control (1x, 1.5x, 2x) ───
+const FREE_LLM_KEYS_STORAGE = "zapflow_free_llm_keys_v1";
+const AUDIO_TRANSCRIPTIONS_STORAGE = "zapflow_audio_transcriptions_v1";
+
+function loadSavedLLMKeys(): CustomFreeLLMKeys {
+    if (typeof window === "undefined") return {};
+    try {
+        const raw = localStorage.getItem(FREE_LLM_KEYS_STORAGE);
+        if (raw) {
+            const parsed = JSON.parse(raw);
+            if (parsed && typeof parsed === "object") return parsed;
+        }
+    } catch {}
+    return {};
+}
+
+function saveLLMKeys(keys: CustomFreeLLMKeys) {
+    if (typeof window === "undefined") return;
+    try {
+        localStorage.setItem(FREE_LLM_KEYS_STORAGE, JSON.stringify(keys));
+    } catch {}
+}
+
+// ─── Authentic WhatsApp Voice Note Audio Player with Speed Control (1x, 1.5x, 2x) & AI Transcription (#C30) ───
 function WhatsAppAudioPlayer({ src, downloadFileName }: { src: string; downloadFileName?: string }) {
     const audioRef = useRef<HTMLAudioElement | null>(null);
     const [isPlaying, setIsPlaying] = useState(false);
     const [currentTime, setCurrentTime] = useState(0);
     const [duration, setDuration] = useState(0);
     const [playbackRate, setPlaybackRate] = useState<number>(1);
+    const [transcription, setTranscription] = useState<string | null>(null);
+    const [isTranscribing, setIsTranscribing] = useState(false);
+
+    useEffect(() => {
+        if (typeof window === "undefined" || !src) return;
+        try {
+            const raw = localStorage.getItem(AUDIO_TRANSCRIPTIONS_STORAGE);
+            if (raw) {
+                const map: Record<string, string> = JSON.parse(raw);
+                if (map[src]) setTranscription(map[src]);
+            }
+        } catch {}
+    }, [src]);
+
+    const handleTranscribe = async (e: React.MouseEvent) => {
+        e.stopPropagation();
+        if (isTranscribing) return;
+        setIsTranscribing(true);
+        try {
+            const keys = loadSavedLLMKeys();
+            const res = await transcribeChatAudioMessage(src, keys);
+            setTranscription(res.text);
+            try {
+                const raw = localStorage.getItem(AUDIO_TRANSCRIPTIONS_STORAGE);
+                const map: Record<string, string> = raw ? JSON.parse(raw) : {};
+                map[src] = res.text;
+                localStorage.setItem(AUDIO_TRANSCRIPTIONS_STORAGE, JSON.stringify(map));
+            } catch {}
+            toast.success("🎙️ Áudio transcrito com sucesso!");
+        } catch (err: any) {
+            toast.error(err?.message || "Erro ao transcrever áudio");
+        } finally {
+            setIsTranscribing(false);
+        }
+    };
 
     const togglePlay = () => {
         if (!audioRef.current) return;
@@ -424,64 +488,102 @@ function WhatsAppAudioPlayer({ src, downloadFileName }: { src: string; downloadF
     };
 
     return (
-        <div className="flex items-center gap-2.5 py-1 px-1 my-1 min-w-[240px] max-w-[320px] select-none">
-            <audio
-                ref={audioRef}
-                src={src}
-                preload="metadata"
-                onPlay={() => setIsPlaying(true)}
-                onPause={() => setIsPlaying(false)}
-                onEnded={() => { setIsPlaying(false); setCurrentTime(0); }}
-                onTimeUpdate={() => audioRef.current && setCurrentTime(audioRef.current.currentTime)}
-                onLoadedMetadata={() => audioRef.current && setDuration(audioRef.current.duration)}
-            />
-            {/* Play/Pause Button */}
-            <button
-                type="button"
-                onClick={togglePlay}
-                className="h-10 w-10 rounded-full bg-[#00a884] hover:bg-[#00a884]/90 text-white flex items-center justify-center shrink-0 shadow-sm transition-transform active:scale-95 cursor-pointer"
-                title={isPlaying ? "Pausar" : "Tocar áudio"}
-            >
-                {isPlaying ? <Pause className="h-5 w-5 fill-current" /> : <Play className="h-5 w-5 fill-current ml-0.5" />}
-            </button>
-
-            {/* Scrubber & Time */}
-            <div className="flex-1 flex flex-col justify-center min-w-0 gap-1">
-                <input
-                    type="range"
-                    min="0"
-                    max={duration || 100}
-                    value={currentTime}
-                    onChange={handleSeek}
-                    className="w-full h-1.5 bg-black/15 dark:bg-white/20 rounded-lg appearance-none cursor-pointer accent-[#00a884]"
+        <div className="flex flex-col gap-1.5 my-1 min-w-[245px] max-w-[330px] select-none">
+            <div className="flex items-center gap-2.5 py-1 px-1">
+                <audio
+                    ref={audioRef}
+                    src={src}
+                    preload="metadata"
+                    onPlay={() => setIsPlaying(true)}
+                    onPause={() => setIsPlaying(false)}
+                    onEnded={() => { setIsPlaying(false); setCurrentTime(0); }}
+                    onTimeUpdate={() => audioRef.current && setCurrentTime(audioRef.current.currentTime)}
+                    onLoadedMetadata={() => audioRef.current && setDuration(audioRef.current.duration)}
                 />
-                <div className="flex justify-between items-center text-[11px] text-muted-foreground tabular-nums px-0.5">
-                    <span>{formatTime(currentTime)}</span>
-                    <span>{formatTime(duration)}</span>
+                {/* Play/Pause Button */}
+                <button
+                    type="button"
+                    onClick={togglePlay}
+                    className="h-10 w-10 rounded-full bg-[#00a884] hover:bg-[#00a884]/90 text-white flex items-center justify-center shrink-0 shadow-sm transition-transform active:scale-95 cursor-pointer"
+                    title={isPlaying ? "Pausar" : "Tocar áudio"}
+                >
+                    {isPlaying ? <Pause className="h-5 w-5 fill-current" /> : <Play className="h-5 w-5 fill-current ml-0.5" />}
+                </button>
+
+                {/* Scrubber & Time */}
+                <div className="flex-1 flex flex-col justify-center min-w-0 gap-1">
+                    <input
+                        type="range"
+                        min="0"
+                        max={duration || 100}
+                        value={currentTime}
+                        onChange={handleSeek}
+                        className="w-full h-1.5 bg-black/15 dark:bg-white/20 rounded-lg appearance-none cursor-pointer accent-[#00a884]"
+                    />
+                    <div className="flex justify-between items-center text-[11px] text-muted-foreground tabular-nums px-0.5">
+                        <span>{formatTime(currentTime)}</span>
+                        <span>{formatTime(duration)}</span>
+                    </div>
                 </div>
+
+                {/* Speed Pill (1x, 1.5x, 2x) */}
+                <button
+                    type="button"
+                    onClick={toggleSpeed}
+                    className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-black/5 dark:bg-white/10 hover:bg-black/10 text-muted-foreground hover:text-foreground shrink-0 tabular-nums transition-colors cursor-pointer"
+                    title="Velocidade de reprodução"
+                >
+                    {playbackRate}x
+                </button>
+
+                {/* AI Transcribe Audio Button (#C30) */}
+                <button
+                    type="button"
+                    onClick={handleTranscribe}
+                    disabled={isTranscribing}
+                    className="px-2 py-0.5 rounded-full text-[10.5px] font-semibold bg-[#00a884]/15 hover:bg-[#00a884]/25 text-[#00a884] dark:text-[#25d366] flex items-center gap-1 shrink-0 transition-colors cursor-pointer"
+                    title="Transcrever áudio em texto com IA (Groq Whisper)"
+                >
+                    {isTranscribing ? (
+                        <Loader2 className="h-3 w-3 animate-spin" />
+                    ) : (
+                        <Sparkles className="h-3 w-3" />
+                    )}
+                    <span>{transcription ? "Lido" : "Ler"}</span>
+                </button>
+
+                {/* Download */}
+                {downloadFileName && (
+                    <Button
+                        size="icon"
+                        variant="ghost"
+                        className="h-7 w-7 rounded-full text-muted-foreground hover:text-foreground shrink-0"
+                        onClick={() => handleDownload(src, downloadFileName)}
+                        title="Baixar áudio"
+                    >
+                        <Download className="h-3.5 w-3.5" />
+                    </Button>
+                )}
             </div>
 
-            {/* Speed Pill (1x, 1.5x, 2x) */}
-            <button
-                type="button"
-                onClick={toggleSpeed}
-                className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-black/5 dark:bg-white/10 hover:bg-black/10 text-muted-foreground hover:text-foreground shrink-0 tabular-nums transition-colors"
-                title="Velocidade de reprodução"
-            >
-                {playbackRate}x
-            </button>
-
-            {/* Download */}
-            {downloadFileName && (
-                <Button
-                    size="icon"
-                    variant="ghost"
-                    className="h-7 w-7 rounded-full text-muted-foreground hover:text-foreground shrink-0"
-                    onClick={() => handleDownload(src, downloadFileName)}
-                    title="Baixar áudio"
-                >
-                    <Download className="h-3.5 w-3.5" />
-                </Button>
+            {transcription && (
+                <div className="px-2.5 py-1.5 rounded-lg bg-black/5 dark:bg-black/25 border border-black/5 dark:border-white/10 text-xs text-foreground/90 flex items-start justify-between gap-2 select-text">
+                    <p className="italic leading-relaxed break-words flex-1">
+                        &ldquo;{transcription}&rdquo;
+                    </p>
+                    <button
+                        type="button"
+                        onClick={(e) => {
+                            e.stopPropagation();
+                            navigator.clipboard.writeText(transcription);
+                            toast.success("Transcrição copiada!");
+                        }}
+                        className="p-1 text-muted-foreground hover:text-foreground shrink-0 cursor-pointer"
+                        title="Copiar transcrição"
+                    >
+                        <Copy className="h-3 w-3" />
+                    </button>
+                </div>
             )}
         </div>
     );
@@ -1516,6 +1618,7 @@ function ChatInputBar({
     onOpenSendLocation,
     onOpenSendPoll,
     onOpenScheduleMessage,
+    onOpenAIAssistant,
     replyingTo,
     onCancelReply,
     jid,
@@ -1531,6 +1634,7 @@ function ChatInputBar({
     onOpenSendLocation?: () => void;
     onOpenSendPoll?: () => void;
     onOpenScheduleMessage?: (draftText: string) => void;
+    onOpenAIAssistant?: (initialMode: ChatAIAssistantMode, draftText: string) => void;
     replyingTo: Message | null;
     onCancelReply: () => void;
     jid: string;
@@ -1540,8 +1644,57 @@ function ChatInputBar({
 }) {
     const [input, setInput] = useState("");
     const [emojiTab, setEmojiTab] = useState<string>("freq");
+    const [isRewritingDraft, setIsRewritingDraft] = useState(false);
     const inputRef = useRef<HTMLTextAreaElement>(null);
     const lastTypingSentRef = useRef<number>(0);
+
+    // Allow external AI Assistant modal to inject text directly into the input bar (#C29)
+    useEffect(() => {
+        const handleSetInput = (e: Event) => {
+            const { text } = (e as CustomEvent<{ text: string }>).detail || {};
+            if (typeof text === "string") {
+                setInput(text);
+                persistChatDraft(sessionId, jid, text);
+                setTimeout(() => {
+                    if (inputRef.current) {
+                        inputRef.current.focus();
+                        inputRef.current.style.height = "auto";
+                        inputRef.current.style.height = Math.min(inputRef.current.scrollHeight, 120) + "px";
+                    }
+                }, 20);
+            }
+        };
+        window.addEventListener("zapflow:set-chat-input", handleSetInput);
+        return () => window.removeEventListener("zapflow:set-chat-input", handleSetInput);
+    }, [sessionId, jid]);
+
+    const handleInlineAIRewrite = async (mode: ChatAIAssistantMode) => {
+        if (!input.trim()) {
+            onOpenAIAssistant?.(mode, "");
+            return;
+        }
+        setIsRewritingDraft(true);
+        try {
+            const keys = loadSavedLLMKeys();
+            const res = await runChatAIAssistant(mode, input, [], undefined, keys);
+            if (res.result) {
+                setInput(res.result);
+                persistChatDraft(sessionId, jid, res.result);
+                toast.success(`✨ Texto aprimorado (${res.provider})`);
+                setTimeout(() => {
+                    if (inputRef.current) {
+                        inputRef.current.focus();
+                        inputRef.current.style.height = "auto";
+                        inputRef.current.style.height = Math.min(inputRef.current.scrollHeight, 120) + "px";
+                    }
+                }, 20);
+            }
+        } catch (err: any) {
+            toast.error(err?.message || "Erro ao processar texto com IA");
+        } finally {
+            setIsRewritingDraft(false);
+        }
+    };
 
     // Audio recording state (#C20)
     const [isRecording, setIsRecording] = useState(false);
@@ -2384,6 +2537,103 @@ function ChatInputBar({
                         <Zap className="h-5 w-5" />
                     </Button>
 
+                    {/* Free LLM AI Assistant Popover Button (✨ IA #C29) */}
+                    <Popover>
+                        <PopoverTrigger asChild>
+                            <Button
+                                type="button"
+                                variant="ghost"
+                                size="icon"
+                                disabled={isRewritingDraft}
+                                className="h-10 w-10 rounded-full shrink-0 text-purple-600 dark:text-purple-400 hover:bg-purple-500/15 transition-colors cursor-pointer"
+                                title="✨ Assistente de IA Gratuita (Sugerir Resposta, Melhorar Texto, Resumir Conversa)"
+                            >
+                                {isRewritingDraft ? (
+                                    <Loader2 className="h-5 w-5 animate-spin" />
+                                ) : (
+                                    <Sparkles className="h-5 w-5" />
+                                )}
+                            </Button>
+                        </PopoverTrigger>
+                        <PopoverContent side="top" align="start" className="w-64 p-2 rounded-2xl bg-white dark:bg-[#233138] border border-border/40 shadow-2xl z-50">
+                            <div className="px-2.5 py-1.5 border-b border-border/15 mb-1 flex items-center justify-between">
+                                <span className="text-xs font-bold text-purple-600 dark:text-purple-400 flex items-center gap-1.5">
+                                    <Sparkles className="h-3.5 w-3.5" />
+                                    Assistente IA (Free LLM)
+                                </span>
+                                <button
+                                    type="button"
+                                    onClick={() => onOpenAIAssistant?.("suggest_reply", input)}
+                                    className="text-[10.5px] text-[#00a884] hover:underline font-medium cursor-pointer"
+                                >
+                                    Abrir Painel
+                                </button>
+                            </div>
+                            <div className="flex flex-col gap-0.5 text-xs">
+                                <button
+                                    type="button"
+                                    onClick={() => onOpenAIAssistant?.("suggest_reply", input)}
+                                    className="w-full px-2.5 py-2 rounded-xl text-left hover:bg-purple-500/10 text-foreground font-medium flex items-center gap-2 transition-colors cursor-pointer"
+                                >
+                                    <span>💡</span>
+                                    <span>Sugerir 3 respostas para o chat</span>
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => onOpenAIAssistant?.("summarize_chat", input)}
+                                    className="w-full px-2.5 py-2 rounded-xl text-left hover:bg-purple-500/10 text-foreground font-medium flex items-center gap-2 transition-colors cursor-pointer"
+                                >
+                                    <span>📋</span>
+                                    <span>Resumir histórico da conversa</span>
+                                </button>
+                                <div className="h-px bg-border/15 my-1" />
+                                <span className="px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                                    Reescrever texto digitado
+                                </span>
+                                <button
+                                    type="button"
+                                    onClick={() => handleInlineAIRewrite("improve_professional")}
+                                    className="w-full px-2.5 py-1.5 rounded-xl text-left hover:bg-muted/60 text-foreground flex items-center gap-2 transition-colors cursor-pointer"
+                                >
+                                    <span>💼</span>
+                                    <span>Tom Profissional e Claro</span>
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => handleInlineAIRewrite("improve_friendly")}
+                                    className="w-full px-2.5 py-1.5 rounded-xl text-left hover:bg-muted/60 text-foreground flex items-center gap-2 transition-colors cursor-pointer"
+                                >
+                                    <span>😊</span>
+                                    <span>Tom Amigável e Empático</span>
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => handleInlineAIRewrite("improve_persuasive")}
+                                    className="w-full px-2.5 py-1.5 rounded-xl text-left hover:bg-muted/60 text-foreground flex items-center gap-2 transition-colors cursor-pointer"
+                                >
+                                    <span>🚀</span>
+                                    <span>Tom Comercial / Vendas</span>
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => handleInlineAIRewrite("fix_grammar")}
+                                    className="w-full px-2.5 py-1.5 rounded-xl text-left hover:bg-muted/60 text-foreground flex items-center gap-2 transition-colors cursor-pointer"
+                                >
+                                    <span>✅</span>
+                                    <span>Corrigir Gramática / Ortografia</span>
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => handleInlineAIRewrite("translate_en")}
+                                    className="w-full px-2.5 py-1.5 rounded-xl text-left hover:bg-muted/60 text-foreground flex items-center gap-2 transition-colors cursor-pointer"
+                                >
+                                    <span>🌐</span>
+                                    <span>Traduzir para Inglês</span>
+                                </button>
+                            </div>
+                        </PopoverContent>
+                    </Popover>
+
                     {/* Input Textarea capsule */}
                     <div className="flex-1 min-w-0 bg-white dark:bg-[#2a3942] rounded-xl px-3.5 py-1.5 shadow-[0_1px_0.5px_rgba(11,20,26,0.1)] flex items-center">
                         <textarea
@@ -2601,9 +2851,24 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
         return () => window.removeEventListener("keydown", handleKeyDown);
     }, []);
 
-    // Pinned Message & Starred Messages state (persisted per sessionId:jid in localStorage) (#C12)
-    const [pinnedMessageId, setPinnedMessageId] = useState<string | null>(null);
+    // Pinned Messages (Multiple Carousel #C31) & Starred Messages state (persisted per sessionId:jid in localStorage) (#C12)
+    const [pinnedMessageIds, setPinnedMessageIds] = useState<string[]>([]);
+    const [activePinnedIdx, setActivePinnedIdx] = useState<number>(0);
     const [starredIds, setStarredIds] = useState<string[]>([]);
+
+    // Chat Wallpaper Theme (#C33)
+    const [chatWallpaper, setChatWallpaper] = useState<"default" | "dark" | "emerald" | "ocean" | "minimal">("default");
+
+    // Free LLM AI Assistant Modal State (#C29)
+    const [isAIAssistantOpen, setIsAIAssistantOpen] = useState(false);
+    const [aiMode, setAiMode] = useState<ChatAIAssistantMode>("suggest_reply");
+    const [aiInputDraft, setAiInputDraft] = useState("");
+    const [aiResult, setAiResult] = useState("");
+    const [aiSuggestions, setAiSuggestions] = useState<string[]>([]);
+    const [aiProviderInfo, setAiProviderInfo] = useState<{ provider: string; model: string; isLocalFallback?: boolean } | null>(null);
+    const [isRunningAI, setIsRunningAI] = useState(false);
+    const [showLLMKeyConfig, setShowLLMKeyConfig] = useState(false);
+    const [llmKeys, setLlmKeys] = useState<CustomFreeLLMKeys>({});
 
     // Forward message modal state
     const [forwardingMessage, setForwardingMessage] = useState<Message | null>(null);
@@ -2644,8 +2909,26 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
     useEffect(() => {
         if (typeof window === "undefined") return;
         try {
-            const saved = localStorage.getItem(`zapflow_pinned_msg_${sessionId}_${jid}`);
-            setPinnedMessageId(saved || null);
+            const savedWp = localStorage.getItem("zapflow_chat_wallpaper_v1") as any;
+            if (savedWp && ["default", "dark", "emerald", "ocean", "minimal"].includes(savedWp)) {
+                setChatWallpaper(savedWp);
+            }
+            setLlmKeys(loadSavedLLMKeys());
+        } catch {}
+    }, []);
+
+    useEffect(() => {
+        if (typeof window === "undefined") return;
+        try {
+            const savedMulti = localStorage.getItem(`zapflow_pinned_msgs_${sessionId}_${jid}`);
+            if (savedMulti) {
+                const parsed = JSON.parse(savedMulti);
+                setPinnedMessageIds(Array.isArray(parsed) ? parsed : []);
+            } else {
+                const legacySingle = localStorage.getItem(`zapflow_pinned_msg_${sessionId}_${jid}`);
+                setPinnedMessageIds(legacySingle ? [legacySingle] : []);
+            }
+            setActivePinnedIdx(0);
             const rawStars = localStorage.getItem(`zapflow_starred_${sessionId}_${jid}`);
             setStarredIds(rawStars ? JSON.parse(rawStars) : []);
             const savedNote = localStorage.getItem(`zapflow_notes_${sessionId}_${jid}`);
@@ -2713,31 +2996,55 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
         });
     }, [sessionId, jid]);
 
+    const pinnedMessagesList = useMemo(() => {
+        if (pinnedMessageIds.length === 0) return [];
+        return pinnedMessageIds
+            .map(id => messages.find(m => m.keyId === id))
+            .filter((m): m is Message => Boolean(m));
+    }, [messages, pinnedMessageIds]);
+
     const pinnedMessage = useMemo(() => {
-        if (!pinnedMessageId) return null;
-        return messages.find(m => m.keyId === pinnedMessageId) || null;
-    }, [messages, pinnedMessageId]);
+        if (pinnedMessagesList.length === 0) return null;
+        return pinnedMessagesList[activePinnedIdx % pinnedMessagesList.length] || pinnedMessagesList[0];
+    }, [pinnedMessagesList, activePinnedIdx]);
 
     const handleTogglePin = useCallback((msg: Message) => {
-        setPinnedMessageId(prev => {
-            const isCurrentlyPinned = prev === msg.keyId;
-            const next = isCurrentlyPinned ? null : msg.keyId;
+        setPinnedMessageIds(prev => {
+            const isCurrentlyPinned = prev.includes(msg.keyId);
+            const next = isCurrentlyPinned
+                ? prev.filter(id => id !== msg.keyId)
+                : [msg.keyId, ...prev].slice(0, 5);
             try {
-                if (next) localStorage.setItem(`zapflow_pinned_msg_${sessionId}_${jid}`, next);
-                else localStorage.removeItem(`zapflow_pinned_msg_${sessionId}_${jid}`);
+                if (next.length > 0) {
+                    localStorage.setItem(`zapflow_pinned_msgs_${sessionId}_${jid}`, JSON.stringify(next));
+                } else {
+                    localStorage.removeItem(`zapflow_pinned_msgs_${sessionId}_${jid}`);
+                    localStorage.removeItem(`zapflow_pinned_msg_${sessionId}_${jid}`);
+                }
             } catch {}
-            toast.success(isCurrentlyPinned ? "Mensagem desafixada" : "Mensagem fixada no topo!");
+            toast.success(isCurrentlyPinned ? "Mensagem desafixada" : `📌 Mensagem fixada no topo (${next.length} fixada${next.length > 1 ? "s" : ""})!`);
             return next;
         });
+        setActivePinnedIdx(0);
     }, [sessionId, jid]);
 
-    const handleUnpin = useCallback(() => {
-        setPinnedMessageId(null);
-        try {
-            localStorage.removeItem(`zapflow_pinned_msg_${sessionId}_${jid}`);
-        } catch {}
+    const handleUnpin = useCallback((keyIdToRemove?: string) => {
+        setPinnedMessageIds(prev => {
+            const targetId = keyIdToRemove || pinnedMessage?.keyId;
+            const next = targetId ? prev.filter(id => id !== targetId) : [];
+            try {
+                if (next.length > 0) {
+                    localStorage.setItem(`zapflow_pinned_msgs_${sessionId}_${jid}`, JSON.stringify(next));
+                } else {
+                    localStorage.removeItem(`zapflow_pinned_msgs_${sessionId}_${jid}`);
+                    localStorage.removeItem(`zapflow_pinned_msg_${sessionId}_${jid}`);
+                }
+            } catch {}
+            return next;
+        });
+        setActivePinnedIdx(0);
         toast.success("Mensagem desafixada");
-    }, [sessionId, jid]);
+    }, [sessionId, jid, pinnedMessage]);
 
     // Gallery images & Lightbox keyboard navigation (#C16)
     const galleryImages = useMemo(() => {
@@ -3424,6 +3731,88 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
         toast.success("Histórico da conversa exportado com sucesso (.txt)!");
     };
 
+    // Export conversation history as CSV (#C32)
+    const handleExportConversationCsv = () => {
+        if (messages.length === 0) {
+            toast.info("Nenhuma mensagem para exportar nesta conversa");
+            return;
+        }
+        const header = "Data/Hora,Direcao,Remetente,Tipo,Conteudo,Status\n";
+        const rows = messages.map(msg => {
+            const timeStr = new Date(msg.timestamp).toLocaleString("pt-BR");
+            const dir = msg.fromMe ? "Enviada" : "Recebida";
+            const sender = msg.fromMe
+                ? "Você"
+                : (msg.pushName || (isGroup ? ((msg.remoteJid && contactMap[msg.remoteJid]) || (msg.remoteJid ? msg.remoteJid.split("@")[0] : "")) : (displayName || jid)));
+            const typeStr = msg.type || "TEXT";
+            const contentStr = (msg.content || `[${typeStr}]`).replace(/"/g, '""').replace(/\r?\n/g, " ");
+            const statusStr = msg.status || (msg.fromMe ? "SENT" : "RECEIVED");
+            return `"${timeStr}","${dir}","${String(sender).replace(/"/g, '""')}","${typeStr}","${contentStr}","${statusStr}"`;
+        }).join("\n");
+
+        const csvContent = "\uFEFF" + header + rows;
+        const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        const safeName = (displayName || "conversa").replace(/[^a-zA-Z0-9_-]/g, "_");
+        const dateStr = new Date().toISOString().slice(0, 10);
+        link.href = url;
+        link.download = `ZapFlow_${safeName}_${dateStr}.csv`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(url);
+        toast.success("📊 Histórico da conversa exportado em planilha (.csv)!");
+    };
+
+    // Change Chat Wallpaper Theme (#C33)
+    const handleChangeWallpaper = (theme: "default" | "dark" | "emerald" | "ocean" | "minimal") => {
+        setChatWallpaper(theme);
+        if (typeof window !== "undefined") {
+            try {
+                localStorage.setItem("zapflow_chat_wallpaper_v1", theme);
+            } catch {}
+        }
+        toast.success("🎨 Papel de parede da conversa atualizado!");
+    };
+
+    // Free LLM AI Assistant handlers (#C29)
+    const handleRunAIAssistant = async (modeToRun: ChatAIAssistantMode, draftTextOverride?: string) => {
+        setIsRunningAI(true);
+        setAiMode(modeToRun);
+        const textToUse = draftTextOverride !== undefined ? draftTextOverride : aiInputDraft;
+        try {
+            const recentContext = messages
+                .filter(m => m.content && m.content.trim().length > 0)
+                .slice(-15)
+                .map(m => ({
+                    fromMe: m.fromMe,
+                    sender: m.pushName || (m.fromMe ? "Você" : displayName),
+                    content: m.content || ""
+                }));
+            const currentKeys = loadSavedLLMKeys();
+            const res = await runChatAIAssistant(modeToRun, textToUse, recentContext, displayName, currentKeys);
+            setAiResult(res.result);
+            setAiSuggestions(res.suggestions || []);
+            setAiProviderInfo({
+                provider: res.provider,
+                model: res.model,
+                isLocalFallback: res.isLocalFallback
+            });
+        } catch (err: any) {
+            toast.error(err?.message || "Erro ao executar Assistente de IA");
+        } finally {
+            setIsRunningAI(false);
+        }
+    };
+
+    const handleOpenAIAssistant = (initialMode: ChatAIAssistantMode, draftText: string) => {
+        setAiInputDraft(draftText || "");
+        setAiMode(initialMode);
+        setIsAIAssistantOpen(true);
+        handleRunAIAssistant(initialMode, draftText || "");
+    };
+
     const exportGroupParticipants = () => {
         if (!participantsList || participantsList.length === 0) {
             toast.error("Nenhum participante encontrado para exportar");
@@ -3699,10 +4088,284 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
                         setSelectedMsgIds([msg.keyId]);
                     }}
                     onInspectMessage={(msg) => setInspectingMessage(msg)}
-                    isPinned={pinnedMessageId === contextMenu.msg.keyId}
+                    isPinned={pinnedMessageIds.includes(contextMenu.msg.keyId)}
                     isStarred={starredIds.includes(contextMenu.msg.keyId)}
                 />
             )}
+
+            {/* Free LLM AI Assistant Modal (#C29) */}
+            <Dialog open={isAIAssistantOpen} onOpenChange={setIsAIAssistantOpen}>
+                <DialogContent className="max-w-lg rounded-2xl bg-white dark:bg-[#202c33] border border-border/40 shadow-2xl">
+                    <DialogHeader>
+                        <DialogTitle className="text-base font-semibold flex items-center justify-between text-foreground pr-4">
+                            <span className="flex items-center gap-2">
+                                <Sparkles className="h-4.5 w-4.5 text-purple-500" />
+                                <span>Assistente de IA Gratuita ({displayName})</span>
+                            </span>
+                            <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                onClick={() => setShowLLMKeyConfig(prev => !prev)}
+                                className="h-7 px-2.5 text-[11px] gap-1 rounded-full cursor-pointer"
+                            >
+                                <Settings className="h-3 w-3" />
+                                <span>{showLLMKeyConfig ? "Voltar ao Assistente" : "Chaves Gratuitas"}</span>
+                            </Button>
+                        </DialogTitle>
+                    </DialogHeader>
+
+                    {showLLMKeyConfig ? (
+                        <div className="space-y-3 py-1 text-xs">
+                            <div className="p-3 rounded-xl bg-purple-500/10 border border-purple-500/25 text-foreground space-y-1">
+                                <p className="font-semibold text-purple-600 dark:text-purple-400">
+                                    ⚡ Roteador Multi-Provedor Free LLM APIs
+                                </p>
+                                <p className="text-[11px] text-muted-foreground leading-relaxed">
+                                    Configure uma ou mais chaves 100% gratuitas abaixo. Se uma atingir o limite por minuto, o ZapFlow alterna automaticamente para a próxima! (A chave da Groq também ativa a transcrição gratuita de áudios Whisper V3).
+                                </p>
+                            </div>
+
+                            <div className="space-y-2.5 max-h-64 overflow-y-auto pr-1 styled-scrollbar">
+                                <div>
+                                    <div className="flex items-center justify-between mb-1">
+                                        <label className="font-semibold text-foreground">1. Groq API Key (Llama 3.3 70B + Whisper Áudio)</label>
+                                        <a href="https://console.groq.com/keys" target="_blank" rel="noopener noreferrer" className="text-[10.5px] text-[#00a884] hover:underline">
+                                            Gerar chave grátis ↗
+                                        </a>
+                                    </div>
+                                    <Input
+                                        type="password"
+                                        placeholder="gsk_..."
+                                        value={llmKeys.groqApiKey || ""}
+                                        onChange={e => setLlmKeys(prev => ({ ...prev, groqApiKey: e.target.value }))}
+                                        className="h-8 text-xs font-mono"
+                                    />
+                                </div>
+
+                                <div>
+                                    <div className="flex items-center justify-between mb-1">
+                                        <label className="font-semibold text-foreground">2. Google AI Studio (Gemini 2.0 Flash)</label>
+                                        <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener noreferrer" className="text-[10.5px] text-[#00a884] hover:underline">
+                                            Gerar chave grátis ↗
+                                        </a>
+                                    </div>
+                                    <Input
+                                        type="password"
+                                        placeholder="AIzaSy..."
+                                        value={llmKeys.geminiApiKey || ""}
+                                        onChange={e => setLlmKeys(prev => ({ ...prev, geminiApiKey: e.target.value }))}
+                                        className="h-8 text-xs font-mono"
+                                    />
+                                </div>
+
+                                <div>
+                                    <div className="flex items-center justify-between mb-1">
+                                        <label className="font-semibold text-foreground">3. OpenRouter (:free Models)</label>
+                                        <a href="https://openrouter.ai/keys" target="_blank" rel="noopener noreferrer" className="text-[10.5px] text-[#00a884] hover:underline">
+                                            Gerar chave grátis ↗
+                                        </a>
+                                    </div>
+                                    <Input
+                                        type="password"
+                                        placeholder="sk-or-v1-..."
+                                        value={llmKeys.openrouterApiKey || ""}
+                                        onChange={e => setLlmKeys(prev => ({ ...prev, openrouterApiKey: e.target.value }))}
+                                        className="h-8 text-xs font-mono"
+                                    />
+                                </div>
+
+                                <div>
+                                    <div className="flex items-center justify-between mb-1">
+                                        <label className="font-semibold text-foreground">4. Cerebras Cloud (Llama 3.3 70B Ultra-Fast)</label>
+                                        <a href="https://cloud.cerebras.ai" target="_blank" rel="noopener noreferrer" className="text-[10.5px] text-[#00a884] hover:underline">
+                                            Gerar chave grátis ↗
+                                        </a>
+                                    </div>
+                                    <Input
+                                        type="password"
+                                        placeholder="csk-..."
+                                        value={llmKeys.cerebrasApiKey || ""}
+                                        onChange={e => setLlmKeys(prev => ({ ...prev, cerebrasApiKey: e.target.value }))}
+                                        className="h-8 text-xs font-mono"
+                                    />
+                                </div>
+                            </div>
+
+                            <div className="flex justify-end gap-2 pt-2">
+                                <Button variant="ghost" size="sm" onClick={() => setShowLLMKeyConfig(false)}>
+                                    Cancelar
+                                </Button>
+                                <Button
+                                    size="sm"
+                                    className="bg-[#00a884] hover:bg-[#00a884]/90 text-white"
+                                    onClick={() => {
+                                        saveLLMKeys(llmKeys);
+                                        setShowLLMKeyConfig(false);
+                                        toast.success("🔑 Chaves gratuitas de IA salvas neste navegador!");
+                                        handleRunAIAssistant(aiMode);
+                                    }}
+                                >
+                                    Salvar Chaves
+                                </Button>
+                            </div>
+                        </div>
+                    ) : (
+                        <div className="space-y-3 py-1">
+                            {/* Quick Mode Pills */}
+                            <div className="flex flex-wrap gap-1.5">
+                                {[
+                                    { id: "suggest_reply", label: "💡 Sugerir 3 Respostas" },
+                                    { id: "summarize_chat", label: "📋 Resumir Conversa" },
+                                    { id: "improve_professional", label: "💼 Profissional" },
+                                    { id: "improve_friendly", label: "😊 Amigável" },
+                                    { id: "improve_persuasive", label: "🚀 Comercial" },
+                                    { id: "fix_grammar", label: "✅ Corrigir" }
+                                ].map(item => (
+                                    <button
+                                        key={item.id}
+                                        type="button"
+                                        onClick={() => handleRunAIAssistant(item.id as ChatAIAssistantMode)}
+                                        className={cn(
+                                            "px-2.5 py-1 rounded-full text-xs font-medium transition-colors cursor-pointer",
+                                            aiMode === item.id
+                                                ? "bg-purple-600 text-white"
+                                                : "bg-muted/70 hover:bg-muted text-muted-foreground"
+                                        )}
+                                    >
+                                        {item.label}
+                                    </button>
+                                ))}
+                            </div>
+
+                            {/* Draft input for rewrite modes */}
+                            {aiMode !== "suggest_reply" && aiMode !== "summarize_chat" && (
+                                <div className="space-y-1">
+                                    <label className="text-[11px] font-medium text-muted-foreground">Texto base para aprimorar:</label>
+                                    <div className="flex gap-1.5">
+                                        <Input
+                                            value={aiInputDraft}
+                                            onChange={e => setAiInputDraft(e.target.value)}
+                                            placeholder="Digite o rascunho que deseja melhorar..."
+                                            className="h-8 text-xs"
+                                        />
+                                        <Button
+                                            size="sm"
+                                            variant="secondary"
+                                            className="h-8 text-xs shrink-0"
+                                            disabled={isRunningAI}
+                                            onClick={() => handleRunAIAssistant(aiMode)}
+                                        >
+                                            Gerar
+                                        </Button>
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* Output Area */}
+                            {isRunningAI ? (
+                                <div className="py-10 flex flex-col items-center justify-center gap-2 text-xs text-muted-foreground">
+                                    <Loader2 className="h-6 w-6 animate-spin text-purple-500" />
+                                    <span>Consultando IA gratuita...</span>
+                                </div>
+                            ) : aiMode === "suggest_reply" && aiSuggestions.length > 0 ? (
+                                <div className="space-y-2 max-h-64 overflow-y-auto pr-1 styled-scrollbar">
+                                    <span className="text-[11px] font-semibold text-muted-foreground block">
+                                        Clique em uma sugestão para preencher a caixa de mensagem:
+                                    </span>
+                                    {aiSuggestions.map((sug, i) => (
+                                        <button
+                                            key={i}
+                                            type="button"
+                                            onClick={() => {
+                                                window.dispatchEvent(new CustomEvent("zapflow:set-chat-input", { detail: { text: sug } }));
+                                                setIsAIAssistantOpen(false);
+                                                toast.success("✨ Resposta inserida na barra de digitação!");
+                                            }}
+                                            className="w-full p-3 rounded-xl bg-muted/40 hover:bg-purple-500/10 border border-border/30 hover:border-purple-500/40 text-left text-xs text-foreground transition-all cursor-pointer space-y-1"
+                                        >
+                                            <div className="flex items-center justify-between text-[10.5px] font-bold text-purple-600 dark:text-purple-400">
+                                                <span>Opção {i + 1}</span>
+                                                <span>Usar no chat →</span>
+                                            </div>
+                                            <p className="whitespace-pre-wrap leading-relaxed">{sug}</p>
+                                        </button>
+                                    ))}
+                                </div>
+                            ) : (
+                                <div className="space-y-2">
+                                    <textarea
+                                        rows={5}
+                                        value={aiResult}
+                                        onChange={e => setAiResult(e.target.value)}
+                                        className="w-full rounded-xl bg-muted/40 dark:bg-[#2a3942] border border-border/40 px-3 py-2 text-xs text-foreground outline-none focus:border-purple-500 resize-none leading-relaxed"
+                                    />
+                                    <div className="flex flex-wrap items-center justify-between gap-2">
+                                        {aiMode === "summarize_chat" ? (
+                                            <Button
+                                                size="sm"
+                                                variant="outline"
+                                                className="h-8 text-xs gap-1.5"
+                                                onClick={() => {
+                                                    const nextNote = chatNote.trim() ? `${chatNote}\n\n${aiResult}` : aiResult;
+                                                    handleSaveChatNote(nextNote);
+                                                    toast.success("📝 Resumo salvo no Bloco de Notas Interno da conversa!");
+                                                    setIsAIAssistantOpen(false);
+                                                }}
+                                            >
+                                                <StickyNote className="h-3.5 w-3.5 text-amber-500" />
+                                                <span>Salvar no Bloco de Notas Interno</span>
+                                            </Button>
+                                        ) : <span />}
+                                        <div className="flex items-center gap-2 ml-auto">
+                                            <Button
+                                                size="sm"
+                                                variant="ghost"
+                                                className="h-8 text-xs gap-1"
+                                                onClick={() => {
+                                                    navigator.clipboard.writeText(aiResult);
+                                                    toast.success("Texto copiado!");
+                                                }}
+                                            >
+                                                <Copy className="h-3.5 w-3.5" />
+                                                <span>Copiar</span>
+                                            </Button>
+                                            <Button
+                                                size="sm"
+                                                className="h-8 text-xs bg-[#00a884] hover:bg-[#00a884]/90 text-white"
+                                                onClick={() => {
+                                                    window.dispatchEvent(new CustomEvent("zapflow:set-chat-input", { detail: { text: aiResult } }));
+                                                    setIsAIAssistantOpen(false);
+                                                    toast.success("✨ Texto inserido na barra de digitação!");
+                                                }}
+                                            >
+                                                Usar na Conversa
+                                            </Button>
+                                        </div>
+                                    </div>
+                                </div>
+                            )}
+
+                            {aiProviderInfo && (
+                                <div className="pt-1 border-t border-border/20 flex items-center justify-between text-[10.5px] text-muted-foreground">
+                                    <span>
+                                        Motor ativo: <strong className="text-foreground">{aiProviderInfo.provider}</strong> ({aiProviderInfo.model})
+                                    </span>
+                                    {aiProviderInfo.isLocalFallback && (
+                                        <button
+                                            type="button"
+                                            onClick={() => setShowLLMKeyConfig(true)}
+                                            className="text-purple-500 hover:underline font-semibold cursor-pointer"
+                                        >
+                                            + Ativar Groq/Gemini 70B Grátis
+                                        </button>
+                                    )}
+                                </div>
+                            )}
+                        </div>
+                    )}
+                </DialogContent>
+            </Dialog>
 
             {/* Dados da Mensagem Modal (#C27) */}
             <Dialog open={!!inspectingMessage} onOpenChange={(open) => { if (!open) setInspectingMessage(null); }}>
@@ -4495,12 +5158,59 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
 
                             <button
                                 type="button"
+                                onClick={() => handleOpenAIAssistant("summarize_chat", "")}
+                                className="w-full flex items-center gap-2.5 px-3 py-2 text-xs font-medium text-foreground rounded-xl hover:bg-black/5 dark:hover:bg-white/10 transition-colors text-left cursor-pointer"
+                            >
+                                <Sparkles className="h-4 w-4 text-purple-500" />
+                                <span>Assistente IA (Resumir / Sugerir)</span>
+                            </button>
+
+                            <button
+                                type="button"
                                 onClick={handleExportConversation}
                                 className="w-full flex items-center gap-2.5 px-3 py-2 text-xs font-medium text-foreground rounded-xl hover:bg-black/5 dark:hover:bg-white/10 transition-colors text-left cursor-pointer"
                             >
                                 <FileText className="h-4 w-4 text-[#00a884]" />
                                 <span>Exportar conversa (.txt)</span>
                             </button>
+
+                            <button
+                                type="button"
+                                onClick={handleExportConversationCsv}
+                                className="w-full flex items-center gap-2.5 px-3 py-2 text-xs font-medium text-foreground rounded-xl hover:bg-black/5 dark:hover:bg-white/10 transition-colors text-left cursor-pointer"
+                            >
+                                <FileDown className="h-4 w-4 text-emerald-500" />
+                                <span>Exportar conversa (.csv / Excel)</span>
+                            </button>
+
+                            <div className="h-px bg-border/15 my-1" />
+                            <div className="px-3 py-1.5 space-y-1.5">
+                                <span className="text-[10.5px] font-semibold text-muted-foreground flex items-center gap-1.5">
+                                    <Palette className="h-3 w-3 text-[#00a884]" />
+                                    <span>Papel de parede do chat</span>
+                                </span>
+                                <div className="flex items-center gap-2">
+                                    {[
+                                        { id: "default", label: "Padrão WhatsApp", color: "#efeae2" },
+                                        { id: "dark", label: "Grafite Escuro", color: "#0b141a" },
+                                        { id: "emerald", label: "Verde Suave", color: "#d1fae5" },
+                                        { id: "ocean", label: "Azul Oceano", color: "#dbeafe" },
+                                        { id: "minimal", label: "Cinza Limpo", color: "#f1f5f9" }
+                                    ].map(wp => (
+                                        <button
+                                            key={wp.id}
+                                            type="button"
+                                            onClick={() => handleChangeWallpaper(wp.id as any)}
+                                            title={wp.label}
+                                            className={cn(
+                                                "h-5 w-5 rounded-full border transition-transform cursor-pointer",
+                                                chatWallpaper === wp.id ? "ring-2 ring-[#00a884] scale-110" : "hover:scale-105 border-border/60"
+                                            )}
+                                            style={{ backgroundColor: wp.color }}
+                                        />
+                                    ))}
+                                </div>
+                            </div>
 
                         </PopoverContent>
                     </Popover>
@@ -4587,7 +5297,7 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
                 </div>
             )}
 
-            {/* WhatsApp Pinned Message Banner */}
+            {/* WhatsApp Multi-Pinned Messages Carousel Banner (#C31) */}
             {pinnedMessage && (
                 <div
                     onClick={() => {
@@ -4597,16 +5307,39 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
                             target.classList.add("bg-[#00a884]/20", "transition-colors", "duration-500");
                             setTimeout(() => target.classList.remove("bg-[#00a884]/20"), 1500);
                         }
+                        if (pinnedMessagesList.length > 1) {
+                            setActivePinnedIdx(prev => (prev + 1) % pinnedMessagesList.length);
+                        }
                     }}
                     className="shrink-0 px-4 py-2 bg-white/95 dark:bg-[#182229]/95 backdrop-blur-sm border-b border-border/20 flex items-center justify-between gap-3 z-15 cursor-pointer shadow-xs select-none hover:bg-black/5 dark:hover:bg-white/5 transition-colors animate-in slide-in-from-top-1 duration-150"
                 >
                     <div className="flex items-center gap-2.5 min-w-0">
+                        {pinnedMessagesList.length > 1 && (
+                            <div className="flex flex-col gap-0.5 shrink-0">
+                                {pinnedMessagesList.map((pm, idx) => (
+                                    <span
+                                        key={pm.keyId}
+                                        className={cn(
+                                            "w-1 rounded-full transition-all",
+                                            idx === activePinnedIdx % pinnedMessagesList.length
+                                                ? "h-3 bg-[#00a884]"
+                                                : "h-1.5 bg-muted-foreground/30"
+                                        )}
+                                    />
+                                ))}
+                            </div>
+                        )}
                         <div className="h-6 w-6 rounded-full bg-[#00a884]/15 flex items-center justify-center shrink-0 text-[#00a884]">
                             <Pin className="h-3.5 w-3.5 rotate-45 fill-current" />
                         </div>
                         <div className="flex flex-col min-w-0">
-                            <span className="text-[11px] font-semibold text-[#00a884] dark:text-[#25d366]">
-                                Mensagem fixada
+                            <span className="text-[11px] font-semibold text-[#00a884] dark:text-[#25d366] flex items-center gap-1.5">
+                                <span>Mensagem fixada</span>
+                                {pinnedMessagesList.length > 1 && (
+                                    <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-[#00a884]/15 font-bold tabular-nums">
+                                        {(activePinnedIdx % pinnedMessagesList.length) + 1}/{pinnedMessagesList.length}
+                                    </span>
+                                )}
                             </span>
                             <p className="text-xs text-foreground/90 truncate max-w-lg">
                                 {pinnedMessage.content || (pinnedMessage.type === 'IMAGE' ? "Foto" : "Mídia")}
@@ -4617,23 +5350,32 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
                         type="button"
                         onClick={(e) => {
                             e.stopPropagation();
-                            handleUnpin();
+                            handleUnpin(pinnedMessage.keyId);
                         }}
                         className="p-1 rounded-full text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/10 cursor-pointer"
-                        title="Desafixar mensagem"
+                        title="Desafixar esta mensagem"
                     >
                         <X className="h-3.5 w-3.5" />
                     </button>
                 </div>
             )}
 
-            {/* WhatsApp Chat Wallpaper & Message Stream */}
+            {/* WhatsApp Chat Wallpaper & Message Stream (#C33) */}
             <div
                 ref={scrollRef}
                 className="flex-1 overflow-y-auto px-3 sm:px-6 py-3 min-h-0 styled-scrollbar"
                 onScroll={handleScroll}
                 style={{
-                    backgroundColor: "var(--wa-bg, #efeae2)",
+                    backgroundColor:
+                        chatWallpaper === "dark"
+                            ? "#0b141a"
+                            : chatWallpaper === "emerald"
+                                ? "#ecfdf5"
+                                : chatWallpaper === "ocean"
+                                    ? "#eff6ff"
+                                    : chatWallpaper === "minimal"
+                                        ? "#f8fafc"
+                                        : "var(--wa-bg, #efeae2)",
                     backgroundImage: `url("data:image/svg+xml,%3Csvg width='120' height='120' viewBox='0 0 120 120' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M20 20c-3 0-5 2-5 5v12c0 3 2 5 5 5h2v4l5-4h8c3 0 5-2 5-5V25c0-3-2-5-5-5H20zm50 20a5 5 0 1 0 0-10 5 5 0 0 0 0 10zm30 15c-4 0-7 3-7 7v10h14V62c0-4-3-7-7-7zm-70 25c-3 0-5 2-5 5s2 5 5 5 5-2 5-5-2-5-5-5zm65 10c-3 0-6 2-6 5v6c0 3 3 5 6 5h10c3 0 6-2 6-5v-6c0-3-3-5-6-5h-10z' fill='%23687782' fill-opacity='0.06' fill-rule='evenodd'/%3E%3C/svg%3E")`,
                     backgroundSize: "220px 220px"
                 }}
@@ -5371,6 +6113,7 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
                     }
                     setIsScheduleModalOpen(true);
                 }}
+                onOpenAIAssistant={handleOpenAIAssistant}
                 replyingTo={replyingTo}
                 onCancelReply={() => setReplyingTo(null)}
                 jid={jid}
