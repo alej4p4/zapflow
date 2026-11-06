@@ -412,7 +412,17 @@ function saveLLMKeys(keys: CustomFreeLLMKeys) {
 }
 
 // ─── Authentic WhatsApp Voice Note Audio Player with Speed Control (1x, 1.5x, 2x) & AI Transcription (#C30) ───
-function WhatsAppAudioPlayer({ src, downloadFileName }: { src: string; downloadFileName?: string }) {
+function WhatsAppAudioPlayer({
+    src,
+    downloadFileName,
+    avatarUrl,
+    fromMe = false
+}: {
+    src: string;
+    downloadFileName?: string;
+    avatarUrl?: string;
+    fromMe?: boolean;
+}) {
     const audioRef = useRef<HTMLAudioElement | null>(null);
     const [isPlaying, setIsPlaying] = useState(false);
     const [currentTime, setCurrentTime] = useState(0);
@@ -487,83 +497,144 @@ function WhatsAppAudioPlayer({ src, downloadFileName }: { src: string; downloadF
         }
     };
 
-    return (
-        <div className="flex flex-col gap-1.5 my-1 min-w-[245px] max-w-[330px] select-none">
-            <div className="flex items-center gap-2.5 py-1 px-1">
-                <audio
-                    ref={audioRef}
-                    src={src}
-                    preload="metadata"
-                    onPlay={() => setIsPlaying(true)}
-                    onPause={() => setIsPlaying(false)}
-                    onEnded={() => { setIsPlaying(false); setCurrentTime(0); }}
-                    onTimeUpdate={() => audioRef.current && setCurrentTime(audioRef.current.currentTime)}
-                    onLoadedMetadata={() => audioRef.current && setDuration(audioRef.current.duration)}
-                />
-                {/* Play/Pause Button */}
-                <button
-                    type="button"
-                    onClick={togglePlay}
-                    className="h-10 w-10 rounded-full bg-[#00a884] hover:bg-[#00a884]/90 text-white flex items-center justify-center shrink-0 shadow-sm transition-transform active:scale-95 cursor-pointer"
-                    title={isPlaying ? "Pausar" : "Tocar áudio"}
-                >
-                    {isPlaying ? <Pause className="h-5 w-5 fill-current" /> : <Play className="h-5 w-5 fill-current ml-0.5" />}
-                </button>
+    // Deterministic WhatsApp-style waveform bars generated from the audio src
+    const waveformBars = useMemo(() => {
+        let seed = 0;
+        for (let i = 0; i < src.length; i++) seed = (seed * 31 + src.charCodeAt(i)) >>> 0;
+        const bars: number[] = [];
+        for (let i = 0; i < 40; i++) {
+            seed = (seed * 1103515245 + 12345) >>> 0;
+            const rnd = (seed % 1000) / 1000;
+            const envelope = 0.45 + 0.55 * Math.sin((i / 39) * Math.PI);
+            bars.push(Math.max(0.18, Math.min(1, rnd * envelope + 0.15)));
+        }
+        return bars;
+    }, [src]);
 
-                {/* Scrubber & Time */}
-                <div className="flex-1 flex flex-col justify-center min-w-0 gap-1">
-                    <input
-                        type="range"
-                        min="0"
-                        max={duration || 100}
-                        value={currentTime}
-                        onChange={handleSeek}
-                        className="w-full h-1.5 bg-black/15 dark:bg-white/20 rounded-lg appearance-none cursor-pointer accent-[#00a884]"
-                    />
-                    <div className="flex justify-between items-center text-[11px] text-muted-foreground tabular-nums px-0.5">
-                        <span>{formatTime(currentTime)}</span>
-                        <span>{formatTime(duration)}</span>
-                    </div>
-                </div>
+    const progress = duration > 0 ? Math.min(1, currentTime / duration) : 0;
+    const hasPlayed = currentTime > 0 || isPlaying;
 
-                {/* Speed Pill (1x, 1.5x, 2x) */}
+    const handleWaveClick = (e: React.MouseEvent<HTMLDivElement>) => {
+        e.stopPropagation();
+        if (!audioRef.current || !duration) return;
+        const rect = e.currentTarget.getBoundingClientRect();
+        const ratio = Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width));
+        audioRef.current.currentTime = ratio * duration;
+        setCurrentTime(ratio * duration);
+    };
+
+    const avatarNode = (
+        <div className="relative shrink-0 h-[52px] w-[52px]">
+            {isPlaying || playbackRate !== 1 ? (
                 <button
                     type="button"
                     onClick={toggleSpeed}
-                    className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-black/5 dark:bg-white/10 hover:bg-black/10 text-muted-foreground hover:text-foreground shrink-0 tabular-nums transition-colors cursor-pointer"
+                    className="h-[52px] w-[52px] rounded-full flex items-center justify-center cursor-pointer"
                     title="Velocidade de reprodução"
                 >
-                    {playbackRate}x
+                    <span className="px-2.5 py-1 rounded-full text-[13px] font-bold bg-black/25 dark:bg-white/25 text-white tabular-nums">
+                        {playbackRate}×
+                    </span>
                 </button>
+            ) : (
+                <Avatar className="h-[52px] w-[52px]">
+                    {avatarUrl && <AvatarImage src={avatarUrl} referrerPolicy="no-referrer" className="object-cover" />}
+                    <AvatarFallback className="bg-slate-300 dark:bg-slate-600 text-white">
+                        <User className="h-6 w-6" />
+                    </AvatarFallback>
+                </Avatar>
+            )}
+            <Mic
+                className={cn(
+                    "absolute -bottom-0.5 h-4 w-4 drop-shadow",
+                    fromMe ? "-left-0.5" : "-right-0.5",
+                    hasPlayed ? "text-[#53bdeb]" : (fromMe ? "text-[#8696a0] dark:text-[#aebac1]" : "text-[#00a884]")
+                )}
+                fill="currentColor"
+            />
+        </div>
+    );
 
-                {/* AI Transcribe Audio Button (#C30) */}
+    return (
+        <div className="flex flex-col gap-1 min-w-[260px] max-w-[340px] select-none group/audio">
+            <audio
+                ref={audioRef}
+                src={src}
+                preload="metadata"
+                onPlay={() => setIsPlaying(true)}
+                onPause={() => setIsPlaying(false)}
+                onEnded={() => { setIsPlaying(false); setCurrentTime(0); }}
+                onTimeUpdate={() => audioRef.current && setCurrentTime(audioRef.current.currentTime)}
+                onLoadedMetadata={() => audioRef.current && setDuration(audioRef.current.duration)}
+            />
+            <div className="flex items-center gap-2 pt-0.5">
+                {fromMe && avatarNode}
+
+                {/* Play / Pause (WhatsApp flat icon) */}
                 <button
                     type="button"
-                    onClick={handleTranscribe}
-                    disabled={isTranscribing}
-                    className="px-2 py-0.5 rounded-full text-[10.5px] font-semibold bg-[#00a884]/15 hover:bg-[#00a884]/25 text-[#00a884] dark:text-[#25d366] flex items-center gap-1 shrink-0 transition-colors cursor-pointer"
-                    title="Transcrever áudio em texto com IA (Groq Whisper)"
+                    onClick={(e) => { e.stopPropagation(); togglePlay(); }}
+                    className="h-9 w-7 flex items-center justify-center shrink-0 text-[#54656f] dark:text-[#aebac1] hover:opacity-80 cursor-pointer"
+                    title={isPlaying ? "Pausar" : "Tocar áudio"}
                 >
-                    {isTranscribing ? (
-                        <Loader2 className="h-3 w-3 animate-spin" />
-                    ) : (
-                        <Sparkles className="h-3 w-3" />
-                    )}
-                    <span>{transcription ? "Lido" : "Ler"}</span>
+                    {isPlaying ? <Pause className="h-6 w-6 fill-current" /> : <Play className="h-6 w-6 fill-current" />}
                 </button>
 
-                {/* Download */}
-                {downloadFileName && (
-                    <Button
-                        size="icon"
-                        variant="ghost"
-                        className="h-7 w-7 rounded-full text-muted-foreground hover:text-foreground shrink-0"
-                        onClick={() => handleDownload(src, downloadFileName)}
-                        title="Baixar áudio"
+                {/* Waveform + duration */}
+                <div className="flex-1 min-w-0 flex flex-col">
+                    <div
+                        className="relative h-7 flex items-center gap-[2px] cursor-pointer"
+                        onClick={handleWaveClick}
+                        title="Clique para avançar/voltar"
                     >
-                        <Download className="h-3.5 w-3.5" />
-                    </Button>
-                )}
+                        {waveformBars.map((h, i) => {
+                            const played = (i + 0.5) / waveformBars.length <= progress;
+                            return (
+                                <span
+                                    key={i}
+                                    className={cn(
+                                        "flex-1 rounded-full transition-colors",
+                                        played
+                                            ? "bg-[#53bdeb]"
+                                            : "bg-[#8696a0]/70 dark:bg-[#8696a0]/80"
+                                    )}
+                                    style={{ height: `${Math.round(h * 100)}%`, minWidth: 2 }}
+                                />
+                            );
+                        })}
+                        <span
+                            className="absolute top-1/2 -translate-y-1/2 h-3 w-3 rounded-full bg-[#53bdeb] shadow pointer-events-none"
+                            style={{ left: `calc(${progress * 100}% - 6px)` }}
+                        />
+                    </div>
+                    <div className="flex items-center gap-2 text-[11px] text-[#667781] dark:text-[#8696a0] tabular-nums h-4">
+                        <span>{formatTime(isPlaying || currentTime > 0 ? currentTime : duration)}</span>
+                        <span className="flex items-center gap-1 opacity-0 group-hover/audio:opacity-100 transition-opacity">
+                            <button
+                                type="button"
+                                onClick={handleTranscribe}
+                                disabled={isTranscribing}
+                                className="flex items-center gap-0.5 text-[#00a884] dark:text-[#25d366] font-semibold cursor-pointer"
+                                title="Transcrever áudio em texto com IA (Groq Whisper)"
+                            >
+                                {isTranscribing ? <Loader2 className="h-3 w-3 animate-spin" /> : <Sparkles className="h-3 w-3" />}
+                                <span>{transcription ? "Lido" : "Ler"}</span>
+                            </button>
+                            {downloadFileName && (
+                                <button
+                                    type="button"
+                                    onClick={(e) => { e.stopPropagation(); handleDownload(src, downloadFileName); }}
+                                    className="hover:text-foreground cursor-pointer"
+                                    title="Baixar áudio"
+                                >
+                                    <Download className="h-3 w-3" />
+                                </button>
+                            )}
+                        </span>
+                    </div>
+                </div>
+
+                {!fromMe && avatarNode}
             </div>
 
             {transcription && (
@@ -3089,6 +3160,20 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
 
     // Block Contact state (#C39)
     const [isContactBlocked, setIsContactBlocked] = useState(false);
+
+    // Own WhatsApp profile picture (used on outgoing voice notes, WhatsApp style)
+    const [myProfilePic, setMyProfilePic] = useState<string>("");
+    useEffect(() => {
+        if (!sessionId) return;
+        let cancelled = false;
+        fetch(`/api/profile/${sessionId}`)
+            .then(r => (r.ok ? r.json() : null))
+            .then(json => {
+                if (!cancelled && json?.data?.pictureUrl) setMyProfilePic(json.data.pictureUrl);
+            })
+            .catch(() => {});
+        return () => { cancelled = true; };
+    }, [sessionId]);
 
     // Chat Wallpaper Theme (#C33)
     const [chatWallpaper, setChatWallpaper] = useState<"default" | "dark" | "emerald" | "ocean" | "minimal">("default");
@@ -6152,7 +6237,18 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
 
                                         {/* AUDIO (WhatsApp Voice Note Player with 1x, 1.5x, 2x speed) */}
                                         {msg.type === 'AUDIO' && msg.mediaUrl && (
-                                            <WhatsAppAudioPlayer src={msg.mediaUrl} downloadFileName={`AUDIO-${msg.keyId}.mp3`} />
+                                            <WhatsAppAudioPlayer
+                                                src={msg.mediaUrl}
+                                                downloadFileName={`AUDIO-${msg.keyId}.mp3`}
+                                                fromMe={msg.fromMe}
+                                                avatarUrl={
+                                                    msg.fromMe
+                                                        ? (myProfilePic || undefined)
+                                                        : isGroup
+                                                            ? (msg.senderJid ? `/api/avatar/${sessionId}/${encodeURIComponent(msg.senderJid)}` : undefined)
+                                                            : (profilePic && profilePic.startsWith("http") ? profilePic : `/api/avatar/${sessionId}/${encodeURIComponent(jid)}`)
+                                                }
+                                            />
                                         )}
 
                                         {/* STICKER */}
@@ -6218,60 +6314,70 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
                                             );
                                         })()}
 
-                                        {/* CONTACT Card (WhatsApp Web vCard #C17) */}
+                                        {/* CONTACT Card (WhatsApp Web vCard style #C17) */}
                                         {msg.type === 'CONTACT' && (() => {
                                             const [contactNameRaw, contactPhoneRaw] = (msg.content || "Contato").split("|");
                                             const contactName = (contactNameRaw || "Contato").trim();
                                             const contactPhone = (contactPhoneRaw || "").replace(/\D/g, "");
+                                            const contactJid = contactPhone ? `${contactPhone}@s.whatsapp.net` : "";
                                             return (
-                                                <div
-                                                    className={cn(
-                                                        "flex flex-col rounded-xl overflow-hidden mb-1.5 min-w-[240px] max-w-[300px] border border-black/10 dark:border-white/10 select-none",
-                                                        msg.fromMe ? "bg-black/5 dark:bg-black/25" : "bg-black/5 dark:bg-white/5"
-                                                    )}
-                                                >
-                                                    <div className="flex items-center gap-3 p-3">
-                                                        <div className="h-10 w-10 rounded-full bg-[#00a884]/20 text-[#00a884] flex items-center justify-center font-bold text-sm shrink-0">
-                                                            {contactName.slice(0, 2).toUpperCase()}
-                                                        </div>
+                                                <div className="flex flex-col -mx-3 -mb-1.5 min-w-[280px] max-w-[330px] select-none">
+                                                    <div className="flex items-center gap-3 px-3 pt-1.5 pb-1">
+                                                        <Avatar className="h-[52px] w-[52px] shrink-0">
+                                                            {contactJid && (
+                                                                <AvatarImage
+                                                                    src={`/api/avatar/${sessionId}/${encodeURIComponent(contactJid)}`}
+                                                                    referrerPolicy="no-referrer"
+                                                                    className="object-cover"
+                                                                />
+                                                            )}
+                                                            <AvatarFallback className="bg-slate-300 dark:bg-slate-600 text-white">
+                                                                <User className="h-6 w-6" />
+                                                            </AvatarFallback>
+                                                        </Avatar>
                                                         <div className="min-w-0 flex-1">
-                                                            <p className="text-xs font-semibold text-foreground truncate">
+                                                            <p className="text-[14.5px] font-semibold text-foreground truncate" title={contactPhone ? `+${contactPhone}` : contactName}>
                                                                 {contactName}
-                                                            </p>
-                                                            <p className="text-[11px] text-muted-foreground truncate">
-                                                                {contactPhone ? `+${contactPhone}` : "Cartão de contato WhatsApp"}
                                                             </p>
                                                         </div>
                                                     </div>
-                                                    <div className="grid grid-cols-2 border-t border-black/10 dark:border-white/10 divide-x divide-black/10 dark:divide-white/10 text-center">
+                                                    <div className="flex items-center justify-end gap-1 px-3 pb-1.5 select-none">
+                                                        {msg.isEdited && (
+                                                            <span className="text-[10px] italic text-[#667781] dark:text-[#8696a0] mr-0.5">editada</span>
+                                                        )}
+                                                        <span className="text-[11px] leading-none text-[#667781] dark:text-[#8696a0]">
+                                                            {new Date(msg.timestamp).toLocaleTimeString("pt-BR", { hour: '2-digit', minute: '2-digit' })}
+                                                        </span>
+                                                        {msg.fromMe && <MessageStatusCheck status={msg.status} />}
+                                                    </div>
+                                                    <div className="grid grid-cols-2 border-t border-black/10 dark:border-white/10 text-center">
                                                         <button
                                                             type="button"
                                                             onClick={(e) => {
                                                                 e.stopPropagation();
-                                                                if (contactPhone) {
-                                                                    const targetJid = `${contactPhone}@s.whatsapp.net`;
+                                                                if (contactJid) {
                                                                     window.dispatchEvent(new CustomEvent("zapflow:open-chat", {
-                                                                        detail: { jid: targetJid, name: contactName }
+                                                                        detail: { jid: contactJid, name: contactName }
                                                                     }));
                                                                 } else {
                                                                     navigator.clipboard.writeText(contactName);
                                                                     toast.info("Nome do contato copiado");
                                                                 }
                                                             }}
-                                                            className="py-2 text-[11.5px] font-semibold text-[#00a884] hover:bg-black/5 dark:hover:bg-white/5 transition-colors cursor-pointer"
+                                                            className="py-2.5 text-[14px] font-medium text-[#00a884] dark:text-[#21c063] hover:bg-black/5 dark:hover:bg-white/5 transition-colors cursor-pointer"
                                                         >
-                                                            💬 Conversar
+                                                            Conversar
                                                         </button>
                                                         <button
                                                             type="button"
                                                             onClick={(e) => {
                                                                 e.stopPropagation();
-                                                                navigator.clipboard.writeText(contactPhone || contactName);
-                                                                toast.success("Contato copiado!");
+                                                                navigator.clipboard.writeText(contactPhone ? `+${contactPhone}` : contactName);
+                                                                toast.success("Número do contato copiado!");
                                                             }}
-                                                            className="py-2 text-[11.5px] font-medium text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5 transition-colors cursor-pointer"
+                                                            className="py-2.5 text-[14px] font-medium text-[#00a884] dark:text-[#21c063] hover:bg-black/5 dark:hover:bg-white/5 transition-colors cursor-pointer"
                                                         >
-                                                            📋 Copiar
+                                                            Copiar número
                                                         </button>
                                                     </div>
                                                 </div>
@@ -6446,7 +6552,11 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
                                         })()}
 
                                         {/* Text content with mentions & Timestamp + status checks */}
-                                        <div className="flex flex-wrap items-end justify-end gap-x-2 gap-y-0.5">
+                                        {msg.type !== 'CONTACT' && (
+                                        <div className={cn(
+                                            "flex flex-wrap items-end justify-end gap-x-2 gap-y-0.5",
+                                            msg.type === 'AUDIO' && !msg.content && "-mt-[18px] pointer-events-none [&_*]:pointer-events-auto"
+                                        )}>
                                             {msg.type !== 'DOCUMENT' && msg.type !== 'LOCATION' && msg.type !== 'CONTACT' && msg.type !== 'POLL' && (
                                                 <span className="flex-1 break-words whitespace-pre-wrap text-[14.2px]">
                                                     {renderMessageContent(msg.content, contactMap, searchQuery)}
