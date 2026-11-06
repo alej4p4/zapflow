@@ -1,38 +1,34 @@
-FROM node:22-alpine AS builder
-RUN apk add --no-cache openssl ca-certificates
+# -----------------------------------------------------------
+# Dockerfile – ZapFlow (Next.js 16 / Turbopack)
+# -----------------------------------------------------------
+# 1️⃣  Base image – Node 22 (versão usada localmente)
+FROM node:22-alpine AS base
+# 2️⃣  Set working directory
 WORKDIR /app
-
-# Dependency layer — cache-friendly: only rerun when package*.json changes
+# 3️⃣  Copiar apenas os arquivos necessários para instalar as dependências
 COPY package*.json ./
-COPY patches ./patches/
-COPY prisma ./prisma/
-RUN npm ci --legacy-peer-deps && npm cache clean --force
-
-# Source & build
+COPY prisma/schema.prisma ./prisma/
+# (Se houver outros arquivos de dependência, copie aqui)
+# 4️⃣  Instalar dependências (inclui Prisma)
+RUN npm ci --legacy-peer-deps
+# 5️⃣  Copiar todo o código fonte
 COPY . .
+# 6️⃣  Gerar o cliente Prisma e fazer o build da aplicação
 RUN npx prisma generate && npm run build
-
-# Strip devDeps from node_modules after build
-# tsx needed at runtime, kept explicitly
-RUN npm prune --omit=dev && npm install --no-save tsx typescript
-
-# Production image
-FROM node:22-alpine AS runner
-RUN apk add --no-cache openssl ca-certificates
+# 7️⃣  Produção – usar a imagem “runtime” enxulta
+FROM node:22-alpine AS runtime
 WORKDIR /app
-
-COPY --from=builder /app/package*.json ./
-COPY --from=builder /app/node_modules ./node_modules
-COPY --from=builder /app/.next ./.next
-COPY --from=builder /app/src ./src
-COPY --from=builder /app/prisma ./prisma
-COPY --from=builder /app/public ./public
-COPY --from=builder /app/tsconfig.json ./
-COPY --from=builder /app/scripts ./scripts
-
+# Copiar apenas o que a aplicação realmente precisa
+COPY --from=base /app/.next ./.next
+COPY --from=base /app/node_modules ./node_modules
+COPY --from=base /app/package.json ./
+COPY --from=base /app/prisma ./prisma
+COPY --from=base /app/public ./public
+COPY --from=base /app/next.config.ts ./
+COPY --from=base /app/tsconfig.json ./
+# Variáveis de ambiente recomendadas (ajuste conforme seu .env)
 ENV NODE_ENV=production
 ENV PORT=3000
-ENV HOSTNAME=0.0.0.0
 EXPOSE 3000
-
-CMD ["sh", "-c", "npx prisma db push && (if [ -n \"$ADMIN_EMAIL\" ] && [ -n \"$ADMIN_PASSWORD\" ]; then node scripts/setup-admin.js \"$ADMIN_EMAIL\" \"$ADMIN_PASSWORD\"; fi) && node node_modules/tsx/dist/cli.mjs src/server/index.ts"]
+# Executa o servidor Next.js
+CMD ["node", "node_modules/next/dist/cli/next", "start"]
