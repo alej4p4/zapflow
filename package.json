@@ -1,6 +1,6 @@
 {
   "name": "zapflow",
-  "version": "1.6.19",
+  "version": "1.6.20",
   "private": false,
   "license": "MIT",
   "scripts": {
@@ -145,4 +145,3 @@
     }
   }
 }
-

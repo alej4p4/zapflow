@@ -336,7 +336,7 @@ function ChatRow({
                             "text-[15px] truncate flex items-center gap-1.5 leading-snug flex-1 min-w-0",
                             unreadCount > 0 ? "font-bold text-foreground" : isSelected ? "font-semibold text-foreground" : "font-medium text-foreground"
                         )} title={displayName}>
-                            <span className="truncate">{displayName}</span>
+                            <span className="online-dot absolute right-2.5 top-1/2 -translate-y-1/2"></span>{displayName}
                             {/* Label dots */}
                             {labelDots.length > 0 && (
                                 <span className="flex items-center gap-[3px] shrink-0">
@@ -1580,7 +1580,7 @@ export function ChatList({ sessionId, onSelectChat, selectedJid }: ChatListProps
                 {filteredAndSortedChats.length === 0 ? (
                     <div className="flex flex-col items-center justify-center py-16 px-4 text-center">
                         <div className="h-12 w-12 rounded-full bg-muted/50 flex items-center justify-center mb-3">
-                            {selectedLabelId ? <Tag className="h-6 w-6 text-muted-foreground/50" /> : <MessageCircle className="h-6 w-6 text-muted-foreground/50" />}
+                            {selectedLabelId ? <Skeleton className="h-6 w-6 rounded-full animate-pulse" /> : <Skeleton className="h-6 w-6 rounded-full animate-pulse" />}
                         </div>
                         <p className="text-sm font-medium text-foreground">
                             {selectedLabelId ? "Nenhuma conversa com esta etiqueta" : "Nenhuma conversa encontrada"}

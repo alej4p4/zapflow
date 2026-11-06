@@ -16,6 +16,10 @@ const geistMono = Geist_Mono({
 });
 
 const APP_DESCRIPTION = "Self-hosted WhatsApp Gateway with Multi-device support, Auto-replies, API integration, and session management dashboard.";
+export const APP_VERSION = '1.6.19';
+export function getAppVersion() {
+  return APP_VERSION;
+}
 const APP_URL = process.env.NEXT_PUBLIC_APP_URL || "https://wa-akg.app";
 
 export const viewport: Viewport = {
@@ -120,3 +124,4 @@ export default function RootLayout({
     </html>
   );
 }
+

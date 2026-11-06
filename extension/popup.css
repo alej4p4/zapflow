@@ -453,3 +453,231 @@ tbody tr:hover {
 .zf-graph-node { cursor: pointer; }
 .zf-graph-node circle:hover { fill: #1e425c !important; }
 .zf-graph-node text { pointer-events: none; }
+
+/* ---------- Motion Principles: Animações de Entrada/Saída ---------- */
+* {
+  transition: var(--transition-fast) background-color,
+              var(--transition-normal) color,
+              var(--transition-normal) border-color,
+              var(--transition-normal) box-shadow;
+}
+
+:root {
+  --transition-fast: 0.2s ease;
+  --transition-normal: 0.3s ease;
+  --transition-slow: 0.5s ease;
+}
+
+.module {
+  opacity: 1;
+  transform: none;
+  transition: var(--transition-normal) opacity,
+              var(--transition-normal) transform;
+}
+
+.module[data-state="enter"] {
+  opacity: 0;
+  transform: translateY(20px);
+}
+
+.module[data-state="enter-active"] {
+  opacity: 1;
+  transform: none;
+  /* transition já aplicado via regra * acima */
+}
+
+.module[data-state="exit"] {
+  opacity: 0;
+  transform: scale(0.95);
+}
+
+.module[data-state="exit-active"] {
+  opacity: 0;
+  transform: scale(0.95);
+  /* transition já aplicado via regra * acima */
+}
+
+/* Animações de reação */
+.reaction-pill {
+  transition: var(--transition-fast) opacity,
+              var(--transition-fast) transform;
+}
+
+.reaction-pill:hover {
+  transform: scale(1.1);
+}
+
+/* Animação de toast/toast-like */
+.toast-enter {
+  animation: toastIn 0.3s ease-out;
+}
+
+.toast-exit {
+  animation: toastOut 0.3s ease-out;
+}
+
+@keyframes toastIn {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes toastOut {
+  from { opacity: 1; transform: translateY(0); }
+  to { opacity: 0; transform: translateY(-10px); }
+}
+
+/* Animação de badge/notification */
+.badge-pulse {
+  animation: pulse 2s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0% { opacity: 1; }
+  50% { opacity: 0.5; }
+  100% { opacity: 1; }
+}
+
+
+/* ---------- WhatsApp Search Bar Style ---------- */
+.search-wrapper {
+  position: relative;
+  background: #e2e5e7;
+  border-radius: 20px;
+  padding: 0 15px 0 45px;
+  height: 36px;
+  transition: all 0.2s ease;
+}
+
+.search-wrapper:hover {
+  box-shadow: 0 0 0 1px var(--primary);
+}
+
+.search-wrapper:focus-within {
+  background: #fff;
+  box-shadow: 0 0 0 2px var(--primary), 0 4px 12px rgba(0,0,0,0.1);
+}
+
+.search-icon {
+  position: absolute;
+  left: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 18px;
+  height: 18px;
+  color: #8a8d93;
+}
+
+.search-input {
+  width: 100%;
+  border: none;
+  background: transparent;
+  padding: 0 15px 0 45px;
+  font-size: 13px;
+  color: #1269ad;
+  outline: none;
+}
+
+.search-input::placeholder {
+  color: #8a8d93;
+  font-size: 13px;
+}
+
+.search-clear {
+  position: absolute;
+  right: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 18px;
+  height: 18px;
+  color: #8a8d93;
+  cursor: pointer;
+  display: none;
+}
+
+.search-clear:hover {
+  color: #000;
+}
+
+.search-clear.visible {
+  display: block;
+}
+
+
+/* ---------- Empty State Style ---------- */
+.empty-state {
+  text-align: center;
+  padding: 40px 20px;
+  color: var(--muted-foreground);
+}
+
+.empty-state-icon {
+  width: 64px;
+  height: 64px;
+  margin: 0 auto 16px;
+  opacity: 0.5;
+}
+
+.empty-state-title {
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--foreground);
+  margin-bottom: 4px;
+}
+
+.empty-state-desc {
+  font-size: 14px;
+  color: var(--muted-foreground);
+}
+
+/* ---------- Online Indicator ---------- */
+.online-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background-color: #00a884;
+  position: absolute;
+  right: 4px;
+  top: 50%;
+  transform: translateY(-50%);
+  animation: pulse-once 2s infinite;
+}
+
+@keyframes pulse-once {
+  0% { opacity: 1; }
+  50% { opacity: 0.5; }
+  100% { opacity: 1; }
+}
+
+/* ---------- Chat Row Customizations ---------- */
+.chat-row {
+  transition: all 0.15s ease;
+}
+
+.chat-row:hover {
+  background: var(--muted) !important;
+}
+
+/* ---------- Message Bubble Improvements ---------- */
+.message-bubble {
+  border-radius: 12px 12px 4px 12px !important;
+}
+
+/* ---------- Scrollbar Estilo WhatsApp ---------- */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background-color: var(--muted-border);
+  border-radius: 20px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background-color: var(--primary);
+}
+
