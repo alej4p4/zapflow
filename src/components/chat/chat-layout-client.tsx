@@ -55,7 +55,7 @@ export function ChatLayoutClient({ sessionId, initialJid }: ChatLayoutClientProp
         return () => window.removeEventListener("popstate", handlePopState);
     }, []);
 
-    // Listen for zapflow:open-chat event (e.g., clicking a group member in the right drawer to message privately)
+    // Listen for zapflow:open-chat and zapflow:close-chat events (#C38)
     useEffect(() => {
         const handleOpenChatEvent = (e: Event) => {
             const detail = (e as CustomEvent<{ jid: string; name?: string; profilePic?: string | null }>).detail;
@@ -63,8 +63,18 @@ export function ChatLayoutClient({ sessionId, initialJid }: ChatLayoutClientProp
                 setSelectedChat({ jid: detail.jid, name: detail.name, profilePic: detail.profilePic });
             }
         };
+        const handleCloseChatEvent = () => {
+            setSelectedChat(null);
+            if (typeof window !== "undefined") {
+                window.history.replaceState(null, "", "/dashboard/chat");
+            }
+        };
         window.addEventListener("zapflow:open-chat", handleOpenChatEvent);
-        return () => window.removeEventListener("zapflow:open-chat", handleOpenChatEvent);
+        window.addEventListener("zapflow:close-chat", handleCloseChatEvent);
+        return () => {
+            window.removeEventListener("zapflow:open-chat", handleOpenChatEvent);
+            window.removeEventListener("zapflow:close-chat", handleCloseChatEvent);
+        };
     }, []);
 
     const handleSelectChat = (jid: string, name?: string, profilePic?: string | null) => {

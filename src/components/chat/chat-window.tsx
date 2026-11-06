@@ -971,6 +971,13 @@ function ChatInfoAndMediaModal({
     sessionId,
     initialTab = "media",
     starredIds = [],
+    isMuted,
+    isBlocked,
+    chatNote = "",
+    onSaveChatNote,
+    onToggleMute,
+    onToggleBlock,
+    onClearChat,
     onPreviewMedia,
     onExportParticipants,
     onSendBroadcastToMembers
@@ -986,6 +993,13 @@ function ChatInfoAndMediaModal({
     sessionId: string;
     initialTab?: "media" | "docs" | "audio" | "links" | "starred" | "members";
     starredIds?: string[];
+    isMuted?: boolean;
+    isBlocked?: boolean;
+    chatNote?: string;
+    onSaveChatNote?: (val: string) => void;
+    onToggleMute?: () => void;
+    onToggleBlock?: () => void;
+    onClearChat?: () => void;
     onPreviewMedia: (src: string, caption?: string) => void;
     onExportParticipants?: () => void;
     onSendBroadcastToMembers?: () => void;
@@ -1025,169 +1039,213 @@ function ChatInfoAndMediaModal({
     const formattedPhone = cleanNumber.length >= 10 ? `+${cleanNumber}` : jid;
 
     return (
-        <Dialog open={isOpen} onOpenChange={(open) => { if (!open) onClose(); }}>
-            <DialogContent className="max-w-2xl p-0 overflow-hidden rounded-2xl bg-white dark:bg-[#111b21] border border-border/40 shadow-2xl max-h-[88vh] flex flex-col">
-                <DialogHeader className="p-4 pb-3 border-b border-border/15 shrink-0 flex flex-row items-center justify-between">
-                    <DialogTitle className="text-base font-semibold flex items-center gap-2 text-foreground">
-                        <Info className="h-4.5 w-4.5 text-[#00a884]" />
-                        <span>Dados do {isGroup ? "Grupo" : "Contato"}</span>
-                    </DialogTitle>
-                </DialogHeader>
+        <aside className="absolute inset-0 md:static md:w-[340px] lg:w-[375px] xl:w-[390px] h-full border-l border-border/25 bg-[#f0f2f5] dark:bg-[#111b21] flex flex-col shrink-0 z-30 animate-in slide-in-from-right duration-200 select-none overflow-hidden">
+            {/* WhatsApp Web Right Drawer Header */}
+            <div className="px-4 py-3 bg-[#f0f2f5] dark:bg-[#202c33] border-b border-border/15 flex items-center gap-3 shrink-0">
+                <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    onClick={onClose}
+                    className="h-8 w-8 rounded-full text-muted-foreground hover:text-foreground cursor-pointer"
+                    title="Fechar painel (Esc)"
+                >
+                    <X className="h-4.5 w-4.5" />
+                </Button>
+                <h3 className="text-sm font-semibold text-foreground">
+                    Dados do {isGroup ? "grupo" : "contato"}
+                </h3>
+            </div>
 
-                <div className="p-4 bg-muted/20 border-b border-border/15 flex items-center gap-4 shrink-0">
-                    <Avatar className="h-16 w-16 shrink-0 border-2 border-[#00a884]/30 shadow-sm">
+            <div className="flex-1 overflow-y-auto styled-scrollbar space-y-2 pb-4">
+                {/* Profile Hero Card */}
+                <div className="bg-white dark:bg-[#111b21] px-4 py-5 flex flex-col items-center text-center shadow-2xs border-b border-border/10">
+                    <Avatar className="h-24 w-24 mb-3 border-2 border-[#00a884]/30 shadow-md">
                         <AvatarImage src={profilePic && profilePic.startsWith("http") ? profilePic : `/api/avatar/${sessionId}/${encodeURIComponent(jid)}`} referrerPolicy="no-referrer" />
-                        <AvatarFallback className="text-lg font-bold bg-[#00a884]/20 text-[#00a884]">
-                            {isGroup ? <Users className="h-7 w-7" /> : displayName.slice(0, 2).toUpperCase()}
+                        <AvatarFallback className="text-2xl font-bold bg-[#00a884]/20 text-[#00a884]">
+                            {isGroup ? <Users className="h-10 w-10" /> : displayName.slice(0, 2).toUpperCase()}
                         </AvatarFallback>
                     </Avatar>
-                    <div className="flex-1 min-w-0">
-                        <h2 className="text-lg font-bold text-foreground truncate">{displayName}</h2>
-                        <p className="text-xs font-mono text-muted-foreground truncate">{isGroup ? `Grupo (${participants.length} membros)` : formattedPhone}</p>
+                    <h2 className="text-base font-bold text-foreground truncate max-w-full px-2">{displayName}</h2>
+                    <button
+                        type="button"
+                        onClick={() => {
+                            navigator.clipboard.writeText(isGroup ? jid : cleanNumber || jid);
+                            toast.success("Número/JID copiado!");
+                        }}
+                        className="mt-0.5 text-xs font-mono text-muted-foreground hover:text-[#00a884] flex items-center gap-1 cursor-pointer"
+                        title="Clique para copiar"
+                    >
+                        <span>{isGroup ? `Grupo • ${participants.length} membros` : formattedPhone}</span>
+                        <Copy className="h-3 w-3 opacity-70" />
+                    </button>
+
+                    {/* Quick Action Buttons */}
+                    <div className="flex items-center justify-center gap-3 mt-3 pt-2 border-t border-border/10 w-full">
+                        {onToggleMute && (
+                            <button
+                                type="button"
+                                onClick={onToggleMute}
+                                className="flex flex-col items-center gap-1 px-3 py-1.5 rounded-xl hover:bg-muted/60 text-xs text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
+                            >
+                                {isMuted ? <VolumeX className="h-4 w-4 text-amber-500" /> : <Volume2 className="h-4 w-4 text-[#00a884]" />}
+                                <span className="text-[10.5px] font-medium">{isMuted ? "Silenciado" : "Silenciar"}</span>
+                            </button>
+                        )}
+                        {isGroup && onExportParticipants && (
+                            <button
+                                type="button"
+                                onClick={onExportParticipants}
+                                className="flex flex-col items-center gap-1 px-3 py-1.5 rounded-xl hover:bg-muted/60 text-xs text-[#00a884] transition-colors cursor-pointer"
+                            >
+                                <FileDown className="h-4 w-4" />
+                                <span className="text-[10.5px] font-medium">CSV Membros</span>
+                            </button>
+                        )}
+                        {isGroup && onSendBroadcastToMembers && (
+                            <button
+                                type="button"
+                                onClick={onSendBroadcastToMembers}
+                                className="flex flex-col items-center gap-1 px-3 py-1.5 rounded-xl hover:bg-muted/60 text-xs text-amber-500 transition-colors cursor-pointer"
+                            >
+                                <Zap className="h-4 w-4" />
+                                <span className="text-[10.5px] font-medium">Disparar</span>
+                            </button>
+                        )}
                     </div>
-                    {isGroup && (
-                        <div className="flex items-center gap-1.5 shrink-0">
-                            {onExportParticipants && (
-                                <Button
+                </div>
+
+                {/* Internal Note Section inside Right Drawer (#C31) */}
+                {onSaveChatNote && (
+                    <div className="bg-white dark:bg-[#111b21] px-4 py-3 shadow-2xs border-y border-border/10 space-y-1.5">
+                        <div className="flex items-center justify-between">
+                            <span className="text-xs font-semibold text-amber-600 dark:text-amber-400 flex items-center gap-1.5">
+                                <StickyNote className="h-3.5 w-3.5" />
+                                Notas Internas do Cliente
+                            </span>
+                            {chatNote.trim().length > 0 && (
+                                <button
                                     type="button"
-                                    size="sm"
-                                    variant="outline"
-                                    onClick={onExportParticipants}
-                                    className="text-xs gap-1.5 h-8 text-[#00a884] border-[#00a884]/30 hover:bg-[#00a884]/10 cursor-pointer"
-                                    title="Exportar participantes para CSV"
+                                    onClick={() => onSaveChatNote("")}
+                                    className="text-[10px] text-muted-foreground hover:text-destructive cursor-pointer"
                                 >
-                                    <FileDown className="h-3.5 w-3.5" />
-                                    <span className="hidden sm:inline">Exportar CSV</span>
-                                </Button>
-                            )}
-                            {onSendBroadcastToMembers && (
-                                <Button
-                                    type="button"
-                                    size="sm"
-                                    onClick={onSendBroadcastToMembers}
-                                    className="text-xs gap-1.5 h-8 bg-[#00a884] hover:bg-[#00a884]/90 text-white cursor-pointer"
-                                    title="Criar disparo com os membros deste grupo"
-                                >
-                                    <Zap className="h-3.5 w-3.5" />
-                                    <span className="hidden sm:inline">Disparo</span>
-                                </Button>
+                                    Limpar
+                                </button>
                             )}
                         </div>
-                    )}
-                </div>
+                        <textarea
+                            rows={2}
+                            value={chatNote}
+                            onChange={(e) => onSaveChatNote(e.target.value)}
+                            placeholder="Adicione observações privadas sobre este contato..."
+                            className="w-full rounded-xl bg-amber-50/50 dark:bg-amber-950/20 border border-amber-500/25 px-2.5 py-1.5 text-xs text-foreground outline-none focus:border-amber-500 resize-none"
+                        />
+                    </div>
+                )}
 
-                <div className="flex items-center border-b border-border/15 px-4 gap-1 overflow-x-auto no-scrollbar shrink-0 bg-background text-xs font-medium">
-                    <button
-                        type="button"
-                        onClick={() => setTab("media")}
-                        className={cn(
-                            "py-2.5 px-3 border-b-2 transition-colors cursor-pointer flex items-center gap-1.5",
-                            tab === "media" ? "border-[#00a884] text-[#00a884] font-semibold" : "border-transparent text-muted-foreground hover:text-foreground"
-                        )}
-                    >
-                        <ImageIcon className="h-3.5 w-3.5" />
-                        <span>Mídias ({mediaMessages.length})</span>
-                    </button>
-                    <button
-                        type="button"
-                        onClick={() => setTab("docs")}
-                        className={cn(
-                            "py-2.5 px-3 border-b-2 transition-colors cursor-pointer flex items-center gap-1.5",
-                            tab === "docs" ? "border-[#00a884] text-[#00a884] font-semibold" : "border-transparent text-muted-foreground hover:text-foreground"
-                        )}
-                    >
-                        <FileText className="h-3.5 w-3.5" />
-                        <span>Documentos ({docMessages.length})</span>
-                    </button>
-                    <button
-                        type="button"
-                        onClick={() => setTab("audio")}
-                        className={cn(
-                            "py-2.5 px-3 border-b-2 transition-colors cursor-pointer flex items-center gap-1.5",
-                            tab === "audio" ? "border-[#00a884] text-[#00a884] font-semibold" : "border-transparent text-muted-foreground hover:text-foreground"
-                        )}
-                    >
-                        <Music className="h-3.5 w-3.5" />
-                        <span>Áudios ({audioMessages.length})</span>
-                    </button>
-                    <button
-                        type="button"
-                        onClick={() => setTab("links")}
-                        className={cn(
-                            "py-2.5 px-3 border-b-2 transition-colors cursor-pointer flex items-center gap-1.5",
-                            tab === "links" ? "border-[#00a884] text-[#00a884] font-semibold" : "border-transparent text-muted-foreground hover:text-foreground"
-                        )}
-                    >
-                        <ExternalLink className="h-3.5 w-3.5" />
-                        <span>Links ({linkItems.length})</span>
-                    </button>
-                    <button
-                        type="button"
-                        onClick={() => setTab("starred")}
-                        className={cn(
-                            "py-2.5 px-3 border-b-2 transition-colors cursor-pointer flex items-center gap-1.5",
-                            tab === "starred" ? "border-[#00a884] text-[#00a884] font-semibold" : "border-transparent text-muted-foreground hover:text-foreground"
-                        )}
-                    >
-                        <Star className="h-3.5 w-3.5 text-amber-500" />
-                        <span>Favoritas ({starredMessages.length})</span>
-                    </button>
-                    {isGroup && (
+                {/* Media, Docs, Audio, Links, Starred & Members Card */}
+                <div className="bg-white dark:bg-[#111b21] shadow-2xs border-y border-border/10">
+                    <div className="flex items-center border-b border-border/15 px-2 gap-0.5 overflow-x-auto no-scrollbar bg-background text-[11px] font-medium">
                         <button
                             type="button"
-                            onClick={() => setTab("members")}
+                            onClick={() => setTab("media")}
                             className={cn(
-                                "py-2.5 px-3 border-b-2 transition-colors cursor-pointer flex items-center gap-1.5",
-                                tab === "members" ? "border-[#00a884] text-[#00a884] font-semibold" : "border-transparent text-muted-foreground hover:text-foreground"
+                                "py-2.5 px-2.5 border-b-2 transition-colors cursor-pointer flex items-center gap-1 shrink-0",
+                                tab === "media" ? "border-[#00a884] text-[#00a884] font-semibold" : "border-transparent text-muted-foreground hover:text-foreground"
                             )}
                         >
-                            <Users className="h-3.5 w-3.5" />
-                            <span>Membros ({participants.length})</span>
+                            <ImageIcon className="h-3 w-3" />
+                            <span>Mídias ({mediaMessages.length})</span>
                         </button>
-                    )}
-                </div>
+                        <button
+                            type="button"
+                            onClick={() => setTab("docs")}
+                            className={cn(
+                                "py-2.5 px-2.5 border-b-2 transition-colors cursor-pointer flex items-center gap-1 shrink-0",
+                                tab === "docs" ? "border-[#00a884] text-[#00a884] font-semibold" : "border-transparent text-muted-foreground hover:text-foreground"
+                            )}
+                        >
+                            <FileText className="h-3 w-3" />
+                            <span>Docs ({docMessages.length})</span>
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => setTab("audio")}
+                            className={cn(
+                                "py-2.5 px-2.5 border-b-2 transition-colors cursor-pointer flex items-center gap-1 shrink-0",
+                                tab === "audio" ? "border-[#00a884] text-[#00a884] font-semibold" : "border-transparent text-muted-foreground hover:text-foreground"
+                            )}
+                        >
+                            <Music className="h-3 w-3" />
+                            <span>Áudios ({audioMessages.length})</span>
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => setTab("links")}
+                            className={cn(
+                                "py-2.5 px-2.5 border-b-2 transition-colors cursor-pointer flex items-center gap-1 shrink-0",
+                                tab === "links" ? "border-[#00a884] text-[#00a884] font-semibold" : "border-transparent text-muted-foreground hover:text-foreground"
+                            )}
+                        >
+                            <ExternalLink className="h-3 w-3" />
+                            <span>Links ({linkItems.length})</span>
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => setTab("starred")}
+                            className={cn(
+                                "py-2.5 px-2.5 border-b-2 transition-colors cursor-pointer flex items-center gap-1 shrink-0",
+                                tab === "starred" ? "border-[#00a884] text-[#00a884] font-semibold" : "border-transparent text-muted-foreground hover:text-foreground"
+                            )}
+                        >
+                            <Star className="h-3 w-3 text-amber-500" />
+                            <span>Favoritas ({starredMessages.length})</span>
+                        </button>
+                        {isGroup && (
+                            <button
+                                type="button"
+                                onClick={() => setTab("members")}
+                                className={cn(
+                                    "py-2.5 px-2.5 border-b-2 transition-colors cursor-pointer flex items-center gap-1 shrink-0",
+                                    tab === "members" ? "border-[#00a884] text-[#00a884] font-semibold" : "border-transparent text-muted-foreground hover:text-foreground"
+                                )}
+                            >
+                                <Users className="h-3 w-3" />
+                                <span>Membros ({participants.length})</span>
+                            </button>
+                        )}
+                    </div>
 
-                <div className="flex-1 overflow-y-auto p-4 styled-scrollbar min-h-[220px]">
-                    {tab === "media" && (
-                        mediaMessages.length === 0 ? (
-                            <div className="py-12 text-center text-muted-foreground">
-                                <ImageIcon className="h-10 w-10 mx-auto opacity-30 mb-2" />
-                                <p className="text-xs">Nenhuma foto ou vídeo compartilhado nesta conversa.</p>
-                            </div>
-                        ) : (
-                            <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
-                                {mediaMessages.map(m => (
-                                    <div
-                                        key={m.keyId}
-                                        className="relative group aspect-square rounded-xl overflow-hidden bg-black/10 cursor-pointer border border-border/20 shadow-xs"
-                                        onClick={() => onPreviewMedia(m.mediaUrl!, m.content)}
-                                    >
-                                        {m.type === 'VIDEO' ? (
-                                            <video src={m.mediaUrl} className="h-full w-full object-cover" />
-                                        ) : (
-                                            <img src={m.mediaUrl} alt="Mídia" className="h-full w-full object-cover transition-transform group-hover:scale-105 duration-200" loading="lazy" />
-                                        )}
-                                        {m.type === 'VIDEO' && (
-                                            <span className="absolute top-1.5 left-1.5 bg-black/60 rounded-md p-1 text-white">
-                                                <Video className="h-3 w-3" />
-                                            </span>
-                                        )}
-                                        <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2">
-                                            <a
-                                                href={m.mediaUrl}
-                                                download={`MEDIA-${m.keyId}`}
-                                                onClick={(e) => e.stopPropagation()}
-                                                className="p-1.5 rounded-full bg-white/90 text-black hover:bg-white transition-colors"
-                                                title="Baixar mídia"
-                                            >
-                                                <Download className="h-4 w-4" />
-                                            </a>
+                    <div className="p-3 min-h-[180px]">
+                        {tab === "media" && (
+                            mediaMessages.length === 0 ? (
+                                <div className="py-10 text-center text-muted-foreground">
+                                    <ImageIcon className="h-8 w-8 mx-auto opacity-30 mb-1.5" />
+                                    <p className="text-xs">Nenhuma foto ou vídeo nesta conversa.</p>
+                                </div>
+                            ) : (
+                                <div className="grid grid-cols-3 gap-1.5">
+                                    {mediaMessages.map(m => (
+                                        <div
+                                            key={m.keyId}
+                                            className="relative group aspect-square rounded-lg overflow-hidden bg-black/10 cursor-pointer border border-border/20 shadow-xs"
+                                            onClick={() => onPreviewMedia(m.mediaUrl!, m.content)}
+                                        >
+                                            {m.type === 'VIDEO' ? (
+                                                <video src={m.mediaUrl} className="h-full w-full object-cover" />
+                                            ) : (
+                                                <img src={m.mediaUrl} alt="Mídia" className="h-full w-full object-cover transition-transform group-hover:scale-105 duration-200" loading="lazy" />
+                                            )}
+                                            {m.type === 'VIDEO' && (
+                                                <span className="absolute top-1 left-1 bg-black/60 rounded p-0.5 text-white">
+                                                    <Video className="h-2.5 w-2.5" />
+                                                </span>
+                                            )}
                                         </div>
-                                    </div>
-                                ))}
-                            </div>
-                        )
-                    )}
+                                    ))}
+                                </div>
+                            )
+                        )}
 
                     {tab === "docs" && (
                         docMessages.length === 0 ? (
@@ -1371,9 +1429,34 @@ function ChatInfoAndMediaModal({
                             </div>
                         </div>
                     )}
+                    </div>
                 </div>
-            </DialogContent>
-        </Dialog>
+
+                {/* Danger Actions Card (#C39: Block/Unblock Contact & Clear Chat) */}
+                <div className="bg-white dark:bg-[#111b21] shadow-2xs border-y border-border/10 divide-y divide-border/10">
+                    {onClearChat && (
+                        <button
+                            type="button"
+                            onClick={onClearChat}
+                            className="w-full px-4 py-3 flex items-center gap-3 text-xs font-medium text-red-500 hover:bg-red-500/10 transition-colors cursor-pointer text-left"
+                        >
+                            <Trash2 className="h-4 w-4 shrink-0" />
+                            <span>Limpar mensagens da conversa</span>
+                        </button>
+                    )}
+                    {!isGroup && onToggleBlock && (
+                        <button
+                            type="button"
+                            onClick={onToggleBlock}
+                            className="w-full px-4 py-3 flex items-center gap-3 text-xs font-medium text-red-500 hover:bg-red-500/10 transition-colors cursor-pointer text-left"
+                        >
+                            <X className="h-4 w-4 shrink-0" />
+                            <span>{isBlocked ? `Desbloquear ${displayName}` : `Bloquear ${displayName}`}</span>
+                        </button>
+                    )}
+                </div>
+            </div>
+        </aside>
     );
 }
 
@@ -1619,6 +1702,10 @@ function ChatInputBar({
     onOpenSendPoll,
     onOpenScheduleMessage,
     onOpenAIAssistant,
+    onOpenCamera,
+    availableStickers = [],
+    onSendStickerFile,
+    onSendStickerUrl,
     replyingTo,
     onCancelReply,
     jid,
@@ -1635,6 +1722,10 @@ function ChatInputBar({
     onOpenSendPoll?: () => void;
     onOpenScheduleMessage?: (draftText: string) => void;
     onOpenAIAssistant?: (initialMode: ChatAIAssistantMode, draftText: string) => void;
+    onOpenCamera?: () => void;
+    availableStickers?: string[];
+    onSendStickerFile?: (file: File) => void;
+    onSendStickerUrl?: (url: string) => void;
     replyingTo: Message | null;
     onCancelReply: () => void;
     jid: string;
@@ -1644,9 +1735,20 @@ function ChatInputBar({
 }) {
     const [input, setInput] = useState("");
     const [emojiTab, setEmojiTab] = useState<string>("freq");
+    const [pickerMode, setPickerMode] = useState<"emoji" | "sticker">("emoji");
+    const [emojiSearch, setEmojiSearch] = useState("");
+    const [dismissedLinkUrl, setDismissedLinkUrl] = useState<string | null>(null);
     const [isRewritingDraft, setIsRewritingDraft] = useState(false);
     const inputRef = useRef<HTMLTextAreaElement>(null);
+    const stickerInputRef = useRef<HTMLInputElement>(null);
     const lastTypingSentRef = useRef<number>(0);
+
+    // Detect URL in input for live WhatsApp Web Link Preview (#C37)
+    const detectedInputUrl = useMemo(() => {
+        const m = input.match(/https?:\/\/[^\s]+/i);
+        if (!m) return null;
+        return m[0] === dismissedLinkUrl ? null : m[0];
+    }, [input, dismissedLinkUrl]);
 
     // Allow external AI Assistant modal to inject text directly into the input bar (#C29)
     useEffect(() => {
@@ -2252,6 +2354,33 @@ function ChatInputBar({
                 </div>
             )}
 
+            {/* Live URL Link Preview Bar above input (#C37) */}
+            {detectedInputUrl && (() => {
+                let host = detectedInputUrl;
+                try {
+                    host = new URL(detectedInputUrl).hostname.replace(/^www\./, "");
+                } catch {}
+                return (
+                    <div className="mb-2 p-2 rounded-xl bg-white/90 dark:bg-[#111b21]/90 backdrop-blur-sm border-l-4 border-[#00a884] flex items-center justify-between gap-2.5 text-xs animate-in slide-in-from-bottom-2 duration-150">
+                        <div className="h-9 w-9 rounded-lg bg-[#00a884]/15 text-[#00a884] flex items-center justify-center shrink-0">
+                            <ExternalLink className="h-4 w-4" />
+                        </div>
+                        <div className="flex-1 min-w-0">
+                            <span className="font-semibold text-foreground block truncate">{host}</span>
+                            <span className="text-[11px] text-[#00a884] truncate block">{detectedInputUrl}</span>
+                        </div>
+                        <button
+                            type="button"
+                            onClick={() => setDismissedLinkUrl(detectedInputUrl)}
+                            className="p-1 text-muted-foreground hover:text-foreground rounded-full cursor-pointer"
+                            title="Remover prévia do link"
+                        >
+                            <X className="h-4 w-4" />
+                        </button>
+                    </div>
+                );
+            })()}
+
             {/* Reply preview bar */}
             {replyingTo && (
                 <div className="mb-2 p-2 rounded-xl bg-white/80 dark:bg-[#111b21]/80 backdrop-blur-sm border-l-4 border-[#00a884] flex items-center justify-between text-xs animate-in slide-in-from-bottom-2 duration-150">
@@ -2338,7 +2467,18 @@ function ChatInputBar({
                 </div>
             ) : (
                 <div className="flex items-end gap-2 max-w-4xl mx-auto">
-                    {/* Functional WhatsApp Emoji Picker (#C9) */}
+                    {/* Functional WhatsApp Emoji & Sticker Picker (#C9 & #C35) */}
+                    <input
+                        type="file"
+                        accept="image/*"
+                        ref={stickerInputRef}
+                        className="hidden"
+                        onChange={(e) => {
+                            const f = e.target.files?.[0];
+                            if (f && onSendStickerFile) onSendStickerFile(f);
+                            if (stickerInputRef.current) stickerInputRef.current.value = "";
+                        }}
+                    />
                     <Popover>
                         <PopoverTrigger asChild>
                             <Button
@@ -2346,58 +2486,141 @@ function ChatInputBar({
                                 variant="ghost"
                                 size="icon"
                                 className="h-10 w-10 rounded-full shrink-0 text-[#54656f] dark:text-[#8696a0] hover:text-foreground hover:bg-black/5 dark:hover:bg-white/10 cursor-pointer"
-                                title="Emojis"
+                                title="Emojis e Figurinhas (Stickers)"
                             >
                                 <Smile className="h-5 w-5" />
                             </Button>
                         </PopoverTrigger>
-                        <PopoverContent className="w-72 p-2.5 rounded-2xl bg-white dark:bg-[#233138] border border-border/40 shadow-2xl" side="top" align="start">
-                            <div className="flex items-center gap-1 border-b border-border/15 pb-1.5 mb-2 overflow-x-auto no-scrollbar">
-                                {EMOJI_CATEGORIES.map(cat => (
-                                    <button
-                                        key={cat.id}
-                                        type="button"
-                                        onClick={() => setEmojiTab(cat.id)}
-                                        className={cn(
-                                            "px-2 py-1 rounded-lg text-[10.5px] font-semibold whitespace-nowrap transition-colors cursor-pointer",
-                                            emojiTab === cat.id
-                                                ? "bg-[#00a884]/15 text-[#00a884] dark:text-[#25d366]"
-                                                : "text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5"
-                                        )}
-                                    >
-                                        {cat.label}
-                                    </button>
-                                ))}
+                        <PopoverContent className="w-80 p-2.5 rounded-2xl bg-white dark:bg-[#233138] border border-border/40 shadow-2xl" side="top" align="start">
+                            {/* Top Switcher: Emojis vs Stickers */}
+                            <div className="grid grid-cols-2 gap-1 p-1 rounded-xl bg-muted/60 mb-2">
+                                <button
+                                    type="button"
+                                    onClick={() => setPickerMode("emoji")}
+                                    className={cn(
+                                        "py-1 rounded-lg text-xs font-semibold transition-colors cursor-pointer",
+                                        pickerMode === "emoji"
+                                            ? "bg-white dark:bg-[#111b21] text-[#00a884] shadow-2xs"
+                                            : "text-muted-foreground hover:text-foreground"
+                                    )}
+                                >
+                                    😊 Emojis
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => setPickerMode("sticker")}
+                                    className={cn(
+                                        "py-1 rounded-lg text-xs font-semibold transition-colors cursor-pointer",
+                                        pickerMode === "sticker"
+                                            ? "bg-white dark:bg-[#111b21] text-[#00a884] shadow-2xs"
+                                            : "text-muted-foreground hover:text-foreground"
+                                    )}
+                                >
+                                    🖼️ Figurinhas ({availableStickers.length})
+                                </button>
                             </div>
-                            <div className="grid grid-cols-6 gap-1 max-h-48 overflow-y-auto styled-scrollbar p-0.5">
-                                {(EMOJI_CATEGORIES.find(c => c.id === emojiTab)?.emojis || EMOJI_CATEGORIES[0].emojis).map(emoji => (
-                                    <button
-                                        key={emoji}
+
+                            {pickerMode === "emoji" ? (
+                                <>
+                                    <div className="mb-2">
+                                        <Input
+                                            placeholder="Pesquisar categoria ou filtrar..."
+                                            value={emojiSearch}
+                                            onChange={(e) => setEmojiSearch(e.target.value)}
+                                            className="h-7 text-xs bg-muted/40"
+                                        />
+                                    </div>
+                                    <div className="flex items-center gap-1 border-b border-border/15 pb-1.5 mb-2 overflow-x-auto no-scrollbar">
+                                        {EMOJI_CATEGORIES.map(cat => (
+                                            <button
+                                                key={cat.id}
+                                                type="button"
+                                                onClick={() => setEmojiTab(cat.id)}
+                                                className={cn(
+                                                    "px-2 py-1 rounded-lg text-[10.5px] font-semibold whitespace-nowrap transition-colors cursor-pointer",
+                                                    emojiTab === cat.id
+                                                        ? "bg-[#00a884]/15 text-[#00a884] dark:text-[#25d366]"
+                                                        : "text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5"
+                                                )}
+                                            >
+                                                {cat.label}
+                                            </button>
+                                        ))}
+                                    </div>
+                                    <div className="grid grid-cols-7 gap-1 max-h-48 overflow-y-auto styled-scrollbar p-0.5">
+                                        {(emojiSearch.trim()
+                                            ? Array.from(new Set(EMOJI_CATEGORIES.flatMap(c => c.emojis)))
+                                            : (EMOJI_CATEGORIES.find(c => c.id === emojiTab)?.emojis || EMOJI_CATEGORIES[0].emojis)
+                                        ).map(emoji => (
+                                            <button
+                                                key={emoji}
+                                                type="button"
+                                                onClick={() => handleInsertEmoji(emoji)}
+                                                className="h-9 w-9 rounded-lg flex items-center justify-center text-lg hover:bg-black/5 dark:hover:bg-white/10 hover:scale-110 transition-transform cursor-pointer select-none"
+                                            >
+                                                {emoji}
+                                            </button>
+                                        ))}
+                                    </div>
+                                </>
+                            ) : (
+                                <div className="space-y-2">
+                                    <Button
                                         type="button"
-                                        onClick={() => handleInsertEmoji(emoji)}
-                                        className="h-9 w-9 rounded-lg flex items-center justify-center text-lg hover:bg-black/5 dark:hover:bg-white/10 hover:scale-110 transition-transform cursor-pointer select-none"
+                                        variant="outline"
+                                        size="sm"
+                                        onClick={() => stickerInputRef.current?.click()}
+                                        className="w-full h-8 text-xs gap-1.5 border-dashed border-[#00a884]/50 text-[#00a884] hover:bg-[#00a884]/10 cursor-pointer"
                                     >
-                                        {emoji}
-                                    </button>
-                                ))}
-                            </div>
+                                        <Plus className="h-3.5 w-3.5" />
+                                        <span>Criar figurinha de imagem</span>
+                                    </Button>
+
+                                    {availableStickers.length === 0 ? (
+                                        <div className="py-8 text-center text-xs text-muted-foreground space-y-1">
+                                            <p>Nenhuma figurinha salva ainda.</p>
+                                            <p className="text-[10.5px]">Clique em &ldquo;Criar figurinha&rdquo; acima ou favorite figurinhas recebidas na conversa!</p>
+                                        </div>
+                                    ) : (
+                                        <div className="grid grid-cols-4 gap-2 max-h-48 overflow-y-auto styled-scrollbar p-1">
+                                            {availableStickers.map((sUrl, i) => (
+                                                <button
+                                                    key={`${sUrl}-${i}`}
+                                                    type="button"
+                                                    onClick={() => onSendStickerUrl?.(sUrl)}
+                                                    className="aspect-square rounded-xl p-1 hover:bg-black/5 dark:hover:bg-white/10 flex items-center justify-center transition-transform hover:scale-105 cursor-pointer border border-border/20"
+                                                    title="Clique para enviar esta figurinha"
+                                                >
+                                                    <img src={sUrl} alt="Sticker" className="max-h-full max-w-full object-contain" />
+                                                </button>
+                                            ))}
+                                        </div>
+                                    )}
+                                </div>
+                            )}
                         </PopoverContent>
                     </Popover>
 
-                    {/* Attachment Popover (#C22 & #C23) */}
+                    {/* Attachment Popover (#C22, #C23 & #C36 Camera) */}
                     <Popover>
                         <PopoverTrigger asChild>
                             <Button
                                 variant="ghost"
                                 size="icon"
                                 className="h-10 w-10 rounded-full shrink-0 text-[#54656f] dark:text-[#8696a0] hover:text-foreground hover:bg-black/5 dark:hover:bg-white/10 cursor-pointer"
-                                title="Anexar (Fotos, Documento, Áudio, Contato, Localização, Enquete)"
+                                title="Anexar (Câmera, Fotos, Documento, Áudio, Contato, Localização, Enquete)"
                             >
                                 <Paperclip className="h-5 w-5" />
                             </Button>
                         </PopoverTrigger>
                         <PopoverContent className="w-56 p-2 rounded-2xl bg-white dark:bg-[#233138] border border-border/40 shadow-xl" side="top" align="start">
                             <div className="flex flex-col gap-1">
+                                <Button variant="ghost" size="sm" className="justify-start gap-3 h-9 text-xs rounded-xl cursor-pointer" onClick={() => onOpenCamera?.()}>
+                                    <span className="h-7 w-7 rounded-full bg-rose-500/15 text-rose-500 flex items-center justify-center">
+                                        <Camera className="h-4 w-4" />
+                                    </span>
+                                    Câmera (Tirar foto)
+                                </Button>
                                 <Button variant="ghost" size="sm" className="justify-start gap-3 h-9 text-xs rounded-xl cursor-pointer" onClick={() => onUpload('image')}>
                                     <span className="h-7 w-7 rounded-full bg-blue-500/15 text-blue-500 flex items-center justify-center">
                                         <ImageIcon className="h-4 w-4" />
@@ -2856,6 +3079,17 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
     const [activePinnedIdx, setActivePinnedIdx] = useState<number>(0);
     const [starredIds, setStarredIds] = useState<string[]>([]);
 
+    // Favorite Stickers & Sticker Picker state (#C35)
+    const [favoriteStickers, setFavoriteStickers] = useState<string[]>([]);
+
+    // Webcam Photo Capture Modal state (#C36)
+    const [isCameraModalOpen, setIsCameraModalOpen] = useState(false);
+    const cameraVideoRef = useRef<HTMLVideoElement>(null);
+    const cameraStreamRef = useRef<MediaStream | null>(null);
+
+    // Block Contact state (#C39)
+    const [isContactBlocked, setIsContactBlocked] = useState(false);
+
     // Chat Wallpaper Theme (#C33)
     const [chatWallpaper, setChatWallpaper] = useState<"default" | "dark" | "emerald" | "ocean" | "minimal">("default");
 
@@ -2913,6 +3147,11 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
             if (savedWp && ["default", "dark", "emerald", "ocean", "minimal"].includes(savedWp)) {
                 setChatWallpaper(savedWp);
             }
+            const rawFavStickers = localStorage.getItem("zapflow_fav_stickers_v1");
+            if (rawFavStickers) {
+                const parsedFav = JSON.parse(rawFavStickers);
+                if (Array.isArray(parsedFav)) setFavoriteStickers(parsedFav);
+            }
             setLlmKeys(loadSavedLLMKeys());
         } catch {}
     }, []);
@@ -2936,10 +3175,32 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
             const rawMuted = localStorage.getItem(`zapflow_muted_${sessionId}`);
             const mutedList: string[] = rawMuted ? JSON.parse(rawMuted) : [];
             setIsChatMuted(Array.isArray(mutedList) && mutedList.includes(jid));
+            const rawBlocked = localStorage.getItem(`zapflow_blocked_${sessionId}`);
+            const blockedList: string[] = rawBlocked ? JSON.parse(rawBlocked) : [];
+            setIsContactBlocked(Array.isArray(blockedList) && blockedList.includes(jid));
         } catch {}
         setIsSelectMode(false);
         setSelectedMsgIds([]);
     }, [sessionId, jid]);
+
+    const availableStickers = useMemo(() => {
+        const fromHistory = messages
+            .filter(m => m.type === "STICKER" && m.mediaUrl)
+            .map(m => m.mediaUrl as string);
+        return Array.from(new Set([...favoriteStickers, ...fromHistory]));
+    }, [favoriteStickers, messages]);
+
+    const handleToggleFavoriteSticker = useCallback((stickerUrl: string) => {
+        setFavoriteStickers(prev => {
+            const exists = prev.includes(stickerUrl);
+            const next = exists ? prev.filter(u => u !== stickerUrl) : [stickerUrl, ...prev];
+            try {
+                localStorage.setItem("zapflow_fav_stickers_v1", JSON.stringify(next));
+            } catch {}
+            toast.success(exists ? "Figurinha removida das favoritas" : "⭐ Figurinha salva nas favoritas!");
+            return next;
+        });
+    }, []);
 
     // Sync mute changes initiated from ChatList (#C26)
     useEffect(() => {
@@ -3188,15 +3449,21 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
 
                 // Play chime and desktop notification if there are incoming messages from someone else (unless muted #C26)
                 const incomingFromOthers = relevant.filter(m => !m.fromMe && !m.keyId.startsWith("temp-"));
-                if (incomingFromOthers.length > 0 && !isChatMutedRef.current) {
-                    playNotificationChime();
-                    if (typeof document !== "undefined" && document.hidden) {
-                        const lastMsg = incomingFromOthers[incomingFromOthers.length - 1];
-                        const senderName = lastMsg.pushName || name || "WhatsApp";
-                        showDesktopNotification(
-                            isGroup ? `${senderName} (${name || "Grupo"})` : senderName,
-                            lastMsg.content || (lastMsg.type === 'IMAGE' ? "📷 Foto" : "📎 Arquivo")
-                        );
+                if (incomingFromOthers.length > 0) {
+                    const el = scrollRef.current;
+                    if (el && el.scrollHeight - el.scrollTop - el.clientHeight > 140) {
+                        setNewMsgBadge(true);
+                    }
+                    if (!isChatMutedRef.current) {
+                        playNotificationChime();
+                        if (typeof document !== "undefined" && document.hidden) {
+                            const lastMsg = incomingFromOthers[incomingFromOthers.length - 1];
+                            const senderName = lastMsg.pushName || name || "WhatsApp";
+                            showDesktopNotification(
+                                isGroup ? `${senderName} (${name || "Grupo"})` : senderName,
+                                lastMsg.content || (lastMsg.type === 'IMAGE' ? "📷 Foto" : "📎 Arquivo")
+                            );
+                        }
                     }
                 }
 
@@ -3435,7 +3702,14 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
     };
 
     
-    // Keyboard shortcuts (Escape to dismiss, Ctrl+Shift+F to search chats, Alt+Up/Down to navigate)
+    const handleCloseCurrentChat = useCallback(() => {
+        onBack?.();
+        if (typeof window !== "undefined") {
+            window.dispatchEvent(new CustomEvent("zapflow:close-chat"));
+        }
+    }, [onBack]);
+
+    // Keyboard shortcuts (Escape to dismiss or close chat #C38, Ctrl+Shift+F to search chats, Alt+Up/Down to navigate)
     useEffect(() => {
         const handleKeyDown = (e: KeyboardEvent) => {
             if (e.key === "Escape") {
@@ -3454,6 +3728,21 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
                 } else if (forwardingMessage || forwardingMessagesList) {
                     setForwardingMessage(null);
                     setForwardingMessagesList(null);
+                } else if (isChatInfoModalOpen) {
+                    setIsChatInfoModalOpen(false);
+                } else if (
+                    !lightboxMedia &&
+                    !editingMessage &&
+                    !deleteConfirmMsg &&
+                    !inspectingMessage &&
+                    !isSendContactOpen &&
+                    !isSendLocationOpen &&
+                    !isSendPollOpen &&
+                    !isScheduleModalOpen &&
+                    !isAIAssistantOpen &&
+                    !isCameraModalOpen
+                ) {
+                    handleCloseCurrentChat();
                 }
             }
 
@@ -3472,7 +3761,26 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
 
         window.addEventListener("keydown", handleKeyDown);
         return () => window.removeEventListener("keydown", handleKeyDown);
-    }, [isSearching, isSelectMode, replyingTo, previewFiles, forwardingMessage, forwardingMessagesList]);
+    }, [
+        isSearching,
+        isSelectMode,
+        replyingTo,
+        previewFiles,
+        forwardingMessage,
+        forwardingMessagesList,
+        isChatInfoModalOpen,
+        lightboxMedia,
+        editingMessage,
+        deleteConfirmMsg,
+        inspectingMessage,
+        isSendContactOpen,
+        isSendLocationOpen,
+        isSendPollOpen,
+        isScheduleModalOpen,
+        isAIAssistantOpen,
+        isCameraModalOpen,
+        handleCloseCurrentChat
+    ]);
 
 
     const processFileUpload = async (file: File, explicitType?: string, caption?: string) => {
@@ -3560,6 +3868,143 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
 
     const initiateFilePreview = (file: File, explicitType?: string) => {
         initiateFilesPreview([file], explicitType);
+    };
+
+    // Send Sticker from image file or saved sticker URL (#C35)
+    const handleSendStickerFile = async (file: File) => {
+        const localBlobUrl = URL.createObjectURL(file);
+        const tempKeyId = `temp-sticker-${Date.now()}`;
+        const nowIso = new Date().toISOString();
+
+        const optimisticMsg: Message = {
+            id: tempKeyId,
+            keyId: tempKeyId,
+            remoteJid: jid,
+            fromMe: true,
+            type: "STICKER",
+            content: "",
+            mediaUrl: localBlobUrl,
+            status: "PENDING",
+            timestamp: nowIso,
+            quoteId: replyingTo?.keyId || null,
+        };
+        setReplyingTo(null);
+        setMessages(prev => [...prev, optimisticMsg]);
+        requestAnimationFrame(() => scrollToBottom(true));
+
+        const formData = new FormData();
+        formData.append("file", file);
+        formData.append("pack", "ZapFlow");
+        formData.append("author", "ZapFlow CRM");
+
+        try {
+            const res = await fetch(`/api/messages/${sessionId}/${encodeURIComponent(jid)}/sticker`, {
+                method: "POST",
+                body: formData
+            });
+            const json = await res.json();
+            if (!res.ok) throw new Error(json?.error?.message || "Falha ao converter/enviar figurinha");
+            setMessages(prev => prev.map(m => m.keyId === tempKeyId ? { ...m, keyId: json?.data?.key?.id || m.keyId, status: "SENT" } : m));
+            toast.success("🖼️ Figurinha enviada!");
+        } catch (err: any) {
+            toast.error(err?.message || "Erro ao enviar figurinha");
+            setMessages(prev => prev.map(m => m.keyId === tempKeyId ? { ...m, status: "FAILED" } : m));
+        }
+    };
+
+    const handleSendStickerUrl = async (url: string) => {
+        try {
+            const resp = await fetch(url);
+            const blob = await resp.blob();
+            const file = new File([blob], `sticker-${Date.now()}.webp`, { type: blob.type || "image/webp" });
+            await handleSendStickerFile(file);
+        } catch {
+            toast.error("Não foi possível reenviar esta figurinha");
+        }
+    };
+
+    // Webcam Capture Modal Handlers (#C36)
+    const handleCloseCamera = useCallback(() => {
+        if (cameraStreamRef.current) {
+            cameraStreamRef.current.getTracks().forEach(t => t.stop());
+            cameraStreamRef.current = null;
+        }
+        setIsCameraModalOpen(false);
+    }, []);
+
+    const handleOpenCamera = async () => {
+        if (typeof navigator === "undefined" || !navigator.mediaDevices?.getUserMedia) {
+            toast.error("Câmera não suportada ou sem permissão neste navegador");
+            return;
+        }
+        setIsCameraModalOpen(true);
+        try {
+            const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" } });
+            cameraStreamRef.current = stream;
+            setTimeout(() => {
+                if (cameraVideoRef.current) {
+                    cameraVideoRef.current.srcObject = stream;
+                    cameraVideoRef.current.play().catch(() => {});
+                }
+            }, 80);
+        } catch {
+            toast.error("Permissão de câmera negada ou nenhuma webcam encontrada");
+            setIsCameraModalOpen(false);
+        }
+    };
+
+    const handleCaptureCameraPhoto = () => {
+        const video = cameraVideoRef.current;
+        if (!video) return;
+        const canvas = document.createElement("canvas");
+        canvas.width = video.videoWidth || 1280;
+        canvas.height = video.videoHeight || 720;
+        const ctx = canvas.getContext("2d");
+        if (!ctx) return;
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+        canvas.toBlob((blob) => {
+            if (!blob) return;
+            const file = new File([blob], `CAMERA-${Date.now()}.jpg`, { type: "image/jpeg" });
+            handleCloseCamera();
+            initiateFilePreview(file, "image");
+        }, "image/jpeg", 0.92);
+    };
+
+    // Block / Unblock Contact & Clear Conversation (#C39)
+    const handleToggleBlockContact = async () => {
+        if (isGroup) return;
+        const action = isContactBlocked ? "unblock" : "block";
+        try {
+            const res = await fetch(`/api/contacts/${sessionId}/${encodeURIComponent(jid)}/${action}`, {
+                method: "POST"
+            });
+            if (!res.ok) throw new Error("Falha ao atualizar bloqueio do contato");
+            const next = !isContactBlocked;
+            setIsContactBlocked(next);
+            try {
+                const rawBlocked = localStorage.getItem(`zapflow_blocked_${sessionId}`);
+                const list: string[] = rawBlocked ? JSON.parse(rawBlocked) : [];
+                const updated = next ? Array.from(new Set([...list, jid])) : list.filter(x => x !== jid);
+                localStorage.setItem(`zapflow_blocked_${sessionId}`, JSON.stringify(updated));
+            } catch {}
+            toast.success(next ? "🚫 Contato bloqueado no WhatsApp" : "✅ Contato desbloqueado no WhatsApp");
+        } catch (err: any) {
+            toast.error(err?.message || "Erro ao bloquear/desbloquear contato");
+        }
+    };
+
+    const handleClearConversation = () => {
+        if (messages.length === 0) {
+            toast.info("A conversa já está vazia");
+            return;
+        }
+        if (typeof window !== "undefined" && !window.confirm("Tem certeza que deseja limpar as mensagens exibidas nesta conversa?")) {
+            return;
+        }
+        setMessages([]);
+        const cacheKey = `${sessionId}:${jid}`;
+        chatCache.delete(cacheKey);
+        toast.success("🧹 Mensagens da conversa limpas!");
     };
 
     const handleRemovePreviewFile = (idxToRemove: number) => {
@@ -4047,18 +4492,54 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
     const displayName = name || jid.split('@')[0];
 
     return (
-        <div
-            className="flex-1 flex flex-col min-w-0 min-h-0 relative select-text"
-            onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }}
-            onDragLeave={() => setIsDragging(false)}
-            onDrop={(e) => {
-                e.preventDefault();
-                setIsDragging(false);
-                if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
-                    initiateFilesPreview(e.dataTransfer.files);
-                }
-            }}
-        >
+        <div className="flex-1 flex flex-row min-w-0 min-h-0 overflow-hidden relative">
+            <div
+                className="flex-1 flex flex-col min-w-0 min-h-0 relative select-text"
+                onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }}
+                onDragLeave={() => setIsDragging(false)}
+                onDrop={(e) => {
+                    e.preventDefault();
+                    setIsDragging(false);
+                    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+                        initiateFilesPreview(e.dataTransfer.files);
+                    }
+                }}
+            >
+            {/* Webcam Capture Modal (#C36) */}
+            <Dialog open={isCameraModalOpen} onOpenChange={(open) => { if (!open) handleCloseCamera(); }}>
+                <DialogContent className="max-w-lg rounded-2xl bg-white dark:bg-[#202c33] border border-border/40 shadow-2xl">
+                    <DialogHeader>
+                        <DialogTitle className="text-base font-semibold flex items-center gap-2 text-foreground">
+                            <Camera className="h-4.5 w-4.5 text-[#00a884]" />
+                            <span>Tirar Foto com a Câmera</span>
+                        </DialogTitle>
+                    </DialogHeader>
+                    <div className="space-y-3 py-1">
+                        <div className="relative rounded-xl overflow-hidden bg-black aspect-video flex items-center justify-center border border-border/30">
+                            <video
+                                ref={cameraVideoRef}
+                                autoPlay
+                                playsInline
+                                muted
+                                className="w-full h-full object-cover"
+                            />
+                        </div>
+                        <div className="flex justify-end gap-2">
+                            <Button variant="ghost" size="sm" onClick={handleCloseCamera}>
+                                Cancelar
+                            </Button>
+                            <Button
+                                size="sm"
+                                className="bg-[#00a884] hover:bg-[#00a884]/90 text-white gap-1.5"
+                                onClick={handleCaptureCameraPhoto}
+                            >
+                                <Camera className="h-4 w-4" />
+                                <span>Capturar Foto</span>
+                            </Button>
+                        </div>
+                    </div>
+                </DialogContent>
+            </Dialog>
             {/* Context menu */}
             {(forwardingMessage || (forwardingMessagesList && forwardingMessagesList.length > 0)) && (
                 <ForwardModal
@@ -5212,6 +5693,34 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
                                 </div>
                             </div>
 
+                            <div className="h-px bg-border/15 my-1" />
+                            <button
+                                type="button"
+                                onClick={handleClearConversation}
+                                className="w-full flex items-center gap-2.5 px-3 py-2 text-xs font-medium text-foreground rounded-xl hover:bg-black/5 dark:hover:bg-white/10 transition-colors text-left cursor-pointer"
+                            >
+                                <Trash2 className="h-4 w-4 text-amber-500" />
+                                <span>Limpar conversa</span>
+                            </button>
+                            {!isGroup && (
+                                <button
+                                    type="button"
+                                    onClick={handleToggleBlockContact}
+                                    className="w-full flex items-center gap-2.5 px-3 py-2 text-xs font-medium text-destructive rounded-xl hover:bg-destructive/10 transition-colors text-left cursor-pointer"
+                                >
+                                    <X className="h-4 w-4" />
+                                    <span>{isContactBlocked ? "Desbloquear contato" : "Bloquear contato"}</span>
+                                </button>
+                            )}
+                            <button
+                                type="button"
+                                onClick={handleCloseCurrentChat}
+                                className="w-full flex items-center gap-2.5 px-3 py-2 text-xs font-medium text-muted-foreground hover:text-foreground rounded-xl hover:bg-black/5 dark:hover:bg-white/10 transition-colors text-left cursor-pointer"
+                            >
+                                <ArrowLeft className="h-4 w-4" />
+                                <span>Fechar conversa (Esc)</span>
+                            </button>
+
                         </PopoverContent>
                     </Popover>
                 </div>
@@ -5658,6 +6167,15 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
                                                 >
                                                     <Download className="h-3 w-3" />
                                                 </Button>
+                                                <Button
+                                                    size="icon"
+                                                    variant="secondary"
+                                                    className="absolute -top-1 right-6 h-6 w-6 rounded-full opacity-0 group-hover/media:opacity-100 transition-opacity bg-background/80 backdrop-blur-sm"
+                                                    onClick={(e) => { e.stopPropagation(); handleToggleFavoriteSticker(msg.mediaUrl!); }}
+                                                    title={favoriteStickers.includes(msg.mediaUrl) ? "Remover das figurinhas favoritas" : "Favoritar figurinha"}
+                                                >
+                                                    <Star className={cn("h-3 w-3", favoriteStickers.includes(msg.mediaUrl) && "fill-amber-400 text-amber-400")} />
+                                                </Button>
                                             </div>
                                         )}
 
@@ -5892,6 +6410,41 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
                                             );
                                         })()}
 
+                                        {/* Link Preview Card for TEXT messages with URL (#C37) */}
+                                        {msg.type === 'TEXT' && msg.content && (() => {
+                                            const urlMatch = msg.content.match(/https?:\/\/[^\s<>"']+/i);
+                                            if (!urlMatch) return null;
+                                            const linkUrl = urlMatch[0].replace(/[.,;:!?)]+$/, "");
+                                            let host = linkUrl;
+                                            try { host = new URL(linkUrl).hostname.replace(/^www\./, ""); } catch {}
+                                            return (
+                                                <a
+                                                    href={linkUrl}
+                                                    target="_blank"
+                                                    rel="noopener noreferrer"
+                                                    onClick={(e) => e.stopPropagation()}
+                                                    className={cn(
+                                                        "flex items-center gap-2.5 mb-1.5 mt-0.5 rounded-lg overflow-hidden border border-black/5 dark:border-white/10 hover:opacity-90 transition-opacity select-none min-w-[220px] max-w-[320px]",
+                                                        msg.fromMe ? "bg-black/5 dark:bg-black/25" : "bg-black/5 dark:bg-white/5"
+                                                    )}
+                                                >
+                                                    <div className="h-14 w-14 shrink-0 bg-white dark:bg-[#111b21] flex items-center justify-center">
+                                                        <img
+                                                            src={`https://www.google.com/s2/favicons?domain=${encodeURIComponent(host)}&sz=64`}
+                                                            alt=""
+                                                            className="h-7 w-7 object-contain"
+                                                            loading="lazy"
+                                                        />
+                                                    </div>
+                                                    <div className="min-w-0 flex-1 py-1.5 pr-2.5">
+                                                        <p className="text-xs font-semibold text-foreground truncate">{host}</p>
+                                                        <p className="text-[10.5px] text-muted-foreground truncate">{linkUrl}</p>
+                                                    </div>
+                                                    <ExternalLink className="h-3.5 w-3.5 mr-2.5 shrink-0 text-muted-foreground" />
+                                                </a>
+                                            );
+                                        })()}
+
                                         {/* Text content with mentions & Timestamp + status checks */}
                                         <div className="flex flex-wrap items-end justify-end gap-x-2 gap-y-0.5">
                                             {msg.type !== 'DOCUMENT' && msg.type !== 'LOCATION' && msg.type !== 'CONTACT' && msg.type !== 'POLL' && (
@@ -5978,13 +6531,20 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
                 </div>
             </div>
 
-            {/* Floating New message badge */}
-            {newMsgBadge && (
+            {/* Floating Scroll-to-Bottom button with unread badge (#C38) */}
+            {(!autoScroll || newMsgBadge) && messages.length > 0 && (
                 <button
+                    type="button"
                     onClick={() => { scrollToBottom(true); setNewMsgBadge(false); }}
-                    className="absolute bottom-20 right-6 z-20 flex items-center gap-2 rounded-full bg-[#00a884] px-3.5 py-2 text-xs font-semibold text-white shadow-lg hover:bg-[#00a884]/90 transition-all animate-bounce"
+                    className="absolute bottom-20 right-6 z-20 h-10 w-10 rounded-full bg-white dark:bg-[#202c33] text-[#54656f] dark:text-[#aebac1] shadow-[0_2px_6px_rgba(11,20,26,0.25)] border border-border/20 flex items-center justify-center hover:scale-105 transition-transform cursor-pointer animate-in fade-in zoom-in-95 duration-150"
+                    title="Rolar para a última mensagem"
                 >
-                    <ArrowDown className="h-4 w-4" /> Novas mensagens
+                    <ChevronDown className="h-5 w-5" />
+                    {newMsgBadge && (
+                        <span className="absolute -top-1.5 -right-1 h-4.5 min-w-4.5 px-1 rounded-full bg-[#25d366] text-white text-[10px] font-bold flex items-center justify-center shadow">
+                            •
+                        </span>
+                    )}
                 </button>
             )}
 
@@ -6114,33 +6674,16 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
                     setIsScheduleModalOpen(true);
                 }}
                 onOpenAIAssistant={handleOpenAIAssistant}
+                onOpenCamera={handleOpenCamera}
+                availableStickers={availableStickers}
+                onSendStickerFile={handleSendStickerFile}
+                onSendStickerUrl={handleSendStickerUrl}
                 replyingTo={replyingTo}
                 onCancelReply={() => setReplyingTo(null)}
                 jid={jid}
                 sessionId={sessionId}
                 isGroup={isGroup}
                 participants={participantsList}
-            />
-
-            {/* Group / Contact Info, Media, Links, Docs & Members Modal (#C7) */}
-            <ChatInfoAndMediaModal
-                isOpen={isChatInfoModalOpen}
-                onClose={() => setIsChatInfoModalOpen(false)}
-                name={displayName}
-                jid={jid}
-                profilePic={profilePic || undefined}
-                isGroup={isGroup}
-                messages={messages}
-                participants={participantsList}
-                sessionId={sessionId}
-                initialTab={chatInfoModalTab}
-                starredIds={starredIds}
-                onPreviewMedia={(src, caption) => {
-                    setIsChatInfoModalOpen(false);
-                    setLightboxMedia({ src, caption });
-                }}
-                onExportParticipants={exportGroupParticipants}
-                onSendBroadcastToMembers={sendBroadcastToGroupMembers}
             />
 
             {/* Lightbox Modal with Zoom, Rotate & Gallery Navigation (WhatsApp Web Style #C16) */}
@@ -6419,6 +6962,34 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
                     </div>
                 </div>
             )}
+            </div>
+
+            {/* Right-side Contact / Group Info Drawer — WhatsApp Web 3-column layout (#C34, #C39) */}
+            <ChatInfoAndMediaModal
+                isOpen={isChatInfoModalOpen}
+                onClose={() => setIsChatInfoModalOpen(false)}
+                name={displayName}
+                jid={jid}
+                profilePic={profilePic || undefined}
+                isGroup={isGroup}
+                messages={messages}
+                participants={participantsList}
+                sessionId={sessionId}
+                initialTab={chatInfoModalTab}
+                starredIds={starredIds}
+                isMuted={isChatMuted}
+                isBlocked={isContactBlocked}
+                chatNote={chatNote}
+                onSaveChatNote={handleSaveChatNote}
+                onToggleMute={handleToggleChatMute}
+                onToggleBlock={handleToggleBlockContact}
+                onClearChat={handleClearConversation}
+                onPreviewMedia={(src, caption) => {
+                    setLightboxMedia({ src, caption });
+                }}
+                onExportParticipants={exportGroupParticipants}
+                onSendBroadcastToMembers={sendBroadcastToGroupMembers}
+            />
         </div>
     );
 }
