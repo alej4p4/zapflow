@@ -181,6 +181,20 @@ export class WhatsAppManager {
         await this.startSession(sessionId);
     }
 
+    public async shutdownAll() {
+        logger.info("Manager", `Encerrando ${this.sessions.size} sessões ativas do WhatsApp...`);
+        const promises = Array.from(this.sessions.values()).map(async (inst) => {
+            try {
+                await inst.shutdown();
+            } catch (err) {
+                logger.error("Manager", `Erro ao encerrar sessão ${inst.sessionId}:`, err);
+            }
+        });
+        await Promise.all(promises);
+        this.sessions.clear();
+        logger.success("Manager", "Todas as sessões do WhatsApp foram encerradas com segurança.");
+    }
+
     async requestPairingCode(sessionId: string, phoneNumber: string) {
         const instance = this.sessions.get(sessionId);
         if (!instance) throw new Error("Instance not found or not running");

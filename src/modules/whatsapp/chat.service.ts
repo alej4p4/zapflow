@@ -531,8 +531,8 @@ export class ChatService {
                 if (!res.ok) throw new Error(`Failed to fetch sticker media`);
                 const buffer = await res.arrayBuffer();
                 const sticker = new Sticker(Buffer.from(buffer), {
-                    pack: msgPayload.sticker.pack || "WA-AKG Bot",
-                    author: msgPayload.sticker.author || "WA-AKG",
+                    pack: msgPayload.sticker.pack || "BarraSoftware Bot",
+                    author: msgPayload.sticker.author || "BarraSoftware",
                     type: "full",
                     quality: 50
                 });
@@ -687,8 +687,8 @@ export class ChatService {
             content = { document: buffer, mimetype, fileName, ...messageOptions };
         } else if (type === 'sticker') {
             const sticker = new Sticker(buffer, {
-                pack: "WA-AKG Bot",
-                author: "WA-AKG",
+                pack: "BarraSoftware Bot",
+                author: "BarraSoftware",
                 type: "full",
                 quality: 50
             });

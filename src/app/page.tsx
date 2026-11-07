@@ -46,7 +46,7 @@ export default function Home() {
           <nav className="hidden md:flex items-center gap-8">
             <Link href="#features" className="text-sm font-medium text-muted-foreground hover:text-foreground transition-colors">Recursos</Link>
             <Link href="/docs" className="text-sm font-medium text-muted-foreground hover:text-foreground transition-colors">API e documentação</Link>
-            <Link href="https://github.com/mrifqidaffaaditya/WA-AKG" className="flex items-center gap-2 text-sm font-medium text-muted-foreground hover:text-foreground transition-colors">
+            <Link href="https://github.com/BarraSoftware" target="_blank" rel="noopener noreferrer" className="flex items-center gap-2 text-sm font-medium text-muted-foreground hover:text-foreground transition-colors">
               <Github className="h-4 w-4" /> GitHub
             </Link>
           </nav>
@@ -185,7 +185,7 @@ export default function Home() {
             <div className="flex gap-8 text-sm font-medium">
               <Link href="/privacy" className="text-muted-foreground hover:text-foreground transition-colors">Privacidade</Link>
               <Link href="/terms" className="text-muted-foreground hover:text-foreground transition-colors">Termos</Link>
-              <Link href="https://github.com/mrifqidaffaaditya/WA-AKG" className="text-muted-foreground hover:text-foreground transition-colors">GitHub</Link>
+              <Link href="https://github.com/BarraSoftware" target="_blank" rel="noopener noreferrer" className="text-muted-foreground hover:text-foreground transition-colors">GitHub</Link>
             </div>
             <p className="text-sm text-muted-foreground">
               © {new Date().getFullYear()} BarraSoftware. Licenciado sob MIT.

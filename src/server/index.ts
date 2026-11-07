@@ -51,32 +51,72 @@ app.prepare().then(() => {
 
   // Initialize WhatsApp Manager
   waManager.setup(io);
-  waManager.loadSessions();
+  waManager.loadSessions().catch(e => logger.error("Server", "loadSessions error:", e));
 
   // Disparos que ficaram "em andamento" por causa de um reinício viram "interrompido"
-  import("../modules/whatsapp/broadcast-runner").then(m => m.markStaleBroadcasts());
+  import("../modules/whatsapp/broadcast-runner")
+    .then(m => m.markStaleBroadcasts())
+    .catch(e => logger.error("Server", "markStaleBroadcasts error:", e));
 
   // Garante coluna de agendamento no banco existente (idempotente)
-  import("../modules/whatsapp/broadcast-runner").then(m => m.ensureScheduledColumn());
+  import("../modules/whatsapp/broadcast-runner")
+    .then(m => m.ensureScheduledColumn())
+    .catch(e => logger.error("Server", "ensureScheduledColumn error:", e));
 
   // Processa disparos agendados a cada 30 s
-  import("../modules/whatsapp/broadcast-runner").then(m => m.startBroadcastScheduler());
+  import("../modules/whatsapp/broadcast-runner")
+    .then(m => m.startBroadcastScheduler())
+    .catch(e => logger.error("Server", "startBroadcastScheduler error:", e));
 
   // Backup diário do banco (mantém os 7 últimos)
-  import("../modules/backup/backup").then(m => m.startBackups());
+  import("../modules/backup/backup")
+    .then(m => m.startBackups())
+    .catch(e => logger.error("Server", "startBackups error:", e));
 
   // Limpeza de mídia antiga (180 dias, configurável em MEDIA_RETENTION_DAYS)
-  import("../modules/maintenance/cleanup").then(m => m.startCleanup());
+  import("../modules/maintenance/cleanup")
+    .then(m => m.startCleanup())
+    .catch(e => logger.error("Server", "startCleanup error:", e));
 
   // Start Scheduler
-  import("../modules/whatsapp/scheduler").then(m => m.startScheduler());
+  import("../modules/whatsapp/scheduler")
+    .then(m => m.startScheduler())
+    .catch(e => logger.error("Server", "startScheduler error:", e));
 
   // Cloudflare 520 Fix: increase keep-alive timeout so Node doesn't kill idle connections that Cloudflare expects to reuse
   // See: https://github.com/vercel/next.js/issues/48962
   server.keepAliveTimeout = 120 * 1000; // 120 seconds
   server.headersTimeout = 120 * 1000; // 120 seconds
 
-  server.listen(port, "0.0.0.0", () => {
+  server.listen(port, hostname, () => {
     logger.banner(pkg.name.toUpperCase(), pkg.version, port);
   });
+
+  // Graceful shutdown on SIGTERM / SIGINT
+  let isShuttingDown = false;
+  const gracefulShutdown = async (signal: string) => {
+    if (isShuttingDown) return;
+    isShuttingDown = true;
+    logger.info("Server", `Recebido sinal ${signal}. Encerrando com segurança...`);
+
+    try {
+      await waManager.shutdownAll();
+      server.close(() => {
+        logger.success("Server", "Servidor HTTP e WebSocket encerrados.");
+        process.exit(0);
+      });
+
+      // Force exit after 10s if connections linger
+      setTimeout(() => {
+        logger.warn("Server", "Encerramento forçado após timeout.");
+        process.exit(0);
+      }, 10000).unref();
+    } catch (err) {
+      logger.error("Server", "Erro durante encerramento:", err);
+      process.exit(1);
+    }
+  };
+
+  process.on("SIGTERM", () => gracefulShutdown("SIGTERM"));
+  process.on("SIGINT", () => gracefulShutdown("SIGINT"));
 });

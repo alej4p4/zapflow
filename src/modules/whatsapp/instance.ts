@@ -34,6 +34,7 @@ export class WhatsAppInstance {
     isStopped: boolean = false;
     isDeleting: boolean = false;
     private reconnectCount: number = 0;
+    private reconnectTimer: NodeJS.Timeout | null = null;
     /** Incrementado a cada init(); eventos de sockets antigos são ignorados. */
     private generation: number = 0;
     /** Called when instance auto-stops or logs out — lets manager remove it from Map */
@@ -203,8 +204,9 @@ export class WhatsAppInstance {
                         ? `Session ${this.sessionId} disconnected. Reconnecting (${this.reconnectCount}/${MAX_QUICK_RECONNECTS})...`
                         : `Session ${this.sessionId} disconnected. Próxima tentativa em 5 minutos (tentativa ${this.reconnectCount}).`
                 );
-                setTimeout(() => {
-                    // Só reconecta se nenhum init() mais novo assumiu a sessão.
+                if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
+                this.reconnectTimer = setTimeout(() => {
+                    this.reconnectTimer = null;
                     if (!this.isStopped && gen === this.generation) this.init();
                 }, retryDelay);
             }
@@ -274,6 +276,11 @@ export class WhatsAppInstance {
 
     /** Clean shutdown without triggering reconnect */
     async shutdown() {
+        this.isStopped = true;
+        if (this.reconnectTimer) {
+            clearTimeout(this.reconnectTimer);
+            this.reconnectTimer = null;
+        }
         this.isStopped = true;
         this.socket?.end(undefined);
         this.socket = null;

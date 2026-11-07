@@ -39,7 +39,8 @@ type SessionDetail = {
 export default function SessionDetailPage() {
     const params = useParams();
     const router = useRouter();
-    const sessionId = params.sessionId as string;
+    const rawSessionId = params?.sessionId;
+    const sessionId = Array.isArray(rawSessionId) ? rawSessionId[0] : (rawSessionId ?? "");
 
     const [session, setSession] = useState<SessionDetail | null>(null);
     const [loading, setLoading] = useState(true);
