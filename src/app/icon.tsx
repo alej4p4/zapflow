@@ -1,7 +1,6 @@
 import { ImageResponse } from "next/og";
-import { prisma } from "@/lib/prisma";
 
-// Use nodejs runtime to allow Prisma access
+// Use nodejs runtime
 export const runtime = "nodejs";
 
 // Image metadata
@@ -11,48 +10,40 @@ export const size = {
 };
 export const contentType = "image/png";
 
-// Image generation
+// Image generation - BarraSoftware Robot Icon
 export default async function Icon() {
-    // Default config
-    let letter = "W";
-    let color = "#16a34a"; // green-600
-
-    try {
-        // Fetch system config
-        // @ts-ignore
-        const config = await prisma.systemConfig.findUnique({
-            where: { id: "default" }
-        });
-
-        if (config?.appName) {
-            letter = config.appName.charAt(0).toUpperCase();
-        }
-    } catch (e) {
-        console.error("Failed to fetch favicon config", e);
-    }
-
     return new ImageResponse(
         (
-            // ImageResponse JSX element
             <div
                 style={{
-                    fontSize: 20,
-                    fontWeight: 800,
-                    background: color,
+                    background: "#00a884",
                     width: "100%",
                     height: "100%",
                     display: "flex",
                     alignItems: "center",
                     justifyContent: "center",
-                    color: "white",
-                    borderRadius: "20%", // Rounded square looks more app-like
-                    fontFamily: 'sans-serif'
+                    borderRadius: "28%",
                 }}
             >
-                {letter}
+                <svg
+                    width="20"
+                    height="20"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="white"
+                    strokeWidth="2.5"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                >
+                    <path d="M12 8V4H8" />
+                    <rect width="16" height="12" x="4" y="8" rx="2" />
+                    <path d="M2 14h2" />
+                    <path d="M20 14h2" />
+                    <path d="M15 13v2" />
+                    <path d="M9 13v2" />
+                </svg>
             </div>
         ),
-        // ImageResponse options
         {
             ...size,
         }

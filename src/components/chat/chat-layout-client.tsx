@@ -90,7 +90,7 @@ export function ChatLayoutClient({ sessionId, initialJid }: ChatLayoutClientProp
 
     return (
         // Outer: flex row, full height, overflow hidden — containment chain root
-        <div className="flex h-full bg-background rounded-xl border border-border/40 shadow-sm overflow-hidden min-h-0">
+        <div className="flex h-full bg-background overflow-hidden min-h-0 border-t border-border/20">
             {/* Chat List Panel - Standard WhatsApp Web Width */}
             <div className={`w-full md:w-[380px] lg:w-[410px] xl:w-[420px] border-r border-border/30 overflow-hidden shrink-0 flex flex-col
                 ${selectedChat ? "hidden md:flex" : "flex"}`}
@@ -122,7 +122,7 @@ export function ChatLayoutClient({ sessionId, initialJid }: ChatLayoutClientProp
                                 <MessageCircle className="h-10 w-10" />
                             </div>
                             <h2 className="text-2xl font-light text-[#41525d] dark:text-[#e9edef]">
-                                ZapFlow WhatsApp Web
+                                BarraSoftware WhatsApp Web
                             </h2>
                             <p className="text-sm text-[#667781] dark:text-[#8696a0] leading-relaxed">
                                 Envie e receba mensagens com velocidade em tempo real. Selecione uma conversa ou grupo na lista à esquerda para começar.

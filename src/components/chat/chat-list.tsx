@@ -1446,18 +1446,7 @@ export function ChatList({ sessionId, onSelectChat, selectedJid }: ChatListProps
                             <span className="text-[10px] opacity-80">({totalGroupsCount})</span>
                         ) : null}
                     </button>
-                    <button
-                        onClick={() => { setFilterType("pinned"); setSelectedLabelId(null); }}
-                        className={cn(
-                            "px-3 py-1 rounded-full text-xs font-medium transition-colors shrink-0 flex items-center gap-1 cursor-pointer",
-                            filterType === "pinned" && !selectedLabelId
-                                ? "bg-[#00a884] text-white"
-                                : "bg-muted/70 hover:bg-muted text-muted-foreground"
-                        )}
-                    >
-                        <Pin className="h-3 w-3 rotate-45" />
-                        Fixados {pinnedJids.length > 0 && `(${pinnedJids.length})`}
-                    </button>
+                    
                     {archivedJids.length > 0 && (
                         <button
                             onClick={() => { setFilterType("archived"); setSelectedLabelId(null); }}
@@ -1473,83 +1462,7 @@ export function ChatList({ sessionId, onSelectChat, selectedJid }: ChatListProps
                         </button>
                     )}
 
-                    {/* Active Label Chip or Labels Dropdown */}
-                    {selectedLabelId ? (
-                        (() => {
-                            const activeLabel = availableLabels.find(l => l.id === selectedLabelId);
-                            return (
-                                <button
-                                    onClick={() => setSelectedLabelId(null)}
-                                    className="px-2.5 py-1 rounded-full text-xs font-semibold bg-[#00a884] text-white flex items-center gap-1.5 shrink-0 shadow-sm cursor-pointer transition-all"
-                                    title="Clique para remover filtro de etiqueta"
-                                >
-                                    <span className="h-2 w-2 rounded-full ring-1 ring-white/50" style={{ backgroundColor: activeLabel?.colorHex || "#fff" }} />
-                                    <span className="truncate max-w-[120px]">{activeLabel?.name || "Etiqueta"}</span>
-                                    <X className="h-3 w-3 hover:bg-black/20 rounded-full" />
-                                </button>
-                            );
-                        })()
-                    ) : (
-                        <Popover>
-                            <PopoverTrigger asChild>
-                                <button
-                                    className={cn(
-                                        "px-2.5 py-1 rounded-full text-xs font-medium transition-colors shrink-0 flex items-center gap-1 cursor-pointer",
-                                        "bg-muted/70 hover:bg-muted text-muted-foreground"
-                                    )}
-                                    title="Filtrar conversas por etiqueta"
-                                >
-                                    <Tag className="h-3 w-3" />
-                                    <span>Etiquetas</span>
-                                    {availableLabels.length > 0 && (
-                                        <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-black/10 dark:bg-white/15 font-semibold">
-                                            {availableLabels.length}
-                                        </span>
-                                    )}
-                                    <ChevronDown className="h-3 w-3 opacity-60" />
-                                </button>
-                            </PopoverTrigger>
-                            <PopoverContent className="w-56 p-1.5 rounded-2xl shadow-2xl bg-white dark:bg-[#202c33] border border-border/40 z-50 animate-in fade-in zoom-in-95" align="start">
-                                <div className="flex items-center justify-between px-2 py-1.5 border-b border-border/20 text-xs font-semibold text-foreground">
-                                    <span>Filtrar por etiqueta</span>
-                                    <button
-                                        type="button"
-                                        onClick={() => setIsManageLabelsOpen(true)}
-                                        className="text-[11px] text-[#00a884] hover:underline flex items-center gap-1 cursor-pointer"
-                                    >
-                                        <Settings className="h-3 w-3" />
-                                        Gerenciar
-                                    </button>
-                                </div>
-                                {availableLabels.length === 0 ? (
-                                    <div className="py-4 text-center text-xs text-muted-foreground">
-                                        Nenhuma etiqueta cadastrada.
-                                    </div>
-                                ) : (
-                                    <div className="flex flex-col gap-0.5 max-h-48 overflow-y-auto pt-1">
-                                        {availableLabels.map(label => {
-                                            const chatCount = chats.filter(c => chatLabelMap.get(c.jid)?.some(l => l.labelId === label.id)).length;
-                                            return (
-                                                <button
-                                                    key={label.id}
-                                                    onClick={() => setSelectedLabelId(label.id)}
-                                                    className="flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-xl text-xs hover:bg-muted/60 transition-colors text-left cursor-pointer text-foreground"
-                                                >
-                                                    <div className="flex items-center gap-2 truncate">
-                                                        <span className="h-2.5 w-2.5 rounded-full shrink-0 shadow-xs" style={{ backgroundColor: label.colorHex }} />
-                                                        <span className="truncate font-medium">{label.name}</span>
-                                                    </div>
-                                                    <span className="text-[10px] text-muted-foreground font-semibold px-1.5 py-0.2 rounded-full bg-muted shrink-0">
-                                                        {chatCount}
-                                                    </span>
-                                                </button>
-                                            );
-                                        })}
-                                    </div>
-                                )}
-                            </PopoverContent>
-                        </Popover>
-                    )}
+                    
                 </div>
 
                 {/* New Chat Form Drawer */}
