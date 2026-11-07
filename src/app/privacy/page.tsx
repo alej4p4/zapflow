@@ -2,17 +2,17 @@ import Link from "next/link";
 import { ArrowLeft, Lock, Shield } from "lucide-react";
 
 export const metadata = {
-    title: "Política de Privacidade | WA-AKG",
-    description: "Política de privacidade do gateway autogerenciado do WhatsApp WA-AKG.",
+    title: "Política de Privacidade | BarraSoftware",
+    description: "Política de privacidade do gateway autogerenciado do WhatsApp BarraSoftware.",
     openGraph: {
-        title: "Política de Privacidade | WA-AKG",
-        description: "Política de privacidade do gateway autogerenciado do WhatsApp WA-AKG.",
+        title: "Política de Privacidade | BarraSoftware",
+        description: "Política de privacidade do gateway autogerenciado do WhatsApp BarraSoftware.",
         type: "website",
     },
     twitter: {
         card: "summary_large_image",
-        title: "Política de Privacidade | WA-AKG",
-        description: "Política de privacidade do gateway autogerenciado do WhatsApp WA-AKG.",
+        title: "Política de Privacidade | BarraSoftware",
+        description: "Política de privacidade do gateway autogerenciado do WhatsApp BarraSoftware.",
     },
 };
 
@@ -44,7 +44,7 @@ export default function PrivacyPage() {
                     <div className="prose prose-slate dark:prose-invert max-w-none prose-headings:font-bold prose-headings:tracking-tight prose-a:text-primary hover:prose-a:text-primary/80 prose-p:leading-relaxed">
 
                         <p className="lead text-lg text-muted-foreground mb-8">
-                            No WA-AKG, acreditamos que seus dados pertencem a você. Esta política explica como as informações são tratadas ao usar nosso gateway do WhatsApp de código aberto e autogerenciado.
+                            No BarraSoftware, acreditamos que seus dados pertencem a você. Esta política explica como as informações são tratadas ao usar nosso gateway do WhatsApp de código aberto e autogerenciado.
                         </p>
 
                         <h2 className="flex items-center gap-2 mt-8 text-2xl border-b pb-2">
@@ -52,10 +52,10 @@ export default function PrivacyPage() {
                             1. Arquitetura sem rastreamento
                         </h2>
                         <p>
-                            Como o WA-AKG é <strong>autogerenciado</strong>, o processamento principal dos dados ocorre no equipamento onde você instala o aplicativo.
+                            Como o BarraSoftware é <strong>autogerenciado</strong>, o processamento principal dos dados ocorre no equipamento onde você instala o aplicativo.
                         </p>
                         <ul>
-                            <li><strong>Sem telemetria centralizada:</strong> os criadores do WA-AKG não recebem telemetria, análises ou relatórios de uso sobre suas interações no WhatsApp.</li>
+                            <li><strong>Sem telemetria centralizada:</strong> os criadores do BarraSoftware não recebem telemetria, análises ou relatórios de uso sobre suas interações no WhatsApp.</li>
                             <li><strong>Seus dados são seus:</strong> contatos, mensagens, agendamentos e respostas automáticas ficam no seu banco de dados. Não temos acesso a eles.</li>
                         </ul>
 
@@ -65,13 +65,13 @@ export default function PrivacyPage() {
                         </p>
                         <ul>
                             <li><strong>Credenciais de acesso:</strong> as senhas do painel são protegidas com hash bcrypt antes de serem armazenadas no banco local.</li>
-                            <li><strong>Sessões do WhatsApp:</strong> o WA-AKG conecta-se ao WhatsApp Web e armazena localmente as chaves necessárias para manter a conexão.</li>
+                            <li><strong>Sessões do WhatsApp:</strong> o BarraSoftware conecta-se ao WhatsApp Web e armazena localmente as chaves necessárias para manter a conexão.</li>
                             <li><strong>Histórico de comunicações:</strong> mensagens enviadas e recebidas são registradas no banco local para consulta e uso em webhooks.</li>
                         </ul>
 
                         <h2 className="mt-8 text-2xl border-b pb-2">3. Proteção das suas informações</h2>
                         <p>
-                            Embora o WA-AKG use práticas modernas de segurança, a proteção dos seus dados também depende do ambiente onde o aplicativo é executado. Recomendamos:
+                            Embora o BarraSoftware use práticas modernas de segurança, a proteção dos seus dados também depende do ambiente onde o aplicativo é executado. Recomendamos:
                         </p>
                         <ul>
                             <li>Usar um proxy reverso com criptografia <strong>SSL/TLS</strong> (HTTPS) quando expuser o app à internet.</li>
@@ -81,12 +81,12 @@ export default function PrivacyPage() {
 
                         <h2 className="mt-8 text-2xl border-b pb-2">4. Integrações de terceiros</h2>
                         <p>
-                            O WA-AKG usa a biblioteca <code>@whiskeysockets/baileys</code> para se comunicar com os servidores do WhatsApp. O uso do WhatsApp continua sujeito à Política de Privacidade da Meta.
+                            O BarraSoftware usa a biblioteca <code>@whiskeysockets/baileys</code> para se comunicar com os servidores do WhatsApp. O uso do WhatsApp continua sujeito à Política de Privacidade da Meta.
                         </p>
 
                         <div className="mt-12 p-6 bg-blue-500/5 rounded-2xl border border-blue-500/10">
                             <p className="font-semibold mb-2">Precisa de mais informações?</p>
-                            <p className="text-sm text-muted-foreground mb-0">Para dúvidas sobre o tratamento de dados ou para auditar o código, visite nosso <Link href="https://github.com/mrifqidaffaaditya/WA-AKG">repositório no GitHub</Link>.</p>
+                            <p className="text-sm text-muted-foreground mb-0">Para dúvidas sobre o tratamento de dados ou para auditar o código, visite nosso <Link href="https://github.com/mrifqidaffaaditya/BarraSoftware">repositório no GitHub</Link>.</p>
                         </div>
                     </div>
                 </div>

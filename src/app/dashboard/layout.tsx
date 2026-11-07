@@ -16,7 +16,7 @@ export default async function DashboardLayout({
 }) {
     const session = await auth();
     const systemConfig = await getSystemConfigCached();
-    const appName = systemConfig?.appName || "WA-AKG";
+    const appName = systemConfig?.appName || "BarraSoftware";
     const registrationEnabled = systemConfig?.enableRegistration ?? false;
 
     return (

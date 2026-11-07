@@ -32,7 +32,7 @@ export const viewport: Viewport = {
 };
 
 export async function generateMetadata(): Promise<Metadata> {
-  let appName = "WA-AKG";
+  let appName = "BarraSoftware";
   try {
     const config = await getSystemConfigCached();
     if (config?.appName) appName = config.appName;

@@ -14,7 +14,7 @@ export default function SettingsPage() {
     const isSuperAdmin = (authSession?.user as any)?.role === "SUPERADMIN";
 
     const [systemConfig, setSystemConfig] = useState({
-        appName: "WA-AKG",
+        appName: "BarraSoftware",
         logoUrl: "",
         timezone: "America/Sao_Paulo",
         enableRegistration: true
@@ -44,7 +44,7 @@ export default function SettingsPage() {
                 const data = responseData?.data;
                 if (data && !responseData.error) {
                     setSystemConfig({
-                        appName: data.appName || "WA-AKG",
+                        appName: data.appName || "BarraSoftware",
                         logoUrl: data.logoUrl || "",
                         // @ts-ignore
                         faviconUrl: data.faviconUrl || "/favicon.ico",
@@ -115,7 +115,7 @@ export default function SettingsPage() {
                             <Label>Nome do aplicativo</Label>
                             <input
                                 className={inputClass}
-                                placeholder="WA-AKG"
+                                placeholder="BarraSoftware"
                                 value={systemConfig.appName}
                                 onChange={(e) => setSystemConfig(prev => ({ ...prev, appName: e.target.value }))}
                                 disabled={!isSuperAdmin}

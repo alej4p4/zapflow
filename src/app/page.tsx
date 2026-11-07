@@ -5,17 +5,17 @@ import fs from "fs";
 import path from "path";
 
 export const metadata = {
-  title: "WA-AKG | Gateway profissional do WhatsApp",
+  title: "BarraSoftware | Gateway profissional do WhatsApp",
   description: "Painel autogerenciado para administrar sessões, agendamentos e respostas automáticas do WhatsApp.",
   openGraph: {
-    title: "WA-AKG | Gateway profissional do WhatsApp",
+    title: "BarraSoftware | Gateway profissional do WhatsApp",
     description: "Gateway autogerenciado do WhatsApp com suporte a vários dispositivos, respostas automáticas e integração por API.",
     type: "website",
     url: process.env.NEXT_PUBLIC_APP_URL || "https://wa-akg.app",
   },
   twitter: {
     card: "summary_large_image",
-    title: "WA-AKG | Gateway profissional do WhatsApp",
+    title: "BarraSoftware | Gateway profissional do WhatsApp",
     description: "Gateway autogerenciado do WhatsApp com suporte a vários dispositivos, respostas automáticas e integração por API.",
   },
 };
@@ -40,7 +40,7 @@ export default function Home() {
               <Bot className="h-5 w-5 md:h-6 md:w-6" />
               <div className="absolute inset-0 rounded-full bg-primary blur-md -z-10 opacity-50 animate-pulse-glow" />
             </div>
-            <span className="text-foreground tracking-tight hidden sm:inline-block">WA-AKG</span>
+            <span className="text-foreground tracking-tight hidden sm:inline-block">BarraSoftware</span>
           </div>
 
           <nav className="hidden md:flex items-center gap-8">
@@ -180,7 +180,7 @@ export default function Home() {
               <div className="p-2 rounded-xl bg-primary/10">
                 <Bot className="h-6 w-6 text-primary" />
               </div>
-              <span className="text-xl font-bold text-foreground">WA-AKG</span>
+              <span className="text-xl font-bold text-foreground">BarraSoftware</span>
             </div>
             <div className="flex gap-8 text-sm font-medium">
               <Link href="/privacy" className="text-muted-foreground hover:text-foreground transition-colors">Privacidade</Link>
@@ -188,7 +188,7 @@ export default function Home() {
               <Link href="https://github.com/mrifqidaffaaditya/WA-AKG" className="text-muted-foreground hover:text-foreground transition-colors">GitHub</Link>
             </div>
             <p className="text-sm text-muted-foreground">
-              © {new Date().getFullYear()} WA-AKG. Licenciado sob MIT.
+              © {new Date().getFullYear()} BarraSoftware. Licenciado sob MIT.
             </p>
           </div>
         </div>

@@ -2,17 +2,17 @@ import Link from "next/link";
 import { ArrowLeft, ShieldCheck, Scale } from "lucide-react";
 
 export const metadata = {
-    title: "Termos de Serviço | WA-AKG",
-    description: "Termos de serviço do gateway autogerenciado do WhatsApp WA-AKG.",
+    title: "Termos de Serviço | BarraSoftware",
+    description: "Termos de serviço do gateway autogerenciado do WhatsApp BarraSoftware.",
     openGraph: {
-        title: "Termos de Serviço | WA-AKG",
-        description: "Termos de serviço do gateway autogerenciado do WhatsApp WA-AKG.",
+        title: "Termos de Serviço | BarraSoftware",
+        description: "Termos de serviço do gateway autogerenciado do WhatsApp BarraSoftware.",
         type: "website",
     },
     twitter: {
         card: "summary_large_image",
-        title: "Termos de Serviço | WA-AKG",
-        description: "Termos de serviço do gateway autogerenciado do WhatsApp WA-AKG.",
+        title: "Termos de Serviço | BarraSoftware",
+        description: "Termos de serviço do gateway autogerenciado do WhatsApp BarraSoftware.",
     },
 };
 
@@ -44,7 +44,7 @@ export default function TermsPage() {
                     <div className="prose prose-slate dark:prose-invert max-w-none prose-headings:font-bold prose-headings:tracking-tight prose-a:text-primary hover:prose-a:text-primary/80 prose-p:leading-relaxed">
 
                         <p className="lead text-lg text-muted-foreground mb-8">
-                            Bem-vindo ao WA-AKG. Ao acessar ou usar nossa plataforma de gateway do WhatsApp, você concorda com estes termos. Se não concordar, não utilize o serviço.
+                            Bem-vindo ao BarraSoftware. Ao acessar ou usar nossa plataforma de gateway do WhatsApp, você concorda com estes termos. Se não concordar, não utilize o serviço.
                         </p>
 
                         <h2 className="flex items-center gap-2 mt-8 text-2xl border-b pb-2">
@@ -52,7 +52,7 @@ export default function TermsPage() {
                             1. Segurança e responsabilidade pelos dados
                         </h2>
                         <p>
-                            A segurança é fundamental. Como plataforma autogerenciada, o WA-AKG mantém seus dados na infraestrutura sob seu controle.
+                            A segurança é fundamental. Como plataforma autogerenciada, o BarraSoftware mantém seus dados na infraestrutura sob seu controle.
                         </p>
                         <ul>
                             <li><strong>Seus dados são seus:</strong> não rastreamos, interceptamos nem vendemos suas mensagens, contatos ou dados de sessão do WhatsApp.</li>
@@ -62,7 +62,7 @@ export default function TermsPage() {
 
                         <h2 className="mt-8 text-2xl border-b pb-2">2. Política de uso aceitável</h2>
                         <p>
-                            Ao usar a API, as respostas automáticas e os disparos do WA-AKG, você concorda em respeitar os Termos de Serviço e as políticas antispam do WhatsApp. Você não deve:
+                            Ao usar a API, as respostas automáticas e os disparos do BarraSoftware, você concorda em respeitar os Termos de Serviço e as políticas antispam do WhatsApp. Você não deve:
                         </p>
                         <ul>
                             <li>Enviar spam ou campanhas em massa a pessoas que não autorizaram o recebimento.</li>
@@ -72,12 +72,12 @@ export default function TermsPage() {
 
                         <h2 className="mt-8 text-2xl border-b pb-2">3. Integridade da conta</h2>
                         <p>
-                            O WA-AKG permite gerenciar várias sessões do WhatsApp. Monitore os aparelhos conectados. Se suspeitar de acesso não autorizado ao painel, altere sua senha e desconecte as sessões suspeitas pelo próprio WhatsApp.
+                            O BarraSoftware permite gerenciar várias sessões do WhatsApp. Monitore os aparelhos conectados. Se suspeitar de acesso não autorizado ao painel, altere sua senha e desconecte as sessões suspeitas pelo próprio WhatsApp.
                         </p>
 
                         <h2 className="mt-8 text-2xl border-b pb-2">4. Isenções e limitações</h2>
                         <p>
-                            O WA-AKG é fornecido "no estado em que se encontra", sem garantias. Ele usa bibliotecas de terceiros, como Baileys, para se conectar ao WhatsApp Web. Mudanças nos sistemas do WhatsApp podem interromper o serviço. Não nos responsabilizamos por suspensões ou banimentos decorrentes do uso.
+                            O BarraSoftware é fornecido "no estado em que se encontra", sem garantias. Ele usa bibliotecas de terceiros, como Baileys, para se conectar ao WhatsApp Web. Mudanças nos sistemas do WhatsApp podem interromper o serviço. Não nos responsabilizamos por suspensões ou banimentos decorrentes do uso.
                         </p>
 
                         <div className="mt-12 p-6 bg-primary/5 rounded-2xl border border-primary/10">

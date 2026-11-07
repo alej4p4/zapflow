@@ -18,7 +18,7 @@ export async function GET(request: NextRequest) {
         return NextResponse.json({
             status: true,
             message: "System config fetched",
-            data: config || { appName: "WA-AKG", faviconUrl: "/favicon.ico", enableRegistration: false }
+            data: config || { appName: "BarraSoftware", faviconUrl: "/favicon.ico", enableRegistration: false }
         });
     } catch (error) {
         return NextResponse.json({ status: false, message: "Failed to fetch settings", error: "Failed to fetch settings" }, { status: 500 });
@@ -51,7 +51,7 @@ export async function POST(req: Request) {
             },
             create: {
                 id: "default",
-                appName: appName || "WA-AKG",
+                appName: appName || "BarraSoftware",
                 logoUrl: logoUrl || "",
                 faviconUrl: faviconUrl || "/favicon.ico",
                 timezone: timezone || "America/Sao_Paulo",

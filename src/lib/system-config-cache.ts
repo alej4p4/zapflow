@@ -22,7 +22,7 @@ export async function getSystemConfigCached(): Promise<SystemConfigData> {
         // @ts-ignore
         const config = await prisma.systemConfig.findUnique({ where: { id: "default" } });
         cachedConfig = {
-            appName: config?.appName || "WA-AKG",
+            appName: config?.appName || "BarraSoftware",
             logoUrl: config?.logoUrl || "",
             faviconUrl: config?.faviconUrl || "/favicon.ico",
             timezone: config?.timezone || "America/Sao_Paulo",
@@ -33,7 +33,7 @@ export async function getSystemConfigCached(): Promise<SystemConfigData> {
     } catch (e) {
         if (cachedConfig) return cachedConfig;
         return {
-            appName: "WA-AKG",
+            appName: "BarraSoftware",
             faviconUrl: "/favicon.ico",
             timezone: "America/Sao_Paulo",
             enableRegistration: false,
