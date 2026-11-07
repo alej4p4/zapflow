@@ -1,4 +1,4 @@
-FROM node:22-alpine AS builder
+FROM node:25-alpine AS builder
 RUN apk add --no-cache openssl ca-certificates
 WORKDIR /app
 
@@ -17,7 +17,7 @@ RUN npx prisma generate && npm run build
 RUN npm prune --omit=dev && npm install --no-save tsx typescript
 
 # Production image
-FROM node:22-alpine AS runner
+FROM node:25-alpine AS runner
 RUN apk add --no-cache openssl ca-certificates
 WORKDIR /app
 
