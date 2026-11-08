@@ -8,6 +8,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter }
 import { toast } from "sonner";
 import { ArrowLeft, Play, Square, RotateCcw, LogOut, Power, Trash2, QrCode, Activity, HardDrive, Wifi, MemoryStick, Copy, Check, MessageSquare } from "lucide-react";
 import { setCookie } from "@/lib/client-cookie";
+import { useSession } from "@/components/dashboard/session-provider";
 import Link from "next/link";
 import { io, Socket } from "socket.io-client";
 import { QRCodeSVG } from "qrcode.react";

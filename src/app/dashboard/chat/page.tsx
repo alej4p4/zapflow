@@ -1,41 +1,35 @@
-import { auth } from "@/lib/auth";
-import { ChatInterface } from "@/components/chat/chat-interface";
+"use client";
+
+import { useSession } from "@/components/dashboard/session-provider";
 import { ChatLayoutClient } from "@/components/chat/chat-layout-client";
-import { cookies } from "next/headers";
-import { canAccessSession } from "@/lib/api-auth";
 import { SessionGuard } from "@/components/dashboard/session-guard";
+import { Loader2 } from "lucide-react";
 
-export default async function ChatPage() {
-    const session = await auth();
-    console.log("ChatPage Session (Role debug):", session?.user?.role);
+export default function ChatPage() {
+    const { sessionId, loading } = useSession();
 
-    if (!session?.user?.id) return <div>Acesso não autorizado</div>;
-
-    const cookieStore = await cookies();
-    const sessionId = cookieStore.get("sessionId")?.value;
-    let validSessionId: string | null = null;
-
-    if (sessionId) {
-        // Validate access
-        const hasAccess = await canAccessSession(session.user.id, session.user.role, sessionId);
-        if (hasAccess) {
-            // Ideally also check if CONNECTED but canAccessSession checks ownership.
-            // We can do an extra check if needed.
-            validSessionId = sessionId;
-        }
+    if (loading) {
+        return (
+            <div className="flex h-full items-center justify-center p-8 text-sm text-muted-foreground gap-2">
+                <Loader2 className="h-5 w-5 animate-spin text-primary" />
+                <span>Carregando sessão...</span>
+            </div>
+        );
     }
 
-    if (!validSessionId) {
+    if (!sessionId) {
         return (
             <SessionGuard>
-                <ChatInterface sessionId={null} />
+                <div className="flex h-full items-center justify-center p-8 text-center text-muted-foreground">
+                    Nenhuma sessão do WhatsApp ativa. Selecione uma sessão no menu superior.
+                </div>
             </SessionGuard>
         );
     }
 
     return (
         <div className="-m-3 sm:-m-4 lg:-m-6 h-[calc(100vh-3.5rem)] sm:h-[calc(100vh-4rem)]">
-            <ChatLayoutClient key={validSessionId} sessionId={validSessionId} />
+            <ChatLayoutClient key={sessionId} sessionId={sessionId} />
         </div>
     );
 }

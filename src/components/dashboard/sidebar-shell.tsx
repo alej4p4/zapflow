@@ -61,7 +61,12 @@ export function SidebarShell({ appName, userName, userEmail, version }: SidebarS
                         </div>
                         <ThemeToggle variant="compact" />
                         <button
-                            onClick={() => signOut({ callbackUrl: "/auth/login" })}
+                            onClick={() => {
+                                if (typeof document !== 'undefined') {
+                                    document.cookie = "sessionId=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;";
+                                }
+                                signOut({ callbackUrl: "/auth/login" });
+                            }}
                             className="p-2 rounded-lg text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"
                         >
                             <LogOut size={16} />

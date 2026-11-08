@@ -11,6 +11,7 @@ import { toast } from "sonner";
 import { Label } from '@/components/ui/label';
 import { Smartphone, Plus, Trash2, Settings, RefreshCw, Power, UserPlus, MessageSquare } from 'lucide-react';
 import { setCookie } from '@/lib/client-cookie';
+import { useSession } from './session-provider';
 import { Badge } from '@/components/ui/badge';
 import {
     Table,
