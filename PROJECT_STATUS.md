@@ -10,7 +10,7 @@
 - **Repositório Git:** `https://github.com/alej4p4/zapflow.git`
 - **Branch Ativo:** `main`
 - **Deploy em Produção:** Railway (`https://zapflow-production-40ae.up.railway.app`)
-- **Versão Atual:** `1.6.20`
+- **Versão Atual:** `1.6.21`
 
 ---
 

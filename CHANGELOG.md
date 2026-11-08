@@ -1,3 +1,20 @@
+## [v1.6.21] - 2026-11-08
+
+### Added
+- **Interactive Bot Pause & Status Control**: Interactive badge on chat header displaying live bot state (`🟢 Bot Ativo` or `🟠 Bot Pausado`) with remaining pause countdown, and 1-click controls to pause for 15m/1h or resume immediately.
+- **Cloud-Synced Contact Internal Notes**: Contact notes are now persisted to PostgreSQL (`/api/contacts/[sessionId]/note`) and synced in real-time across all team operators.
+- **Dynamic Browser Tab Unread Counter**: Browser tab title dynamically updates with unread messages count (`(N) BarraSoftware`) and restores upon reading.
+
+### Changed
+- **Full Rebranding to BarraSoftware**: Completed renaming from WA-AKG to BarraSoftware across entire UI, auth, schemas, Swagger, and documentation.
+- **Custom BarraSoftware Favicon**: Dynamic SVG robot icon in official green `#00a884` replacing generic browser icon.
+- **Chat Layout Polish**: Removed duplicate quick filters and eliminated right layout gap for true 100% full-width chat interface.
+
+### Fixed
+- **Audio Streaming Duration**: Resolved `Infinity:NaN` duration glitch on OGG/Opus WhatsApp voice notes by enforcing `Number.isFinite()` and listening to `onDurationChange`.
+- **Database Connection Pool Exhaustion**: Hardened Prisma singleton caching in `src/lib/prisma.ts`.
+- **Human Handoff Auto-Reply Collision**: Bot now automatically pauses for 15 minutes when a human operator sends a message to a customer, preventing awkward bot interruptions.
+
 ## [v1.6.4] - 2026-07-12
 
 ### Added
