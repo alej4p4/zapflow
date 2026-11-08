@@ -549,11 +549,15 @@ export async function downloadAndSaveMedia(message: WAMessage, sessionId: string
             }
         }
 
-        // Return persistent data URL for images and stickers under 450KB to guarantee 0ms rendering and zero 404s
-        if ((messageType === 'imageMessage' || messageType === 'stickerMessage') && buffer.length <= 450 * 1024) {
-            const mimeType = ext === 'webp' ? 'image/webp' : 'image/jpeg';
+        // Return persistent data URL for images, stickers and audio under 1MB to guarantee 0ms rendering, instant playback, and zero 404s
+        if ((messageType === 'imageMessage' || messageType === 'stickerMessage' || messageType === 'audioMessage') && buffer.length <= 1024 * 1024) {
+            const mimeType = mime ? mime.split(';')[0].trim() : (
+                messageType === 'audioMessage'
+                    ? (ext === 'mp3' ? 'audio/mpeg' : ext === 'mp4' || ext === 'm4a' ? 'audio/mp4' : 'audio/ogg')
+                    : (ext === 'webp' ? 'image/webp' : 'image/jpeg')
+            );
             const dataUrl = `data:${mimeType};base64,${buffer.toString('base64')}`;
-            logger.success("Media", `Persisted image to database Data URL (${Math.round(buffer.length / 1024)} KB).`);
+            logger.success("Media", `Persisted ${messageType} to database Data URL (${Math.round(buffer.length / 1024)} KB).`);
             return dataUrl;
         }
 

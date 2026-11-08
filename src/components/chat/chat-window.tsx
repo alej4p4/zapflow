@@ -426,6 +426,7 @@ function WhatsAppAudioPlayer({
 }) {
     const audioRef = useRef<HTMLAudioElement | null>(null);
     const [isPlaying, setIsPlaying] = useState(false);
+    const [hasError, setHasError] = useState(false);
     const [currentTime, setCurrentTime] = useState(0);
     const [duration, setDuration] = useState(0);
     const [playbackRate, setPlaybackRate] = useState<number>(1);
@@ -446,6 +447,10 @@ function WhatsAppAudioPlayer({
     const handleTranscribe = async (e: React.MouseEvent) => {
         e.stopPropagation();
         if (isTranscribing) return;
+        if (hasError && !src.startsWith("blob:") && !src.startsWith("data:")) {
+            toast.error("Áudio indisponível ou expirado no servidor para transcrição.");
+            return;
+        }
         setIsTranscribing(true);
         try {
             const keys = loadSavedLLMKeys();
@@ -485,6 +490,10 @@ function WhatsAppAudioPlayer({
 
     const togglePlay = async () => {
         if (!audioRef.current) return;
+        if (hasError) {
+            toast.error("Áudio indisponível ou expirado no servidor.");
+            return;
+        }
         if (isPlaying) {
             audioRef.current.pause();
         } else {
@@ -493,7 +502,8 @@ function WhatsAppAudioPlayer({
             } catch (err: any) {
                 console.error("Audio playback error:", err);
                 setIsPlaying(false);
-                toast.error("Não foi possível reproduzir este áudio no navegador.");
+                setHasError(true);
+                toast.error("Áudio indisponível ou expirado no servidor.");
             }
         }
     };
@@ -610,14 +620,14 @@ function WhatsAppAudioPlayer({
                 ref={audioRef}
                 src={src}
                 preload="metadata"
-                onPlay={() => setIsPlaying(true)}
+                onPlay={() => { setIsPlaying(true); setHasError(false); }}
                 onPause={() => setIsPlaying(false)}
                 onEnded={() => { setIsPlaying(false); setCurrentTime(0); }}
                 onTimeUpdate={() => audioRef.current && setCurrentTime(audioRef.current.currentTime)}
                 onLoadedMetadata={syncDuration}
                 onDurationChange={syncDuration}
                 onCanPlay={syncDuration}
-                onError={() => { setIsPlaying(false); }}
+                onError={() => { setIsPlaying(false); setHasError(true); }}
             />
             <div className="flex items-center gap-2 pt-0.5">
                 {fromMe && avatarNode}
@@ -626,8 +636,13 @@ function WhatsAppAudioPlayer({
                 <button
                     type="button"
                     onClick={(e) => { e.stopPropagation(); togglePlay(); }}
-                    className="h-9 w-7 flex items-center justify-center shrink-0 text-[#54656f] dark:text-[#aebac1] hover:opacity-80 cursor-pointer"
-                    title={isPlaying ? "Pausar" : "Tocar áudio"}
+                    className={cn(
+                        "h-9 w-7 flex items-center justify-center shrink-0 cursor-pointer transition-opacity",
+                        hasError
+                            ? "text-red-400 opacity-60 hover:opacity-100"
+                            : "text-[#54656f] dark:text-[#aebac1] hover:opacity-80"
+                    )}
+                    title={hasError ? "Áudio indisponível ou expirado" : isPlaying ? "Pausar" : "Tocar áudio"}
                 >
                     {isPlaying ? <Pause className="h-6 w-6 fill-current" /> : <Play className="h-6 w-6 fill-current" />}
                 </button>
@@ -752,6 +767,36 @@ function handleDownload(url: string, fileName: string) {
             toast.success("Download iniciado!");
             return;
         } catch {}
+    }
+
+    // 2. Server URL: verify availability before triggering download
+    if (url.startsWith("/api/media/")) {
+        fetch(url, { method: "HEAD" }).then(res => {
+            if (!res.ok && res.status === 404) {
+                toast.error("Arquivo indisponível ou expirado no servidor.");
+                return;
+            }
+            const sep = url.includes("?") ? "&" : "?";
+            const downloadUrl = `${url}${sep}download=1&filename=${encodeURIComponent(fileName || "arquivo")}`;
+            const link = document.createElement("a");
+            link.href = downloadUrl;
+            link.download = fileName || "arquivo";
+            document.body.appendChild(link);
+            link.click();
+            link.remove();
+            toast.success("Download iniciado!");
+        }).catch(() => {
+            const sep = url.includes("?") ? "&" : "?";
+            const downloadUrl = `${url}${sep}download=1&filename=${encodeURIComponent(fileName || "arquivo")}`;
+            const link = document.createElement("a");
+            link.href = downloadUrl;
+            link.download = fileName || "arquivo";
+            document.body.appendChild(link);
+            link.click();
+            link.remove();
+            toast.success("Download iniciado!");
+        });
+        return;
     }
 
     // 2. Server URL: trigger native attachment download via ?download=1 and filename

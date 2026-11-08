@@ -712,7 +712,11 @@ export class ChatService {
                 const savedFilePath = path.join(mediaDir, savedFilename);
                 await mkdir(path.dirname(savedFilePath), { recursive: true });
                 await writeFile(savedFilePath, buffer);
-                const fileUrl = `/api/media/${savedFilename}`;
+                let fileUrl = `/api/media/${savedFilename}`;
+                if (buffer.length <= 1024 * 1024 && (type === 'voice' || type === 'audio' || type === 'image' || type === 'sticker')) {
+                    const mimeClean = (mimetype || (type === 'voice' ? 'audio/ogg' : type === 'audio' ? 'audio/mpeg' : type === 'sticker' ? 'image/webp' : 'image/jpeg')).split(';')[0].trim();
+                    fileUrl = `data:${mimeClean};base64,${buffer.toString('base64')}`;
+                }
 
                 const sessionRecord = await prisma.session.findFirst({
                     where: { OR: [{ sessionId }, { id: sessionId }] },

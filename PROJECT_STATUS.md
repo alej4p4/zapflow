@@ -10,8 +10,9 @@
 - **Repositório Git:** `https://github.com/alej4p4/zapflow.git`
 - **Branch Ativo:** `main`
 - **Deploy em Produção:** Railway (`https://zapflow-production-40ae.up.railway.app`)
-- **Versão Atual:** `1.6.22`
+- **Versão Atual:** `1.6.23`
 - **Banco de Dados Oficial:** PostgreSQL 18.6 Nativo no Railway (Volume persistente `/var/lib/postgresql/data`, rede privada `postgres.railway.internal:5432`)
+- **Volume Persistente de Arquivos:** `zapflow-volume-XrQh` montado em `/app/data` no serviço `zapflow`
 
 ---
 
@@ -25,6 +26,16 @@
 ---
 
 ## 🚀 3. O que já foi implementado e entregue recentemente
+
+### Resolução Definitiva de Áudio e Persistência Data URL (v1.6.23)
+- **Persistência Dupla (Disco + Base64 Data URL no PostgreSQL):**
+  - Mídias de áudio (notas de voz gravadas e recebidas via WhatsApp) de até 1MB agora são salvas tanto no disco permanente (`/app/data/media`) quanto diretamente como `data:audio/ogg;base64,...` no banco de dados na coluna `Message.mediaUrl`.
+  - Isso garante **0ms de latência de reprodução**, independência completa de volume efêmero, reprodução garantida mesmo após rebuilds/deploys, e zero erros 404.
+- **Volume Persistente no Railway (`zapflow-volume-XrQh`):**
+  - Volume de dados dedicado montado em `/app/data`, garantindo que arquivos maiores que 1MB permaneçam salvos entre novas versões do container.
+- **Tratamento Elegante no Player do Chat (`WhatsAppAudioPlayer`):**
+  - Tratamento de erro aprimorado com indicador visual e toast amigável (`"Áudio indisponível ou expirado no servidor."`) caso um áudio antigo anterior à montagem do volume não exista no disco.
+  - O botão de download e a transcrição ("Ler") verificam a integridade antes de disparar a ação, protegendo o usuário de falhas silenciosas.
 
 ### Migração de Alta Performance para PostgreSQL Nativo no Railway
 - **Fim da Latência Externa e Cold Starts:**
