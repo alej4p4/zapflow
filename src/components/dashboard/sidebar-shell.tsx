@@ -1,3 +1,4 @@
+import { ThemeToggle } from "@/components/theme-toggle";
 "use client";
 
 import { SidebarNav } from "./sidebar-nav";
@@ -57,6 +58,7 @@ export function SidebarShell({ appName, userName, userEmail, version }: SidebarS
                         <div suppressHydrationWarning={true} className="h-8 w-8 rounded-lg bg-gradient-to-br from-primary/20 to-blue-500/20 flex items-center justify-center text-xs font-bold text-primary">
                             {userName?.charAt(0)?.toUpperCase() || "U"}
                         </div>
+                        <ThemeToggle variant="compact" />
                         <button
                             onClick={() => signOut({ callbackUrl: "/auth/login" })}
                             className="p-2 rounded-lg text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"
@@ -78,6 +80,7 @@ export function SidebarShell({ appName, userName, userEmail, version }: SidebarS
                                 <p className="text-[10px] text-muted-foreground truncate">{userEmail}</p>
                             </div>
                         </div>
+                        <div className="mb-2"><ThemeToggle variant="button" className="w-full" /></div>
                         <Button
                             variant="outline"
                             size="sm"

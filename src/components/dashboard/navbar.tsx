@@ -1,3 +1,4 @@
+import { ThemeToggle } from "@/components/theme-toggle";
 "use client";
 
 import { useState, useEffect } from "react";
@@ -149,6 +150,7 @@ export function Navbar({ appName }: NavbarProps) {
                 <SessionSelector />
                 <div className="h-6 w-px bg-border/50 hidden sm:block" />
 
+                <ThemeToggle />
                 <Popover open={isOpen} onOpenChange={setIsOpen}>
                     <PopoverTrigger asChild>
                         <Button variant="ghost" size="icon" className="relative hover:bg-muted/50 rounded-full h-10 w-10">

@@ -1,3 +1,12 @@
+## [v1.6.28] - 2026-11-08
+
+### Added
+- **Alternador de Tema Claro e Escuro (Light / Dark Mode)**: Implementado `ThemeProvider` nativo com suporte a `Claro ☀️`, `Escuro 🌙` e `Sistema 💻`. Botão de alternância com 1 clique e menu dropdown adicionados no topo da Navbar, na barra de ferramentas do Chat, no menu lateral (Sidebar) e na navegação mobile, com script anti-flicker no `<head>` para carregamento instantâneo sem flash.
+- **Silenciar Notificações com 1 Clique (Grupos e Conversas Individuais)**:
+  - Adicionado botão de silenciar/reativar notificações diretamente no cabeçalho da conversa (`chat-window.tsx`) com ícone dinâmico (`VolumeX` / `Volume2`) e feedback visual âmbar quando silenciado.
+  - Adicionado botão de silenciar em hover na lista de conversas (`chat-list.tsx`), permitindo silenciar grupos e contatos com 1 clique sem abrir a conversa.
+  - Mensagens de confirmação personalizadas diferenciando grupo e contato individual.
+
 ## [v1.6.27] - 2026-11-08
 
 ### Added

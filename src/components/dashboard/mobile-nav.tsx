@@ -1,3 +1,4 @@
+import { ThemeToggle } from "@/components/theme-toggle";
 "use client";
 
 import { useState } from "react";
@@ -166,6 +167,7 @@ export function MobileNav({ appName = "BarraSoftware" }: { appName?: string }) {
                 </nav>
 
                 <div className="p-4 border-t border-slate-100 bg-slate-50/50">
+                    <div className="mb-3"><ThemeToggle variant="button" className="w-full" /></div>
                     <div className="flex items-center gap-3 mb-3">
                         <div className="h-8 w-8 rounded-full bg-slate-200 flex items-center justify-center text-xs font-semibold text-slate-600">
                             {session?.user?.name?.charAt(0)?.toUpperCase() || "U"}

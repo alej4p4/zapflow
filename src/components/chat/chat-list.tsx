@@ -437,6 +437,23 @@ function ChatRow({
                                 {unreadCount > 0 ? <CheckCheck className="h-3.5 w-3.5 text-[#25d366]" /> : <Eye className="h-3.5 w-3.5" />}
                             </Button>
 
+                            {/* Mute / Unmute Button on Hover */}
+                            <Button
+                                variant="ghost"
+                                size="icon"
+                                title={isMuted ? "Ativar notificações" : "Silenciar notificações"}
+                                className={cn(
+                                    "h-6 w-6 rounded-full transition-opacity shrink-0",
+                                    isMuted ? "opacity-0 group-hover:opacity-100 text-amber-500 hover:text-amber-600" : "opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-foreground"
+                                )}
+                                onClick={(e) => {
+                                    e.stopPropagation();
+                                    onToggleMute(chat.jid, e);
+                                }}
+                            >
+                                {isMuted ? <Volume2 className="h-3.5 w-3.5 text-[#00a884]" /> : <VolumeX className="h-3.5 w-3.5" />}
+                            </Button>
+
                             {/* Pin / Unpin Button on Hover */}
                             <Button
                                 variant="ghost"
@@ -859,7 +876,8 @@ export function ChatList({ sessionId, onSelectChat, selectedJid }: ChatListProps
                     }));
                 } catch {}
             }
-            toast.success(isCurrentlyMuted ? "🔔 Notificações da conversa ativadas" : "🔇 Notificações da conversa silenciadas");
+            const isGroup = jid.endsWith("@g.us");
+            toast.success(isCurrentlyMuted ? (isGroup ? "🔔 Notificações do grupo ativadas" : "🔔 Notificações da conversa ativadas") : (isGroup ? "🔇 Notificações do grupo silenciadas" : "🔇 Notificações da conversa silenciadas"));
             return next;
         });
     }, [sessionId]);

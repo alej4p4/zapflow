@@ -1,3 +1,4 @@
+import { ThemeToggle } from "@/components/theme-toggle";
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -5988,7 +5989,26 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
                     >
                         <Star className={cn("h-4 w-4", starredIds.length > 0 && "fill-amber-400 text-amber-400")} />
                     </Button>
+                                        {/* Quick Mute / Unmute Button */}
                     <Button
+                        variant="ghost"
+                        size="icon"
+                        className={cn(
+                            "h-9 w-9 rounded-full cursor-pointer transition-colors",
+                            isChatMuted
+                                ? "text-amber-500 bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/30"
+                                : "text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/10"
+                        )}
+                        title={isChatMuted ? `Notificações do ${isGroup ? 'grupo' : 'contato'} silenciadas. Clique para ativar.` : `Silenciar notificações deste ${isGroup ? 'grupo' : 'contato'}`}
+                        onClick={handleToggleChatMute}
+                    >
+                        {isChatMuted ? <VolumeX className="h-4.5 w-4.5" /> : <Volume2 className="h-4.5 w-4.5" />}
+                    </Button>
+
+                    {/* Quick Light / Dark Theme Toggle */}
+                    <ThemeToggle variant="compact" className="h-9 w-9" />
+
+<Button
                         variant="ghost"
                         size="icon"
                         className={cn(

@@ -109,6 +109,22 @@ export default function RootLayout({
         {/* DNS prefetch for performance */}
         <link rel="dns-prefetch" href={APP_URL} />
         <link rel="preconnect" href={APP_URL} crossOrigin="anonymous" />
+              {/* Anti-FOUC theme initializer */}
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `
+              try {
+                const s = localStorage.getItem('zapflow_theme');
+                const p = window.matchMedia('(prefers-color-scheme: dark)').matches;
+                if (s === 'dark' || (!s && p) || (s === 'system' && p)) {
+                  document.documentElement.classList.add('dark');
+                } else if (s === 'light') {
+                  document.documentElement.classList.remove('dark');
+                }
+              } catch (_) {}
+            `,
+          }}
+        />
       </head>
       <body
         className={`${geistSans.variable} ${geistMono.variable} font-sans antialiased text-foreground bg-background selection:bg-primary/30 selection:text-primary-foreground min-h-screen flex flex-col`}
