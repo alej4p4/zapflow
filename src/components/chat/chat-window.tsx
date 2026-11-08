@@ -565,7 +565,18 @@ function WhatsAppAudioPlayer({
                 onPause={() => setIsPlaying(false)}
                 onEnded={() => { setIsPlaying(false); setCurrentTime(0); }}
                 onTimeUpdate={() => audioRef.current && setCurrentTime(audioRef.current.currentTime)}
-                onLoadedMetadata={() => audioRef.current && setDuration(audioRef.current.duration)}
+                onLoadedMetadata={() => {
+                    if (audioRef.current) {
+                        const d = audioRef.current.duration;
+                        if (Number.isFinite(d) && d > 0) setDuration(d);
+                    }
+                }}
+                onDurationChange={() => {
+                    if (audioRef.current) {
+                        const d = audioRef.current.duration;
+                        if (Number.isFinite(d) && d > 0) setDuration(d);
+                    }
+                }}
             />
             <div className="flex items-center gap-2 pt-0.5">
                 {fromMe && avatarNode}

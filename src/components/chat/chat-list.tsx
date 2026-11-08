@@ -1150,6 +1150,17 @@ export function ChatList({ sessionId, onSelectChat, selectedJid }: ChatListProps
     const totalContactsCount = useMemo(() => chats.filter(c => !archivedSet.has(c.jid) && !c.jid.endsWith("@g.us")).length, [chats, archivedSet]);
     const unreadContactsCount = useMemo(() => chats.filter(c => !archivedSet.has(c.jid) && !c.jid.endsWith("@g.us") && (c.unreadCount || 0) > 0).length, [chats, archivedSet]);
 
+    // Atualiza o título da aba do navegador dinamicamente com o contador de não lidas
+    useEffect(() => {
+        if (typeof document === "undefined") return;
+        const baseTitle = "BarraSoftware";
+        if (totalUnreadCount > 0) {
+            document.title = `(${totalUnreadCount}) ${baseTitle}`;
+        } else {
+            document.title = baseTitle;
+        }
+    }, [totalUnreadCount]);
+
     const filteredAndSortedChats = useMemo(() => {
         let list = chats;
 
