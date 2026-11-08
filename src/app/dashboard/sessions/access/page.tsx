@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -43,7 +43,7 @@ interface AccessEntry {
     };
 }
 
-export default function SessionAccessPage() {
+function SessionAccessContent() {
     const { data: authSession } = useSession();
     const searchParams = useSearchParams();
     const sessionFromUrl = searchParams.get("session") || "";
@@ -373,5 +373,18 @@ export default function SessionAccessPage() {
                 </AlertDialogContent>
             </AlertDialog>
         </div>
+    );
+}
+
+
+export default function SessionAccessPage() {
+    return (
+        <Suspense fallback={
+            <div className="flex h-64 items-center justify-center">
+                <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+            </div>
+        }>
+            <SessionAccessContent />
+        </Suspense>
     );
 }
