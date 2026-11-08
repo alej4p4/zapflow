@@ -10,7 +10,7 @@
 - **Repositório Git:** `https://github.com/alej4p4/zapflow.git`
 - **Branch Ativo:** `main`
 - **Deploy em Produção:** Railway (`https://zapflow-production-40ae.up.railway.app`)
-- **Versão Atual:** `1.6.26`
+- **Versão Atual:** `1.6.28`
 - **Banco de Dados Oficial:** PostgreSQL 18.6 Nativo no Railway (Volume persistente `/var/lib/postgresql/data`, rede privada `postgres.railway.internal:5432`)
 - **Volume Persistente de Arquivos:** `zapflow-volume-XrQh` montado em `/app/data` no serviço `zapflow`
 
@@ -26,6 +26,29 @@
 ---
 
 ## 🚀 3. O que já foi implementado e entregue recentemente
+
+### Modo Claro/Escuro & Silenciar Grupos e Conversas (v1.6.28)
+- **Tema Claro / Escuro / Sistema (`ThemeToggle` & `ThemeProvider`):**
+  - Implementação de alternância de tema no Navbar, cabeçalho do Chat, rodapé da Sidebar e menu Mobile.
+  - Suporte completo a 3 modos: **Claro** ☀️, **Escuro** 🌙 e **Sistema** 💻 com persistência em `localStorage`.
+  - Script anti-FOUC no `<head>` para evitar flash de estilo durante o carregamento inicial.
+- **Silenciar Notificações (Grupos e Conversas Privadas):**
+  - Botão de 1-clique para Silenciar / Ativar Som no cabeçalho da conversa aberta e ao passar o mouse sobre cada item na listagem de conversas.
+  - Funciona tanto para grupos (`@g.us`) quanto conversas individuais (`@s.whatsapp.net`).
+  - Destaque visual âmbar com ícone `VolumeX` e badges indicativos para chats silenciados.
+
+### Correções de Áudio e Presets do Bot (v1.6.27)
+- **Reprodução de Áudios Corrigida:**
+  - Resolução definitiva do erro "Não foi possível reproduzir este áudio no navegador".
+  - Corrigida condição de corrida onde o evento `message.update` do socket era emitido sem `mediaUrl`, causando travamento em 404 e duração em 0:00.
+  - Rota `/api/media/[filename]` atualizada com suporte completo a HTTP 206 (Range requests) para streaming de arquivos de áudio tanto em disco quanto Base64.
+  - Adicionado mecanismo de recuperação sob demanda no `WhatsAppAudioPlayer` que baixa diretamente da engine Baileys se a mídia inicial falhar.
+- **Melhorias no Bot de Auto-Atendimento (`/dashboard/bot-settings`):**
+  - 4 Modelos Pré-Configurados prontos para uso: Suporte & Atendimento ao Cliente, Imobiliária & Locações, Clínica & Saúde/Consultórios, Delivery & Restaurantes.
+  - Modo de Visualização e Teste com Simulador Interativo do WhatsApp em tempo real.
+- **Melhorias em Grupos e Agendamentos:**
+  - Rota de foto de perfil com fallback para foto do grupo.
+  - Validação de mídia no agendador de mensagens para preservar imagens em disparos programados.
 
 ### Busca Global de Mensagens no Histórico & Exportação de Contatos (v1.6.26)
 - **Busca Global de Mensagens no Histórico Completo (`/dashboard/chat`):**
