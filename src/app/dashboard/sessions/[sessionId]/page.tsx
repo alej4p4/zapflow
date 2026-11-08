@@ -6,7 +6,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from "@/components/ui/card";
 import { toast } from "sonner";
-import { ArrowLeft, Play, Square, RotateCcw, LogOut, Power, Trash2, QrCode, Activity, HardDrive, Wifi, MemoryStick, Copy, Check } from "lucide-react";
+import { ArrowLeft, Play, Square, RotateCcw, LogOut, Power, Trash2, QrCode, Activity, HardDrive, Wifi, MemoryStick, Copy, Check, MessageSquare } from "lucide-react";
+import { setCookie } from "@/lib/client-cookie";
 import Link from "next/link";
 import { io, Socket } from "socket.io-client";
 import { QRCodeSVG } from "qrcode.react";
@@ -112,6 +113,14 @@ export default function SessionDetailPage() {
             // Re-fetch full details on major status change (like connection) to get 'me' info
             if (data.status === 'CONNECTED') {
                 fetchSession();
+                setCookie("sessionId", sessionId);
+                toast.success("WhatsApp conectado com sucesso! Abrindo conversas e grupos...", {
+                    icon: "💬",
+                    duration: 3000,
+                });
+                setTimeout(() => {
+                    router.push("/dashboard/chat");
+                }, 1200);
             }
         });
 
@@ -215,9 +224,22 @@ export default function SessionDetailPage() {
                         <ArrowLeft className="mr-2 h-4 w-4" /> Voltar para sessões
                     </Link>
                 </Button>
-                <h1 className="text-xl sm:text-2xl font-bold truncate">
-                    {session.name} <span className="text-gray-400 font-normal text-xs sm:text-sm block sm:inline mt-1 sm:mt-0">({session.sessionId})</span>
-                </h1>
+                <div className="flex-1 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 min-w-0">
+                    <h1 className="text-xl sm:text-2xl font-bold truncate">
+                        {session.name} <span className="text-muted-foreground font-normal text-xs sm:text-sm block sm:inline mt-1 sm:mt-0">({session.sessionId})</span>
+                    </h1>
+                    {session.status === 'CONNECTED' && (
+                        <Button
+                            className="bg-emerald-600 hover:bg-emerald-700 text-white font-semibold gap-2 shadow-md shrink-0 cursor-pointer self-start sm:self-auto"
+                            onClick={() => {
+                                setCookie("sessionId", session.sessionId);
+                                router.push("/dashboard/chat");
+                            }}
+                        >
+                            <MessageSquare className="h-4 w-4" /> Abrir Conversas e Grupos
+                        </Button>
+                    )}
+                </div>
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
@@ -226,9 +248,9 @@ export default function SessionDetailPage() {
                     <CardHeader>
                         <CardTitle className="flex items-center justify-between">
                             Status da sessão
-                            <div className={`px-3 py-1 rounded-full text-xs font-bold ${session.status === 'CONNECTED' ? 'bg-green-100 text-green-700' :
-                                session.status === 'STOPPED' ? 'bg-red-100 text-red-700' :
-                                    'bg-yellow-100 text-yellow-700'
+                            <div className={`px-3 py-1 rounded-full text-xs font-bold ${session.status === 'CONNECTED' ? 'bg-green-100 text-green-700 dark:bg-green-950/50 dark:text-green-400 border border-green-200 dark:border-green-800' :
+                                session.status === 'STOPPED' ? 'bg-red-100 text-red-700 dark:bg-red-950/50 dark:text-red-400 border border-red-200 dark:border-red-800' :
+                                    'bg-yellow-100 text-yellow-700 dark:bg-yellow-950/50 dark:text-yellow-400 border border-yellow-200 dark:border-yellow-800'
                                 }`}>
                                 {({ CONNECTED: "Conectada", CONNECTING: "Conectando...", DISCONNECTED: "Desconectada", SCAN_QR: "Aguardando QR Code", STOPPED: "Parada", LOGGED_OUT: "Desconectada" } as Record<string, string>)[session.status] || session.status}
                             </div>
@@ -237,47 +259,55 @@ export default function SessionDetailPage() {
                     </CardHeader>
                     <CardContent className="space-y-4">
                         <div className="grid grid-cols-2 gap-4">
-                            <div className="p-4 bg-gray-50 rounded-lg">
-                                <span className="text-sm text-gray-500 block">Tempo ativa</span>
-                                <span className="text-xl font-mono font-medium">{formatUptime(uptime)}</span>
+                            <div className="p-4 bg-muted/40 dark:bg-muted/20 border border-border/50 rounded-xl">
+                                <span className="text-sm text-muted-foreground block">Tempo ativa</span>
+                                <span className="text-xl font-mono font-medium text-foreground">{formatUptime(uptime)}</span>
                             </div>
-                            <div className="p-4 bg-gray-50 rounded-lg">
-                                <span className="text-sm text-gray-500 block">Conectada como</span>
-                                <span className="text-lg font-medium truncate">{session.me?.name || session.me?.id || "-"}</span>
+                            <div className="p-4 bg-muted/40 dark:bg-muted/20 border border-border/50 rounded-xl">
+                                <span className="text-sm text-muted-foreground block">Conectada como</span>
+                                <span className="text-lg font-medium text-foreground truncate">{session.me?.name || session.me?.id || "-"}</span>
                             </div>
                         </div>
 
                         {/* System Resource Extension */}
                         {session.status === 'CONNECTED' && systemMetrics && (
-                            <div className="mt-4 pt-4 border-t">
-                                <h4 className="text-sm font-semibold mb-3 flex items-center gap-2"><Activity className="h-4 w-4" /> Estado do sistema</h4>
+                            <div className="mt-4 pt-4 border-t border-border/40">
+                                <h4 className="text-sm font-semibold mb-3 flex items-center gap-2 text-foreground"><Activity className="h-4 w-4 text-emerald-500" /> Estado do sistema</h4>
                                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                                    <div className="bg-slate-50 p-3 rounded border text-center relative overflow-hidden">
-                                        <Wifi className="h-4 w-4 text-slate-400 absolute top-2 right-2" />
-                                        <div className="text-xs text-slate-500">Ping</div>
-                                        <div className="font-bold text-green-600 mt-1">{systemMetrics.ping}</div>
+                                    <div className="bg-muted/40 dark:bg-muted/20 p-3 rounded-xl border border-border/50 text-center relative overflow-hidden">
+                                        <Wifi className="h-4 w-4 text-emerald-500 absolute top-2 right-2" />
+                                        <div className="text-xs text-muted-foreground">Ping</div>
+                                        <div className="font-bold text-emerald-600 dark:text-emerald-400 mt-1 flex items-center justify-center gap-1.5">
+                                            <span className="relative flex h-2 w-2">
+                                                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                                                <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+                                            </span>
+                                            {systemMetrics.ping && systemMetrics.ping !== "Unknown" ? systemMetrics.ping : "Online"}
+                                        </div>
                                     </div>
-                                    <div className="bg-slate-50 p-3 rounded border text-center">
-                                        <div className="text-xs text-slate-500">Contatos sincronizados</div>
-                                        <div className="font-bold text-slate-700 mt-1">{systemMetrics.store?.contacts || 0}</div>
+                                    <div className="bg-muted/40 dark:bg-muted/20 p-3 rounded-xl border border-border/50 text-center">
+                                        <div className="text-xs text-muted-foreground">Contatos</div>
+                                        <div className="font-bold text-foreground mt-1">{systemMetrics.store?.contacts || 0}</div>
                                     </div>
-                                    <div className="bg-slate-50 p-3 rounded border text-center">
-                                        <div className="text-xs text-slate-500">Conversas sincronizadas</div>
-                                        <div className="font-bold text-slate-700 mt-1">{systemMetrics.store?.chats || 0}</div>
+                                    <div className="bg-muted/40 dark:bg-muted/20 p-3 rounded-xl border border-border/50 text-center">
+                                        <div className="text-xs text-muted-foreground">Conversas</div>
+                                        <div className="font-bold text-foreground mt-1">{systemMetrics.store?.chats || 0}</div>
                                     </div>
-                                    <div className="bg-slate-50 p-3 rounded border text-center relative">
-                                        <MemoryStick className="h-4 w-4 text-slate-400 absolute top-2 right-2 opacity-50" />
-                                        <div className="text-xs text-slate-500">Mensagens sincronizadas</div>
-                                        <div className="font-bold text-slate-700 mt-1">{systemMetrics.store?.messages || 0}</div>
+                                    <div className="bg-muted/40 dark:bg-muted/20 p-3 rounded-xl border border-border/50 text-center relative">
+                                        <MemoryStick className="h-4 w-4 text-muted-foreground/50 absolute top-2 right-2" />
+                                        <div className="text-xs text-muted-foreground">Mensagens</div>
+                                        <div className="font-bold text-foreground mt-1">{systemMetrics.store?.messages || 0}</div>
                                     </div>
                                 </div>
                             </div>
                         )}
 
                         {qrCode && (
-                            <div className="flex flex-col items-center justify-center p-6 border-2 border-dashed rounded-lg bg-white relative group">
-                                <QRCodeSVG value={qrCode} size={256} />
-                                <p className="mt-4 text-sm text-gray-500 animate-pulse">Escaneie com o WhatsApp para conectar</p>
+                            <div className="flex flex-col items-center justify-center p-6 border-2 border-dashed rounded-xl bg-card border-border/60 relative group">
+                                <div className="p-4 bg-white rounded-2xl shadow-lg border border-border/20">
+                                    <QRCodeSVG value={qrCode} size={240} />
+                                </div>
+                                <p className="mt-4 text-sm text-muted-foreground animate-pulse">Escaneie com o WhatsApp para conectar</p>
 
                                 <div className="mt-6 pt-6 border-t w-full">
                                     <div className="flex flex-col items-center gap-3">
@@ -338,7 +368,7 @@ export default function SessionDetailPage() {
                     <CardContent className="space-y-3">
                         <Button
                             variant="outline"
-                            className="w-full justify-start text-green-600 hover:text-green-700 hover:bg-green-50"
+                            className="w-full justify-start text-green-600 hover:text-green-700 hover:bg-green-50 dark:hover:bg-green-950/30"
                             onClick={() => performAction('start')}
                                 disabled={session.status === 'CONNECTED' || session.status === 'CONNECTING' || session.status === 'SCAN_QR'}
                         >
@@ -347,7 +377,7 @@ export default function SessionDetailPage() {
 
                         <Button
                             variant="outline"
-                            className="w-full justify-start text-orange-600 hover:text-orange-700 hover:bg-orange-50"
+                            className="w-full justify-start text-orange-600 hover:text-orange-700 hover:bg-orange-50 dark:hover:bg-orange-950/30"
                             onClick={() => performAction('restart')}
                             disabled={!session.hasInstance && session.status !== 'CONNECTED'}
                         >
@@ -356,7 +386,7 @@ export default function SessionDetailPage() {
 
                         <Button
                             variant="outline"
-                            className="w-full justify-start text-red-600 hover:text-red-700 hover:bg-red-50"
+                            className="w-full justify-start text-red-600 hover:text-red-700 hover:bg-red-50 dark:hover:bg-red-950/30"
                             onClick={() => performAction('stop')}
                             disabled={session.status === 'STOPPED'}
                         >

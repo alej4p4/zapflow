@@ -33,12 +33,22 @@ import { redirect } from "next/navigation";
 export const dynamic = 'force-dynamic';
 
 export default async function DashboardPage() {
-    const session = await auth();
+    let session = null;
+    try {
+        session = await auth();
+    } catch (e) {
+        console.error("DashboardPage auth error:", e);
+    }
     if (!session?.user) {
         redirect("/auth/login");
     }
 
-    const sessions = await getAccessibleSessions(session.user.id!, session.user.role || "OWNER");
+    let sessions: any[] = [];
+    try {
+        sessions = await getAccessibleSessions(session.user.id!, session.user.role || "OWNER");
+    } catch (e) {
+        console.error("DashboardPage sessions error:", e);
+    }
     const sessionIds = sessions.map(s => s.sessionId);
     const dbSessionIds = sessions.map(s => s.id);
 

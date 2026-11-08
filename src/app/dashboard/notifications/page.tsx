@@ -131,12 +131,12 @@ export default function NotificationAdminPage() {
                 </Card>
 
                 <div className="space-y-6">
-                    <Card className="bg-slate-50 border-dashed">
+                    <Card className="bg-muted/30 border-dashed border-border/60">
                         <CardHeader>
                              <CardTitle className="text-base text-muted-foreground">Pré-visualização</CardTitle>
                         </CardHeader>
                         <CardContent>
-                            <div className="bg-white p-4 rounded-lg shadow-sm border flex gap-3 items-start">
+                            <div className="bg-card p-4 rounded-lg shadow-sm border border-border/60 flex gap-3 items-start">
                                 <div className={`p-2 rounded-full ${type === 'WARNING' ? 'bg-yellow-100 text-yellow-600' : type === 'SUCCESS' ? 'bg-green-100 text-green-600' : 'bg-blue-100 text-blue-600'}`}>
                                     <Bell className="h-5 w-5" />
                                 </div>

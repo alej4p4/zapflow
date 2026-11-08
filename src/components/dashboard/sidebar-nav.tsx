@@ -1,5 +1,7 @@
 "use client";
 
+import { isRouteAllowed } from "@/lib/permissions";
+
 import { useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
@@ -131,9 +133,11 @@ export function SidebarNav() {
         <TooltipProvider delayDuration={0}>
             <nav className="flex-1 px-2 py-2 overflow-y-auto overflow-x-hidden space-y-0.5 styled-scrollbar">
                 {navGroups.map((group) => {
+                    const userPermissions = (session?.user as any)?.permissions;
                     const visibleItems = group.items.filter((item) => {
                         if (item.superadminOnly && userRole !== "SUPERADMIN") return false;
                         if (item.allowedRoles && (!userRole || !item.allowedRoles.includes(userRole))) return false;
+                        if (!isRouteAllowed(item.href, userRole, userPermissions)) return false;
                         return true;
                     });
                     if (visibleItems.length === 0) return null;

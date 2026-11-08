@@ -98,6 +98,7 @@
   --sidebar-accent-foreground: oklch(0.2 0.04 240);
   --sidebar-border: oklch(0.9 0.02 240);
   --sidebar-ring: oklch(0.6 0.18 160);
+  --wa-bg: #efeae2;
 }
 
 .dark {
@@ -138,6 +139,7 @@
   --chart-5: oklch(0.8 0.18 40);
 
   --sidebar: oklch(0.16 0.02 240);
+  --wa-bg: #0b141a;
   --sidebar-foreground: oklch(0.95 0.01 240);
   --sidebar-primary: oklch(0.7 0.18 160);
   --sidebar-primary-foreground: oklch(0.15 0.05 160);

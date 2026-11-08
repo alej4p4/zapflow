@@ -72,6 +72,7 @@ import {
     Loader2
 } from "lucide-react";
 import { LabelAssignPopover, LabelData } from "./label-assign-popover";
+import { useTheme } from "@/components/theme-provider";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import {
     AlertDialog,
@@ -3354,6 +3355,9 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
         return () => { cancelled = true; };
     }, [sessionId]);
 
+    const { resolvedTheme } = useTheme();
+    const isDark = resolvedTheme === "dark";
+
     // Chat Wallpaper Theme (#C33)
     const [chatWallpaper, setChatWallpaper] = useState<"default" | "dark" | "emerald" | "ocean" | "minimal">("default");
 
@@ -6146,11 +6150,11 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
                                 </span>
                                 <div className="flex items-center gap-2">
                                     {[
-                                        { id: "default", label: "Padrão WhatsApp", color: "#efeae2" },
+                                        { id: "default", label: isDark ? "Padrão Escuro" : "Padrão WhatsApp", color: isDark ? "#0b141a" : "#efeae2" },
                                         { id: "dark", label: "Grafite Escuro", color: "#0b141a" },
-                                        { id: "emerald", label: "Verde Suave", color: "#d1fae5" },
-                                        { id: "ocean", label: "Azul Oceano", color: "#dbeafe" },
-                                        { id: "minimal", label: "Cinza Limpo", color: "#f1f5f9" }
+                                        { id: "emerald", label: "Verde Suave", color: isDark ? "#064e3b" : "#d1fae5" },
+                                        { id: "ocean", label: "Azul Oceano", color: isDark ? "#0c2340" : "#dbeafe" },
+                                        { id: "minimal", label: "Cinza Limpo", color: isDark ? "#182229" : "#f1f5f9" }
                                     ].map(wp => (
                                         <button
                                             key={wp.id}
@@ -6353,13 +6357,15 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
                         chatWallpaper === "dark"
                             ? "#0b141a"
                             : chatWallpaper === "emerald"
-                                ? "#ecfdf5"
+                                ? (isDark ? "#064e3b" : "#ecfdf5")
                                 : chatWallpaper === "ocean"
-                                    ? "#eff6ff"
+                                    ? (isDark ? "#0c2340" : "#eff6ff")
                                     : chatWallpaper === "minimal"
-                                        ? "#f8fafc"
-                                        : "var(--wa-bg, #efeae2)",
-                    backgroundImage: `url("data:image/svg+xml,%3Csvg width='120' height='120' viewBox='0 0 120 120' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M20 20c-3 0-5 2-5 5v12c0 3 2 5 5 5h2v4l5-4h8c3 0 5-2 5-5V25c0-3-2-5-5-5H20zm50 20a5 5 0 1 0 0-10 5 5 0 0 0 0 10zm30 15c-4 0-7 3-7 7v10h14V62c0-4-3-7-7-7zm-70 25c-3 0-5 2-5 5s2 5 5 5 5-2 5-5-2-5-5-5zm65 10c-3 0-6 2-6 5v6c0 3 3 5 6 5h10c3 0 6-2 6-5v-6c0-3-3-5-6-5h-10z' fill='%23687782' fill-opacity='0.06' fill-rule='evenodd'/%3E%3C/svg%3E")`,
+                                        ? (isDark ? "#182229" : "#f8fafc")
+                                        : (isDark ? "#0b141a" : "#efeae2"),
+                    backgroundImage: isDark
+                        ? `url("data:image/svg+xml,%3Csvg width='120' height='120' viewBox='0 0 120 120' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M20 20c-3 0-5 2-5 5v12c0 3 2 5 5 5h2v4l5-4h8c3 0 5-2 5-5V25c0-3-2-5-5-5H20zm50 20a5 5 0 1 0 0-10 5 5 0 0 0 0 10zm30 15c-4 0-7 3-7 7v10h14V62c0-4-3-7-7-7zm-70 25c-3 0-5 2-5 5s2 5 5 5 5-2 5-5-2-5-5-5zm65 10c-3 0-6 2-6 5v6c0 3 3 5 6 5h10c3 0 6-2 6-5v-6c0-3-3-5-6-5h-10z' fill='%23ffffff' fill-opacity='0.035' fill-rule='evenodd'/%3E%3C/svg%3E")`
+                        : `url("data:image/svg+xml,%3Csvg width='120' height='120' viewBox='0 0 120 120' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M20 20c-3 0-5 2-5 5v12c0 3 2 5 5 5h2v4l5-4h8c3 0 5-2 5-5V25c0-3-2-5-5-5H20zm50 20a5 5 0 1 0 0-10 5 5 0 0 0 0 10zm30 15c-4 0-7 3-7 7v10h14V62c0-4-3-7-7-7zm-70 25c-3 0-5 2-5 5s2 5 5 5 5-2 5-5-2-5-5-5zm65 10c-3 0-6 2-6 5v6c0 3 3 5 6 5h10c3 0 6-2 6-5v-6c0-3-3-5-6-5h-10z' fill='%23687782' fill-opacity='0.06' fill-rule='evenodd'/%3E%3C/svg%3E")`,
                     backgroundSize: "220px 220px"
                 }}
             >

@@ -1,3 +1,15 @@
+## [v1.6.29] - 2026-11-08
+
+### Added
+- **Abertura Automática de Conversas e Grupos no Scan do QR Code**: Ao ler o QR Code no celular, o sistema detecta a conexão em tempo real, define a sessão ativa e redireciona automaticamente para a aba de Conversas (`/dashboard/chat`) em 1 segundo, além de exibir botões verdes "Abrir Conversas e Grupos" no painel de sessões.
+- **Controle de Acesso por Abas (Perfis de Usuário)**: Regras granulares por usuário permitindo marcar/desmarcar o acesso a cada uma das 20 abas do sistema com guarda de rota (`RouteGuard`), menus filtrados e botões de predefinição rápida (*Atendente Padrão, Marketing, Gerente Operacional*).
+- **Configurações por Cards Modais (`/dashboard/settings`)**: Reestruturação da aba de configurações em cards elegantes e formulário modal para edição dos dados do aplicativo.
+
+### Fixed
+- **Migração do Banco de Dados para Neon Serverless**: Conexão configurada para PostgreSQL gerenciado em São Paulo (AWS sa-east-1) com zero custo, eliminando o erro 500 decorrente de quedas de container no Railway.
+- **Medição Real do Ping e Fim do "Unknown"**: Adicionada medição direta de latência via ping/pong no socket do Baileys, exibindo tempo de resposta real em milissegundos (`24ms`) com indicador pulsante no tema escuro.
+- **Correções do Modo Escuro**: Papel de parede do chat atualizado com a variável `--wa-bg` e padrão de doodles escuro autêntico do WhatsApp; relógio central do topo adaptado para `bg-muted/60 dark:bg-muted/30`; e remoção do auto-cadastro público na tela de login.
+
 ## [v1.6.28] - 2026-11-08
 
 ### Added

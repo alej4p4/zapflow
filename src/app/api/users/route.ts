@@ -9,6 +9,7 @@ const createUserSchema = z.object({
     email: z.string().email(),
     password: z.string().min(6),
     role: z.enum(["SUPERADMIN", "OWNER", "STAFF"]).default("OWNER"),
+    permissions: z.array(z.string()).optional().nullable(),
 });
 
 export async function GET(request: NextRequest) {
@@ -27,6 +28,7 @@ export async function GET(request: NextRequest) {
                 name: true,
                 email: true,
                 role: true,
+                permissions: true,
                 createdAt: true,
                 _count: {
                     select: { sessions: true }
@@ -56,7 +58,7 @@ export async function POST(request: NextRequest) {
             return NextResponse.json({ status: false, message: "Validation error", error: parseResult.error.flatten() }, { status: 400 });
         }
 
-        const { name, email, password, role } = parseResult.data;
+        const { name, email, password, role, permissions } = parseResult.data;
 
         // Check if email exists
         const existing = await prisma.user.findUnique({ where: { email } });
@@ -71,13 +73,15 @@ export async function POST(request: NextRequest) {
                 name,
                 email,
                 password: hashedPassword,
-                role: role as any
+                role: role as any,
+                permissions: permissions ?? undefined
             },
             select: {
                 id: true,
                 name: true,
                 email: true,
                 role: true,
+                permissions: true,
                 createdAt: true
             }
         });

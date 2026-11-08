@@ -504,12 +504,12 @@ export default function ContactListPage() {
                                             {Math.max(diagnostic.failedContacts.length, diagnostic.allFailedBroadcastJids.length)}
                                         </p>
                                     </div>
-                                    <div className="rounded-lg border p-3 bg-slate-50 border-slate-200">
+                                    <div className="rounded-lg border p-3 bg-muted/40 dark:bg-muted/20 border-border/60">
                                         <div className="flex items-center justify-between">
-                                            <span className="text-xs font-medium text-slate-700">Sem Telefone / LID</span>
-                                            <AlertTriangle className="h-3.5 w-3.5 text-slate-500" />
+                                            <span className="text-xs font-medium text-muted-foreground">Sem Telefone / LID</span>
+                                            <AlertTriangle className="h-3.5 w-3.5 text-amber-500" />
                                         </div>
-                                        <p className="text-2xl font-bold text-slate-900 mt-1">{diagnostic.invalidNumbers.length}</p>
+                                        <p className="text-2xl font-bold text-foreground mt-1">{diagnostic.invalidNumbers.length}</p>
                                     </div>
                                 </div>
 

@@ -5,6 +5,7 @@ import { SidebarProvider } from "@/components/dashboard/sidebar-context";
 import { SidebarShell } from "@/components/dashboard/sidebar-shell";
 import { UpdateChecker } from "@/components/dashboard/update-checker";
 import { RegistrationWarning } from "@/components/dashboard/registration-warning";
+import { RouteGuard } from "@/components/dashboard/route-guard";
 import { getSystemConfigCached } from "@/lib/system-config-cache";
 import { Toaster } from "sonner";
 import pkg from "../../../package.json";
@@ -14,8 +15,19 @@ export default async function DashboardLayout({
 }: {
     children: React.ReactNode;
 }) {
-    const session = await auth();
-    const systemConfig = await getSystemConfigCached();
+    let session = null;
+    try {
+        session = await auth();
+    } catch (e) {
+        console.error("DashboardLayout auth error:", e);
+    }
+
+    let systemConfig = null;
+    try {
+        systemConfig = await getSystemConfigCached();
+    } catch (e) {
+        console.error("DashboardLayout config error:", e);
+    }
     const appName = systemConfig?.appName || "BarraSoftware";
     const registrationEnabled = systemConfig?.enableRegistration ?? false;
 
@@ -46,7 +58,9 @@ export default async function DashboardLayout({
                     <div className="flex-1 flex flex-col overflow-hidden min-w-0 relative z-10" suppressHydrationWarning={true}>
                         <Navbar appName={appName} />
                         <main className="flex-1 overflow-auto p-3 sm:p-4 lg:p-6 styled-scrollbar">
-                            {children}
+                            <RouteGuard>
+                                {children}
+                            </RouteGuard>
                         </main>
                     </div>
                     <Toaster />

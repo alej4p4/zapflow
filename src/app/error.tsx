@@ -81,7 +81,7 @@ export default function ErrorPage({
             className="flex items-center justify-center gap-2 text-xs font-medium text-muted-foreground hover:text-foreground transition-colors mx-auto w-full py-2"
           >
             {showDetails ? <ChevronDown className="size-4" /> : <ChevronRight className="size-4" />}
-            <span>{showDetails ? 'Sembunyikan detail teknis' : 'Lihat detail teknis'}</span>
+            <span>{showDetails ? 'Ocultar detalhes técnicos' : 'Ver detalhes técnicos'}</span>
           </button>
 
           {showDetails && (

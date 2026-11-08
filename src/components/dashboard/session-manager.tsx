@@ -9,7 +9,8 @@ import { Card, CardContent, CardHeader, CardTitle, CardFooter, CardDescription }
 import { useRouter } from 'next/navigation';
 import { toast } from "sonner";
 import { Label } from '@/components/ui/label';
-import { Smartphone, Plus, Trash2, Settings, RefreshCw, Power, UserPlus } from 'lucide-react';
+import { Smartphone, Plus, Trash2, Settings, RefreshCw, Power, UserPlus, MessageSquare } from 'lucide-react';
+import { setCookie } from '@/lib/client-cookie';
 import { Badge } from '@/components/ui/badge';
 import {
     Table,
@@ -66,6 +67,14 @@ export function SessionManager({ user }: { user: any }) {
 
             if (data.status === 'CONNECTED') {
                 fetchSessions(); // Refresh purely to get updated state from DB if needed
+                setCookie("sessionId", data.sessionId);
+                toast.success("WhatsApp conectado com sucesso! Abrindo conversas e grupos...", {
+                    icon: "💬",
+                    duration: 3000,
+                });
+                setTimeout(() => {
+                    router.push("/dashboard/chat");
+                }, 1200);
             }
         });
 
@@ -233,6 +242,18 @@ export function SessionManager({ user }: { user: any }) {
                                             </TableCell>
                                             <TableCell className="py-3 text-right px-5">
                                                 <div className="flex items-center justify-end gap-2">
+                                                    {session.status === 'CONNECTED' && (
+                                                        <Button 
+                                                            size="sm" 
+                                                            className="h-8 px-2.5 text-xs rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-medium transition-colors gap-1.5 shadow-xs cursor-pointer"
+                                                            onClick={() => {
+                                                                setCookie("sessionId", session.sessionId);
+                                                                router.push("/dashboard/chat");
+                                                            }}
+                                                        >
+                                                            <MessageSquare className="h-3.5 w-3.5" /> Abrir Conversas
+                                                        </Button>
+                                                    )}
                                                     <Button 
                                                         variant="outline" 
                                                         size="sm" 

@@ -183,8 +183,8 @@ export function Navbar({ appName }: NavbarProps) {
                         <div className="max-h-[300px] overflow-y-auto">
                             {notifications.length === 0 ? (
                                 <div className="min-h-[150px] flex flex-col items-center justify-center text-center p-4">
-                                    <div className="bg-slate-100 p-3 rounded-full mb-3">
-                                        <Inbox className="h-6 w-6 text-slate-400" />
+                                    <div className="bg-muted p-3 rounded-full mb-3">
+                                        <Inbox className="h-6 w-6 text-muted-foreground" />
                                     </div>
                                     <p className="text-sm font-medium">Nenhuma notificação nova</p>
                                     <p className="text-xs text-muted-foreground max-w-[180px]">Avisaremos quando algo importante acontecer.</p>
@@ -194,14 +194,14 @@ export function Navbar({ appName }: NavbarProps) {
                                     {notifications.map(n => (
                                         <div
                                             key={n.id}
-                                            className={`p-4 hover:bg-slate-50 transition-colors ${!n.read ? 'bg-blue-50/50' : ''}`}
+                                            className={`p-4 hover:bg-muted/50 transition-colors ${!n.read ? 'bg-blue-50/50 dark:bg-blue-950/20' : ''}`}
                                         >
                                             <div className="flex justify-between items-start gap-3">
                                                 <div
                                                     className="flex-1 space-y-1 cursor-pointer"
                                                     onClick={() => handleNotificationClick(n)}
                                                 >
-                                                    <p className={`text-sm font-medium leading-none ${!n.read ? 'text-blue-700' : 'text-slate-900'}`}>
+                                                    <p className={`text-sm font-medium leading-none ${!n.read ? 'text-blue-600 dark:text-blue-400 font-semibold' : 'text-foreground'}`}>
                                                         {n.title}
                                                     </p>
                                                     <p className="text-xs text-muted-foreground whitespace-normal break-words">

@@ -363,7 +363,7 @@ export default function SchedulerPage() {
         sendAtStr: string, setSendAtStr: any,
         sendTimeStr: string, setSendTimeStr: any
     ) => (
-        <div className="space-y-4 border p-4 rounded-md bg-slate-50 mt-4">
+        <div className="space-y-4 border border-border/50 p-4 rounded-md bg-muted/40 dark:bg-muted/20 mt-4">
                     <Label className="font-semibold text-base">Tipo de agendamento</Label>
             <RadioGroup value={isRec} onValueChange={setRec} className="flex gap-4">
                 <div className="flex items-center space-x-2">
@@ -562,7 +562,7 @@ export default function SchedulerPage() {
                         <TabsTrigger value="history">Histórico</TabsTrigger>
                     </TabsList>
                     <TabsContent value="pending" className="mt-0">
-                        {loading ? <div className="text-center p-8">Carregando...</div> : filteredMessages.length === 0 ? <div className="text-center p-8 text-muted-foreground border rounded bg-slate-50">Nenhuma mensagem pendente.</div> : (
+                        {loading ? <div className="text-center p-8">Carregando...</div> : filteredMessages.length === 0 ? <div className="text-center p-8 text-muted-foreground border border-border/50 rounded bg-muted/30">Nenhuma mensagem pendente.</div> : (
                             <div className="grid gap-4">
                                 {filteredMessages.map(msg => (
                                     <Card key={msg.id}>
@@ -589,7 +589,7 @@ export default function SchedulerPage() {
                         )}
                     </TabsContent>
                     <TabsContent value="history" className="mt-0">
-                        {loading ? <div className="text-center p-8">Carregando...</div> : filteredMessages.length === 0 ? <div className="text-center p-8 text-muted-foreground border rounded bg-slate-50">Nenhum registro no histórico.</div> : (
+                        {loading ? <div className="text-center p-8">Carregando...</div> : filteredMessages.length === 0 ? <div className="text-center p-8 text-muted-foreground border border-border/50 rounded bg-muted/30">Nenhum registro no histórico.</div> : (
                             <div className="grid gap-4">
                                 {filteredMessages.map(msg => (
                                     <Card key={msg.id} className="opacity-80">

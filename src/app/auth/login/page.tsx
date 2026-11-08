@@ -150,12 +150,7 @@ function LoginForm() {
           </Form>
         </div>
 
-        <div className="mt-8 text-center text-sm text-muted-foreground">
-          Ainda não tem uma conta?{" "}
-          <Link href="/auth/register" className="font-semibold text-primary hover:text-primary/80 transition-colors">
-            Criar uma conta
-          </Link>
-        </div>
+        
       </div>
     </div>
   );

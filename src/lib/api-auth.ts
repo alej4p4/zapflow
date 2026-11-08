@@ -25,7 +25,7 @@ export async function validateApiKey(request: NextRequest) {
     try {
         const user = await prisma.user.findUnique({
             where: { apiKey },
-            select: { id: true, email: true, name: true, role: true }
+            select: { id: true, email: true, name: true, role: true, permissions: true }
         });
 
         return user;
@@ -53,7 +53,7 @@ export async function getAuthenticatedUser(request?: NextRequest) {
         // Fetch full user data including role
         const user = await prisma.user.findUnique({
             where: { id: session.user.id },
-            select: { id: true, email: true, name: true, role: true }
+            select: { id: true, email: true, name: true, role: true, permissions: true }
         });
 
         if (user) {

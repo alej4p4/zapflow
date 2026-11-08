@@ -1,7 +1,6 @@
 import { NextResponse, NextRequest } from "next/server";
 import { getAuthenticatedUser, canAccessSession } from "@/lib/api-auth";
 import { waManager } from "@/modules/whatsapp/manager";
-
 import { prisma } from "@/lib/prisma";
 
 export const dynamic = "force-dynamic";
@@ -46,13 +45,14 @@ export async function GET(
         ]);
 
         if (!instance || instance.status !== "CONNECTED") {
+            const statusLabel = instance?.status === "SCAN_QR" ? "Aguardando QR" : (instance?.status || "Desconectado");
             return NextResponse.json({
                 status: true,
                 message: "Session is not connected",
                 data: { 
                     status: instance?.status || "DISCONNECTED", 
                     uptime: 0, 
-                    ping: "Offline", 
+                    ping: statusLabel, 
                     store: { 
                         contacts: contactsCount, 
                         chats: groupsCount + contactsCount, 
@@ -64,18 +64,19 @@ export async function GET(
 
         const uptime = instance.startTime ? Date.now() - instance.startTime.getTime() : 0;
 
-        let pingStatus = "Unknown";
+        let pingStatus = "Online";
         try {
-            if (instance.socket && instance.socket.ws) {
-                const ws = instance.socket.ws as any;
-                if (ws.readyState === 1) { // OPEN
-                    pingStatus = "Online";
-                }
+            if (instance.lastPingMs && instance.lastPingMs > 0) {
+                pingStatus = `${instance.lastPingMs}ms`;
+            } else if (typeof (instance as any).measurePing === "function") {
+                const latency = await (instance as any).measurePing();
+                pingStatus = typeof latency === "number" && latency > 0 ? `${latency}ms` : "Online";
+            } else {
+                pingStatus = "Online";
             }
-        } catch (e) { }
-
-
-
+        } catch {
+            pingStatus = "Online";
+        }
 
         return NextResponse.json({
             status: true,

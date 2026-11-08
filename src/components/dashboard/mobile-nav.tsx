@@ -1,5 +1,7 @@
 "use client";
 
+import { isRouteAllowed } from "@/lib/permissions";
+
 import { ThemeToggle } from "@/components/theme-toggle";
 
 import { useState } from "react";
@@ -121,8 +123,9 @@ export function MobileNav({ appName = "BarraSoftware" }: { appName?: string }) {
 
                 <nav className="flex-1 px-3 py-3 overflow-y-auto space-y-1">
                     {navGroups.map((group) => {
+                        const userPermissions = (session?.user as any)?.permissions;
                         const visibleItems = group.items.filter(
-                            (item) => !item.superadminOnly || userRole === "SUPERADMIN"
+                            (item) => (!item.superadminOnly || userRole === "SUPERADMIN") && isRouteAllowed(item.href, userRole, userPermissions)
                         );
                         if (visibleItems.length === 0) return null;
 

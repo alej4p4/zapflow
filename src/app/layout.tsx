@@ -42,8 +42,17 @@ export async function generateMetadata(): Promise<Metadata> {
 
   const appDefaultTitle = `${appName} | Premium WhatsApp Gateway`;
 
+  let metadataBase: URL;
+  try {
+    const rawUrl = process.env.NEXT_PUBLIC_APP_URL || process.env.BASE_URL || APP_URL || "https://wa-akg.app";
+    const withProtocol = rawUrl.startsWith("http://") || rawUrl.startsWith("https://") ? rawUrl : `https://${rawUrl}`;
+    metadataBase = new URL(withProtocol);
+  } catch {
+    metadataBase = new URL("https://wa-akg.app");
+  }
+
   return {
-    metadataBase: new URL(APP_URL),
+    metadataBase,
     title: {
       default: appDefaultTitle,
       template: `%s | ${appName}`,

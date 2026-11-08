@@ -18,17 +18,13 @@ export async function PATCH(
 
     try {
         const body = await request.json();
-        const { name, email, password, role } = body;
-
-        // Prevent modifying own role to lock oneself out (optional safety)
-        if (id === user.id && role && role !== "SUPERADMIN") {
-            // Allow update but maybe warn? For now let it be.
-        }
+        const { name, email, password, role, permissions } = body;
 
         const updateData: any = {};
-        if (name) updateData.name = name;
-        if (email) updateData.email = email;
-        if (role) updateData.role = role;
+        if (name !== undefined) updateData.name = name;
+        if (email !== undefined) updateData.email = email;
+        if (role !== undefined) updateData.role = role;
+        if (permissions !== undefined) updateData.permissions = permissions;
         if (password) {
             updateData.password = await bcrypt.hash(password, 10);
         }
@@ -41,6 +37,7 @@ export async function PATCH(
                 name: true,
                 email: true,
                 role: true,
+                permissions: true,
                 updatedAt: true
             }
         });

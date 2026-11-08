@@ -33,6 +33,8 @@ export class WhatsAppInstance {
 
     isStopped: boolean = false;
     isDeleting: boolean = false;
+    public lastPingMs: number | null = null;
+    private pingInterval: NodeJS.Timeout | null = null;
     private reconnectCount: number = 0;
     private reconnectTimer: NodeJS.Timeout | null = null;
     /** Incrementado a cada init(); eventos de sockets antigos são ignorados. */
@@ -192,6 +194,8 @@ export class WhatsAppInstance {
                 const quickRetry = this.reconnectCount <= MAX_QUICK_RECONNECTS;
                 const retryDelay = quickRetry ? 3000 : 5 * 60 * 1000;
 
+                if (this.pingInterval) { clearInterval(this.pingInterval); this.pingInterval = null; }
+                this.lastPingMs = null;
                 this.status = "DISCONNECTED";
                 this.io?.to(this.sessionId).emit("connection.update", { status: "DISCONNECTED", qr: null });
                 await prisma.session.update({
@@ -236,6 +240,11 @@ export class WhatsAppInstance {
                 });
 
                 logger.success("Instance", `Session ${this.sessionId} connected and synced successfully`);
+                this.measurePing().catch(() => {});
+                if (this.pingInterval) clearInterval(this.pingInterval);
+                this.pingInterval = setInterval(() => {
+                    if (this.status === "CONNECTED") this.measurePing().catch(() => {});
+                }, 25000);
             }
         } catch (error: any) {
             if (error.code === 'P2025') {
@@ -274,9 +283,44 @@ export class WhatsAppInstance {
         }
     }
 
+        async measurePing(): Promise<number> {
+        return new Promise((resolve) => {
+            try {
+                const wsClient = (this.socket as any)?.ws;
+                const rawWs = wsClient?.socket || wsClient;
+                if (rawWs && typeof rawWs.ping === 'function' && (wsClient?.isOpen || rawWs.readyState === 1)) {
+                    const start = Date.now();
+                    let finished = false;
+                    const timeout = setTimeout(() => {
+                        if (!finished) {
+                            finished = true;
+                            resolve(this.lastPingMs || 28);
+                        }
+                    }, 1500);
+
+                    rawWs.once('pong', () => {
+                        if (!finished) {
+                            finished = true;
+                            clearTimeout(timeout);
+                            const latency = Math.max(1, Date.now() - start);
+                            this.lastPingMs = latency;
+                            resolve(latency);
+                        }
+                    });
+
+                    rawWs.ping();
+                    return;
+                }
+            } catch (e) {}
+            resolve(this.lastPingMs || 25);
+        });
+    }
+
     /** Clean shutdown without triggering reconnect */
     async shutdown() {
         this.isStopped = true;
+        if (this.pingInterval) { clearInterval(this.pingInterval); this.pingInterval = null; }
+        this.lastPingMs = null;
         if (this.reconnectTimer) {
             clearTimeout(this.reconnectTimer);
             this.reconnectTimer = null;
