@@ -113,9 +113,10 @@ export function RegistrationWarning({ role, registrationEnabled }: RegistrationW
 
         // Also check if currently selected session is disconnected
         const active = sessions.find(s => s.sessionId === sessionId) || sessions[0];
-        if (active && active.status !== "CONNECTED" && !dismissedForSession[active.sessionId]) {
+        // Only warn if the session is genuinely DISCONNECTED or LOGGED_OUT (never during transient CONNECTING/reconnect)
+        if (active && (active.status === "DISCONNECTED" || active.status === "LOGGED_OUT") && !dismissedForSession[active.sessionId]) {
             setDisconnectedSession(active);
-        } else if (active && active.status === "CONNECTED") {
+        } else if (active && (active.status === "CONNECTED" || active.status === "CONNECTING")) {
             setDisconnectedSession(null);
         }
     }, [sessions, sessionId, dismissedForSession]);

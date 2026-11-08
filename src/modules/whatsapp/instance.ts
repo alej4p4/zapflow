@@ -17,7 +17,7 @@ import { bindPpGuard } from "./store/ppguard";
 import { antispam } from "./antispam";
 import { logger } from "@/lib/logger";
 
-const MAX_QUICK_RECONNECTS = 3;
+const MAX_QUICK_RECONNECTS = 5;
 
 export class WhatsAppInstance {
     socket: WASocket | null = null;

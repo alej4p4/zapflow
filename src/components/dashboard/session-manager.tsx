@@ -9,7 +9,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardFooter, CardDescription }
 import { useRouter } from 'next/navigation';
 import { toast } from "sonner";
 import { Label } from '@/components/ui/label';
-import { Smartphone, Plus, Trash2, Settings, RefreshCw, Power, UserPlus, MessageSquare } from 'lucide-react';
+import { Smartphone, Plus, Trash2, Settings, RefreshCw, Power, UserPlus, MessageSquare, ExternalLink } from 'lucide-react';
 import { setCookie } from '@/lib/client-cookie';
 import { useSession } from './session-provider';
 import { Badge } from '@/components/ui/badge';
@@ -74,7 +74,7 @@ export function SessionManager({ user }: { user: any }) {
                     duration: 3000,
                 });
                 setTimeout(() => {
-                    router.push("/dashboard/chat");
+                    router.push(`/dashboard/chat?session=${data.sessionId}`);
                 }, 1200);
             }
         });

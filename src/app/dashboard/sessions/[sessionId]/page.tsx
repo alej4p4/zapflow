@@ -120,7 +120,7 @@ export default function SessionDetailPage() {
                     duration: 3000,
                 });
                 setTimeout(() => {
-                    router.push("/dashboard/chat");
+                    router.push(`/dashboard/chat?session=${sessionId}`);
                 }, 1200);
             }
         });
