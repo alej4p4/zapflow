@@ -27,7 +27,8 @@ import {
     Tag,
     MessageCircleReply,
     Contact,
-    UserPlus
+    UserPlus,
+    Columns3
 } from "lucide-react";
 import { useSidebar } from "./sidebar-context";
 import {
@@ -63,6 +64,7 @@ const navGroups: NavGroup[] = [
         label: "Mensagens",
         items: [
             { href: "/dashboard/chat", label: "Conversas", icon: MessageSquare },
+            { href: "/dashboard/kanban", label: "Kanban CRM", icon: Columns3 },
             { href: "/dashboard/broadcast", label: "Disparo em massa", icon: Megaphone },
             { href: "/dashboard/sticker", label: "Criador de figurinhas", icon: ImageIcon },
         ],

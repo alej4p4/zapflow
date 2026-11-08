@@ -1129,7 +1129,7 @@ interface QuickReplyItem {
 }
 
 const DEFAULT_QUICK_REPLIES: QuickReplyItem[] = [
-    { shortcut: "/ola", label: "Saudação inicial", text: "Olá! Tudo bem? Como posso te ajudar hoje?" },
+    { shortcut: "/ola", label: "Saudação inicial", text: "Olá {nome}! Tudo bem? Como posso te ajudar hoje?" },
     { shortcut: "/pix", label: "Dados do PIX", text: "Segue nossa chave PIX para pagamento: [chave]. Por gentileza, nos envie o comprovante após a transferência." },
     { shortcut: "/horario", label: "Horário de atendimento", text: "Nosso horário de funcionamento é de segunda a sexta, das 08h às 18h." },
     { shortcut: "/endereco", label: "Endereço e localização", text: "Estamos localizados na [Endereço completo]. Venha nos visitar ou utilize o Waze/Google Maps!" },
@@ -1819,17 +1819,21 @@ function playNotificationChime() {
         const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
         if (!AudioCtx) return;
         const ctx = new AudioCtx();
+        if (ctx.state === "suspended") {
+            ctx.resume();
+        }
+        const now = ctx.currentTime;
         const osc = ctx.createOscillator();
         const gain = ctx.createGain();
         osc.connect(gain);
         gain.connect(ctx.destination);
         osc.type = "sine";
-        osc.frequency.setValueAtTime(800, ctx.currentTime);
-        osc.frequency.exponentialRampToValueAtTime(1200, ctx.currentTime + 0.08);
-        gain.gain.setValueAtTime(0.12, ctx.currentTime);
-        gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.25);
-        osc.start(ctx.currentTime);
-        osc.stop(ctx.currentTime + 0.25);
+        osc.frequency.setValueAtTime(587.33, now); // D5
+        osc.frequency.setValueAtTime(880, now + 0.09); // A5
+        gain.gain.setValueAtTime(0.15, now);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + 0.35);
+        osc.start(now);
+        osc.stop(now + 0.35);
     } catch {}
 }
 
@@ -1914,7 +1918,8 @@ function ChatInputBar({
     jid,
     sessionId,
     isGroup,
-    participants = []
+    participants = [],
+    contactName
 }: {
     onSend: (text: string, mentions?: string[]) => void;
     onSendAudio?: (blob: Blob, mimeType: string) => void;
@@ -1935,6 +1940,7 @@ function ChatInputBar({
     sessionId?: string;
     isGroup?: boolean;
     participants?: GroupParticipant[];
+    contactName?: string;
 }) {
     const [input, setInput] = useState("");
     const [emojiTab, setEmojiTab] = useState<string>("freq");
@@ -2048,7 +2054,12 @@ function ChatInputBar({
             const queryLen = quickReplyQuery ? quickReplyQuery.length : 0;
             after = input.slice(quickReplyCursorIdx + 1 + queryLen);
         }
-        const nextInput = `${before}${r.text}${after.startsWith(" ") ? after : (after ? " " + after : "")}`;
+        const contactFirstName = (isGroup ? "" : (contactName || "")).trim().split(/\s+/)[0] || "";
+        const processedText = r.text
+            .replace(/\{nome\}/gi, contactFirstName)
+            .replace(/\{name\}/gi, contactFirstName);
+
+        const nextInput = `${before}${processedText}${after.startsWith(" ") ? after : (after ? " " + after : "")}`;
         setInput(nextInput);
         persistChatDraft(sessionId, jid, nextInput);
         setQuickReplyQuery(null);
@@ -2057,7 +2068,7 @@ function ChatInputBar({
         setTimeout(() => {
             if (inputRef.current) {
                 inputRef.current.focus();
-                const pos = before.length + r.text.length;
+                const pos = before.length + processedText.length;
                 inputRef.current.setSelectionRange(pos, pos);
             }
         }, 10);
@@ -7080,6 +7091,7 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
                 jid={jid}
                 sessionId={sessionId}
                 isGroup={isGroup}
+                contactName={isGroup ? undefined : name}
                 participants={participantsList}
             />
 

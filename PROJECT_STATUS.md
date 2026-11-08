@@ -10,7 +10,7 @@
 - **Repositório Git:** `https://github.com/alej4p4/zapflow.git`
 - **Branch Ativo:** `main`
 - **Deploy em Produção:** Railway (`https://zapflow-production-40ae.up.railway.app`)
-- **Versão Atual:** `1.6.23`
+- **Versão Atual:** `1.6.24`
 - **Banco de Dados Oficial:** PostgreSQL 18.6 Nativo no Railway (Volume persistente `/var/lib/postgresql/data`, rede privada `postgres.railway.internal:5432`)
 - **Volume Persistente de Arquivos:** `zapflow-volume-XrQh` montado em `/app/data` no serviço `zapflow`
 
@@ -26,6 +26,20 @@
 ---
 
 ## 🚀 3. O que já foi implementado e entregue recentemente
+
+### Módulo Kanban CRM & Melhorias de Produtividade (v1.6.24)
+- **Pipeline & Kanban CRM (`/dashboard/kanban`):**
+  - Tela completa de Kanban com colunas geradas a partir das Etiquetas/Estágios do WhatsApp + coluna "Sem Etiqueta / Novos".
+  - **Drag & Drop nativo:** Arraste e solte o cartão do contato entre colunas para atualizar a etiqueta no banco e no WhatsApp em tempo real.
+  - Cartões com foto de perfil, nome, telefone formatado, prévia da última mensagem, horário e botão direto **"Abrir Chat"** que navega para a conversa.
+  - Menu de ação rápida para mover de etapa sem arrastar (ótimo para telas touch/mobile).
+  - Modal para criar novas etapas do funil com seletor de cores da paleta oficial do WhatsApp.
+  - Campo de busca instantânea no topo para filtrar contatos e mensagens em todas as colunas simultaneamente.
+  - Link de acesso **"Kanban CRM"** integrado na barra lateral do painel (`SidebarNav`).
+- **Respostas Rápidas com Variável Dinâmica `{nome}`:**
+  - Ao selecionar um atalho digitando `/` (ex: `/ola`), a variável `{nome}` ou `{name}` é substituída automaticamente pelo primeiro nome do contato (`"Olá João! Tudo bem?..."`).
+- **Som de Notificação WhatsApp Real:**
+  - Melhorado o sintetizador de áudio Web Audio API com desbloqueio `ctx.resume()` e acorde duplo harmônico oficial (D5 587Hz ➔ A5 880Hz), garantindo que novas mensagens toquem com clareza mesmo com a aba em segundo plano.
 
 ### Resolução Definitiva de Áudio e Persistência Data URL (v1.6.23)
 - **Persistência Dupla (Disco + Base64 Data URL no PostgreSQL):**
