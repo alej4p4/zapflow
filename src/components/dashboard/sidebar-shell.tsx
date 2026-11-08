@@ -1,5 +1,6 @@
-import { ThemeToggle } from "@/components/theme-toggle";
 "use client";
+
+import { ThemeToggle } from "@/components/theme-toggle";
 
 import { SidebarNav } from "./sidebar-nav";
 import { useSidebar } from "./sidebar-context";

@@ -1,5 +1,6 @@
-import { ThemeToggle } from "@/components/theme-toggle";
 "use client";
+
+import { ThemeToggle } from "@/components/theme-toggle";
 
 import { useState, useEffect } from "react";
 import { MobileNav } from "@/components/dashboard/mobile-nav";

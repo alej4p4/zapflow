@@ -1,5 +1,6 @@
-import { ThemeToggle } from "@/components/theme-toggle";
 "use client";
+
+import { ThemeToggle } from "@/components/theme-toggle";
 
 import { useState } from "react";
 import { Sheet, SheetContent, SheetTrigger, SheetHeader, SheetTitle, SheetDescription } from "@/components/ui/sheet";
