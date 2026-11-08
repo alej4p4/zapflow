@@ -53,7 +53,7 @@ function SelectTrigger({
 function SelectContent({
   className,
   children,
-  position = "item-aligned",
+  position = "popper",
   align = "center",
   ...props
 }: React.ComponentProps<typeof SelectPrimitive.Content>) {
@@ -122,7 +122,11 @@ function SelectItem({
           <CheckIcon className="size-4" />
         </SelectPrimitive.ItemIndicator>
       </span>
-      <SelectPrimitive.ItemText>{children}</SelectPrimitive.ItemText>
+      {typeof children === "string" ? (
+        <SelectPrimitive.ItemText>{children}</SelectPrimitive.ItemText>
+      ) : (
+        <span className="flex items-center gap-2 flex-1 min-w-0">{children}</span>
+      )}
     </SelectPrimitive.Item>
   )
 }

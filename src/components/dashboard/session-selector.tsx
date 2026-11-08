@@ -40,7 +40,7 @@ export function SessionSelector() {
                     </SelectTrigger>
                     <SelectContent className="rounded-xl border border-border/50 shadow-lg p-1 min-w-[240px]">
                         {sessions.map((s) => (
-                            <SelectItem key={s.sessionId} value={s.sessionId} className="rounded-lg py-2 focus:bg-muted/50 cursor-pointer">
+                            <SelectItem key={s.sessionId} value={s.sessionId} textValue={s.name} className="rounded-lg py-2 focus:bg-muted/50 cursor-pointer">
                                 <div className="flex items-center gap-2 min-w-0">
                                     <span className="relative flex h-2 w-2 shrink-0">
                                         {s.status === "CONNECTED" && (
