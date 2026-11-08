@@ -10,7 +10,7 @@
 - **Repositório Git:** `https://github.com/alej4p4/zapflow.git`
 - **Branch Ativo:** `main`
 - **Deploy em Produção:** Railway (`https://zapflow-production-40ae.up.railway.app`)
-- **Versão Atual:** `1.6.24`
+- **Versão Atual:** `1.6.25`
 - **Banco de Dados Oficial:** PostgreSQL 18.6 Nativo no Railway (Volume persistente `/var/lib/postgresql/data`, rede privada `postgres.railway.internal:5432`)
 - **Volume Persistente de Arquivos:** `zapflow-volume-XrQh` montado em `/app/data` no serviço `zapflow`
 
@@ -26,6 +26,17 @@
 ---
 
 ## 🚀 3. O que já foi implementado e entregue recentemente
+
+### Painel Executivo com Métricas e Inteligência Operacional (v1.6.25)
+- **Dashboard com Métricas em Tempo Real (`/dashboard`):**
+  - Contadores ao vivo de mensagens totais (+mensagens de hoje), contatos cadastrados, grupos e sessões ativas.
+  - **Histograma 24 Horas de Atividade:** Gráfico interativo com distribuição de mensagens hora a hora ao longo dos últimos 7 dias, destacando automaticamente os horários de pico (ex: 11h, 14h, 17h, 18h).
+  - **Distribuição do Funil / Etiquetas:** Visão percentual e quantitativa dos contatos distribuídos em cada etapa do funil do CRM.
+  - Grade de Ações Rápidas com atalhos diretos para Kanban, Conversas, Disparos, Etiquetas e Configurações.
+- **Botão Direto "Resumo IA" no Topo da Conversa:**
+  - Botão destacado no cabeçalho do chat que permite ao atendente resumir toda a conversa do cliente em 3 tópicos executivos com 1 clique.
+- **Exportação Limpa de Conversas:**
+  - Opção no menu de opções do chat para baixar a conversa completa em `.txt` com cabeçalho oficial da BarraSoftware e formatação legível para auditorias.
 
 ### Módulo Kanban CRM & Melhorias de Produtividade (v1.6.24)
 - **Pipeline & Kanban CRM (`/dashboard/kanban`):**

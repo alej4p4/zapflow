@@ -5902,7 +5902,19 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
                         </PopoverContent>
                     </Popover>
 
+                                        {/* Quick AI Summary Button in Header */}
                     <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => handleOpenAIAssistant("summarize_chat", "")}
+                        className="h-8 px-2.5 rounded-full text-xs font-medium cursor-pointer transition-colors flex items-center gap-1.5 bg-purple-500/10 text-purple-600 dark:text-purple-400 hover:bg-purple-500/20 border border-purple-500/20"
+                        title="Resumir conversa com IA"
+                    >
+                        <Sparkles className="h-3.5 w-3.5" />
+                        <span className="hidden md:inline">Resumo IA</span>
+                    </Button>
+
+<Button
                         variant="ghost"
                         size="icon"
                         className={cn(
