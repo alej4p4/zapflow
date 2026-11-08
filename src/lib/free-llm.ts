@@ -21,6 +21,7 @@ export interface CustomFreeLLMKeys {
     openrouterApiKey?: string;
     cerebrasApiKey?: string;
     mistralApiKey?: string;
+    openaiApiKey?: string;
 }
 
 export interface FreeLLMProvider {

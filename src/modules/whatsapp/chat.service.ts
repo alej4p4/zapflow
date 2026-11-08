@@ -3,6 +3,10 @@ import { normalizeJid } from "@/lib/jid-utils";
 import { waManager } from "@/modules/whatsapp/manager";
 import { onMessageSent } from "@/lib/webhook";
 import Sticker from "wa-sticker-formatter";
+import path from "path";
+import { writeFile, mkdir } from "fs/promises";
+import { mediaDir } from "@/lib/paths";
+import { logger } from "@/lib/logger";
 
 export class ChatService {
     /**
@@ -698,6 +702,54 @@ export class ChatService {
         }
 
         const sendResult = await instance.socket.sendMessage(jid, content);
+
+        // Immediately persist sent media to disk and database so it is guaranteed to play, transcribe, and download
+        try {
+            const keyId = sendResult?.key?.id;
+            if (keyId) {
+                const ext = type === 'voice' ? 'ogg' : type === 'audio' ? 'mp3' : type === 'image' ? 'jpg' : type === 'video' ? 'mp4' : 'bin';
+                const savedFilename = `${sessionId}-${keyId}.${ext}`;
+                const savedFilePath = path.join(mediaDir, savedFilename);
+                await mkdir(path.dirname(savedFilePath), { recursive: true });
+                await writeFile(savedFilePath, buffer);
+                const fileUrl = `/api/media/${savedFilename}`;
+
+                const sessionRecord = await prisma.session.findFirst({
+                    where: { OR: [{ sessionId }, { id: sessionId }] },
+                    select: { id: true }
+                });
+
+                if (sessionRecord) {
+                    await prisma.message.upsert({
+                        where: {
+                            sessionId_keyId: {
+                                sessionId: sessionRecord.id,
+                                keyId
+                            }
+                        },
+                        update: {
+                            mediaUrl: fileUrl,
+                            status: "SENT"
+                        },
+                        create: {
+                            sessionId: sessionRecord.id,
+                            remoteJid: jid,
+                            fromMe: true,
+                            keyId,
+                            type: (type === 'voice' || type === 'audio') ? 'AUDIO' : type === 'image' ? 'IMAGE' : type === 'video' ? 'VIDEO' : 'DOCUMENT',
+                            content: caption || "",
+                            mediaUrl: fileUrl,
+                            status: "SENT",
+                            timestamp: new Date()
+                        }
+                    });
+                }
+
+                (sendResult as any).mediaUrl = fileUrl;
+            }
+        } catch (saveErr) {
+            logger.error("ChatService", "Failed to immediately save sent media", saveErr);
+        }
 
         // Fire webhook for sent media message (non-blocking)
         try {

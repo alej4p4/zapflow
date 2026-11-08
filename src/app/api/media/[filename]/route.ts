@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
-import { readFile } from "fs/promises";
+import { readFile, stat } from "fs/promises";
+import { createReadStream, existsSync } from "fs";
 import path from "path";
-import { existsSync } from "fs";
 import { getAuthenticatedUser, canAccessSession } from "@/lib/api-auth";
 import { mediaDir } from "@/lib/paths";
 import { prisma } from "@/lib/prisma";
@@ -102,15 +102,20 @@ export async function GET(
                             where: { keyId: rawKeyId },
                             select: { mediaUrl: true, type: true }
                         });
-                        if (msg?.mediaUrl && msg.mediaUrl.startsWith('data:image')) {
-                            const base64Data = msg.mediaUrl.split(',')[1];
-                            if (base64Data) {
+                        if (msg?.mediaUrl && msg.mediaUrl.startsWith('data:')) {
+                            const match = msg.mediaUrl.match(/^data:([^;]+);base64,(.+)$/);
+                            if (match) {
+                                const mime = match[1];
+                                const base64Data = match[2];
                                 const buf = Buffer.from(base64Data, 'base64');
+                                const isDownload = request.nextUrl.searchParams.get("download") === "1";
+                                const customFilename = request.nextUrl.searchParams.get("filename");
+                                const finalFilename = customFilename ? path.basename(customFilename) : filename;
                                 return new NextResponse(buf, {
                                     status: 200,
                                     headers: {
-                                        'Content-Type': 'image/jpeg',
-                                        'Content-Disposition': `inline; filename="${filename}"`,
+                                        'Content-Type': mime,
+                                        'Content-Disposition': isDownload ? `attachment; filename="${finalFilename}"` : `inline; filename="${finalFilename}"`,
                                         'Cache-Control': 'public, max-age=86400, immutable',
                                         'X-Content-Type-Options': 'nosniff',
                                     }
@@ -122,8 +127,6 @@ export async function GET(
                 return NextResponse.json({ status: false, message: "File not found", error: "File not found" }, { status: 404 });
             }
         }
-
-        const fileBuffer = await readFile(filePath);
 
         // Determine content type based on extension
         const ext = path.extname(filename).toLowerCase();
@@ -144,12 +147,59 @@ export async function GET(
         };
 
         const contentType = contentTypeMap[ext] || 'application/octet-stream';
+        const fileStat = await stat(filePath);
+        const fileSize = fileStat.size;
+        const range = request.headers.get("range");
+        const isDownload = request.nextUrl.searchParams.get("download") === "1";
+        const customFilename = request.nextUrl.searchParams.get("filename");
+        const finalFilename = customFilename ? path.basename(customFilename) : filename;
+        const disposition = isDownload ? `attachment; filename="${finalFilename}"` : `inline; filename="${finalFilename}"`;
+
+        // 🎵 HTTP 206 Partial Content (Range Requests) for audio & video seeking/streaming
+        if (range && (contentType.startsWith("audio/") || contentType.startsWith("video/"))) {
+            const parts = range.replace(/bytes=/, "").split("-");
+            const start = parseInt(parts[0], 10) || 0;
+            const end = parts[1] ? parseInt(parts[1], 10) : fileSize - 1;
+
+            if (start >= fileSize || end >= fileSize) {
+                return new NextResponse(null, {
+                    status: 416,
+                    headers: { 'Content-Range': `bytes */${fileSize}` }
+                });
+            }
+
+            const chunksize = (end - start) + 1;
+            const fileStream = createReadStream(filePath, { start, end });
+            const stream = new ReadableStream({
+                start(controller) {
+                    fileStream.on("data", (chunk) => controller.enqueue(chunk));
+                    fileStream.on("end", () => controller.close());
+                    fileStream.on("error", (err) => controller.error(err));
+                }
+            });
+
+            return new NextResponse(stream as any, {
+                status: 206,
+                headers: {
+                    'Content-Range': `bytes ${start}-${end}/${fileSize}`,
+                    'Accept-Ranges': 'bytes',
+                    'Content-Length': String(chunksize),
+                    'Content-Type': contentType,
+                    'Content-Disposition': disposition,
+                    'Cache-Control': 'public, max-age=86400',
+                }
+            });
+        }
+
+        const fileBuffer = await readFile(filePath);
 
         return new NextResponse(fileBuffer, {
             status: 200,
             headers: {
                 'Content-Type': contentType,
-                'Content-Disposition': `inline; filename="${filename}"`,
+                'Content-Disposition': disposition,
+                'Accept-Ranges': 'bytes',
+                'Content-Length': String(fileBuffer.length),
                 'Cache-Control': 'public, max-age=86400, immutable',
                 'X-Content-Type-Options': 'nosniff',
             },

@@ -175,7 +175,8 @@ export async function sendMediaMessage(formData: FormData) {
 
         return {
             success: true,
-            keyId: sendResult?.key?.id
+            keyId: sendResult?.key?.id,
+            mediaUrl: (sendResult as any)?.mediaUrl
         };
     } catch (error: any) {
         console.error("Media send error:", error);
@@ -614,26 +615,37 @@ export async function runChatAIAssistant(
     }
 }
 
-// Transcribe WhatsApp Voice Note using Free Groq Whisper Large V3 Turbo (#C30)
+// Transcribe WhatsApp Voice Note using Free Groq Whisper Large V3 Turbo or OpenAI Whisper (#C30)
 export async function transcribeChatAudioMessage(
     audioUrl: string,
-    customKeys?: CustomFreeLLMKeys
+    customKeys?: CustomFreeLLMKeys,
+    audioBase64?: string
 ): Promise<{ text: string; provider: string }> {
     const user = await getAuthenticatedUserForAction();
     if (!user) throw new Error("Unauthorized");
 
     const groqKey = customKeys?.groqApiKey?.trim() || process.env.GROQ_API_KEY?.trim();
-    if (!groqKey) {
+    const openaiKey = customKeys?.openaiApiKey?.trim() || process.env.OPENAI_API_KEY?.trim();
+
+    if (!groqKey && !openaiKey) {
         throw new Error(
-            "Para transcrever áudios gratuitamente com Whisper V3 Turbo, informe sua chave gratuita da Groq (GROQ_API_KEY) no botão ✨ IA -> Configurar Chaves."
+            "Para transcrever áudios com Whisper IA, informe sua chave gratuita da Groq no botão ✨ IA -> Configurar Chaves (obtenha grátis em console.groq.com)."
         );
     }
 
-    // Resolve audio buffer from /api/media/{filename}
+    // Resolve audio buffer from client base64, /api/media/{filename}, or external URL
     let audioBuffer: Buffer | null = null;
     let fileName = "audio.ogg";
 
-    if (audioUrl.includes("/api/media/")) {
+    if (audioBase64) {
+        try {
+            const clean = audioBase64.replace(/^data:[^;]+;base64,/, "");
+            audioBuffer = Buffer.from(clean, "base64");
+            fileName = "voice-note.ogg";
+        } catch {}
+    }
+
+    if (!audioBuffer && audioUrl.includes("/api/media/")) {
         const rawFilename = decodeURIComponent(audioUrl.split("/api/media/").pop()?.split("?")[0] || "");
         if (rawFilename && !rawFilename.includes("..")) {
             fileName = rawFilename;
@@ -651,8 +663,39 @@ export async function transcribeChatAudioMessage(
             }
             if (existsSync(candidatePath)) {
                 audioBuffer = await readFile(candidatePath);
+            } else {
+                // Check if the message row in the DB has a base64 Data URL or mediaUrl
+                const rawKeyId = rawFilename.replace(/\.[^.]+$/, "").split("-").pop();
+                if (rawKeyId) {
+                    try {
+                        const dbMsg = await prisma.message.findFirst({
+                            where: { keyId: rawKeyId },
+                            select: { mediaUrl: true }
+                        });
+                        if (dbMsg?.mediaUrl && dbMsg.mediaUrl.startsWith("data:")) {
+                            const clean = dbMsg.mediaUrl.replace(/^data:[^;]+;base64,/, "");
+                            audioBuffer = Buffer.from(clean, "base64");
+                        }
+                    } catch {}
+                }
             }
         }
+    }
+
+    if (!audioBuffer && audioUrl.startsWith("data:")) {
+        try {
+            const clean = audioUrl.replace(/^data:[^;]+;base64,/, "");
+            audioBuffer = Buffer.from(clean, "base64");
+        } catch {}
+    }
+
+    if (!audioBuffer && (audioUrl.startsWith("http://") || audioUrl.startsWith("https://"))) {
+        try {
+            const resp = await fetch(audioUrl);
+            if (resp.ok) {
+                audioBuffer = Buffer.from(await resp.arrayBuffer());
+            }
+        } catch {}
     }
 
     if (!audioBuffer) {
@@ -663,14 +706,18 @@ export async function transcribeChatAudioMessage(
     const uint8 = new Uint8Array(audioBuffer);
     const blob = new Blob([uint8], { type: "audio/ogg" });
     formData.append("file", blob, fileName.endsWith(".bin") ? "audio.ogg" : fileName);
-    formData.append("model", "whisper-large-v3-turbo");
+    formData.append("model", groqKey ? "whisper-large-v3-turbo" : "whisper-1");
     formData.append("language", "pt");
     formData.append("response_format", "json");
 
-    const res = await fetch("https://api.groq.com/openai/v1/audio/transcriptions", {
+    const endpoint = groqKey
+        ? "https://api.groq.com/openai/v1/audio/transcriptions"
+        : "https://api.openai.com/v1/audio/transcriptions";
+
+    const res = await fetch(endpoint, {
         method: "POST",
         headers: {
-            Authorization: `Bearer ${groqKey}`
+            Authorization: `Bearer ${groqKey || openaiKey}`
         },
         body: formData
     });

@@ -1,3 +1,13 @@
+## [v1.6.22] - 2026-11-08
+
+### Fixed
+- **Reprodução de Áudio e Streaming HTTP 206**: Suporte completo a Range Requests (`206 Partial Content`) em `/api/media/[filename]`, permitindo que navegadores (Chrome, Safari, Firefox, Edge) façam streaming de áudios OGG/Opus/MP3, avancem na timeline e calculem a duração precisa sem travar.
+- **Duração `Infinity:NaN` no Chromium**: Implementada correção para o bug de WebM/Opus do Chromium onde gravações de microfone geravam `duration === Infinity`; agora corrigido com medição de seek dinâmico e fallback seguro para `"0:00"`.
+- **Persistência de Áudio Gravado/Enviado**: `ChatService.sendMediaMessage` agora salva o buffer do áudio imediatamente no disco (`mediaDir`) com nome único `${sessionId}-${keyId}.${ext}` e registra `mediaUrl` no PostgreSQL, garantindo que o áudio enviado permaneça reproduzível e com URL válida após o refresh.
+- **Download Nativo de Áudios e Mídias**: Corrigido o fluxo de download em `chat-window.tsx` para suporte a URLs `blob:` síncronas e URLs de servidor via query `?download=1&filename=...` com cabeçalho `Content-Disposition: attachment`, contornando bloqueios de popup de navegadores modernos e garantindo o download com o nome e extensão corretos.
+- **Transcrição de Áudio com IA ("Ler")**: Ação "Ler" atualizada para converter áudios locais em Base64 automaticamente quando em blob/data URL, suporte estendido tanto para Groq Whisper V3 Turbo quanto OpenAI Whisper, com busca no banco de dados e no disco em caso de requisições relativas.
+- **Botões "Ler" e "Baixar" Visíveis**: Tornados sempre visíveis no player (`opacity-80` com transição suave) para facilitar o acesso em telas touch e dispositivos móveis.
+
 ## [v1.6.21] - 2026-11-08
 
 ### Added

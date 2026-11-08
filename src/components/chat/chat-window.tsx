@@ -449,7 +449,25 @@ function WhatsAppAudioPlayer({
         setIsTranscribing(true);
         try {
             const keys = loadSavedLLMKeys();
-            const res = await transcribeChatAudioMessage(src, keys);
+            let audioBase64: string | undefined = undefined;
+            if (src.startsWith("blob:") || src.startsWith("data:")) {
+                try {
+                    const blobRes = await fetch(src);
+                    const blobData = await blobRes.blob();
+                    const reader = new FileReader();
+                    audioBase64 = await new Promise<string>((resolve, reject) => {
+                        reader.onloadend = () => {
+                            const resStr = reader.result as string;
+                            resolve(resStr.includes(",") ? resStr.split(",")[1] : resStr);
+                        };
+                        reader.onerror = reject;
+                        reader.readAsDataURL(blobData);
+                    });
+                } catch (bErr) {
+                    console.warn("Could not read local audio blob as base64:", bErr);
+                }
+            }
+            const res = await transcribeChatAudioMessage(src, keys, audioBase64);
             setTranscription(res.text);
             try {
                 const raw = localStorage.getItem(AUDIO_TRANSCRIPTIONS_STORAGE);
@@ -465,12 +483,18 @@ function WhatsAppAudioPlayer({
         }
     };
 
-    const togglePlay = () => {
+    const togglePlay = async () => {
         if (!audioRef.current) return;
         if (isPlaying) {
             audioRef.current.pause();
         } else {
-            audioRef.current.play();
+            try {
+                await audioRef.current.play();
+            } catch (err: any) {
+                console.error("Audio playback error:", err);
+                setIsPlaying(false);
+                toast.error("Não foi possível reproduzir este áudio no navegador.");
+            }
         }
     };
 
@@ -484,10 +508,34 @@ function WhatsAppAudioPlayer({
     };
 
     const formatTime = (seconds: number) => {
-        if (!seconds || isNaN(seconds) || !isFinite(seconds)) return "0:00";
+        if (!seconds || isNaN(seconds) || !isFinite(seconds) || seconds <= 0) return "0:00";
         const mins = Math.floor(seconds / 60);
         const secs = Math.floor(seconds % 60);
         return `${mins}:${secs < 10 ? '0' : ''}${secs}`;
+    };
+
+    const syncDuration = () => {
+        if (!audioRef.current) return;
+        const d = audioRef.current.duration;
+        if (Number.isFinite(d) && d > 0) {
+            setDuration(d);
+        } else if (d === Infinity) {
+            // Chromium bug: WebM/Ogg MediaRecorder audio has duration === Infinity
+            const a = audioRef.current;
+            const onTime = () => {
+                a.removeEventListener("timeupdate", onTime);
+                if (Number.isFinite(a.duration) && a.duration > 0) {
+                    setDuration(a.duration);
+                } else if (Number.isFinite(a.currentTime) && a.currentTime > 0) {
+                    setDuration(a.currentTime);
+                }
+                a.currentTime = 0;
+            };
+            a.addEventListener("timeupdate", onTime);
+            try {
+                a.currentTime = 1e101;
+            } catch {}
+        }
     };
 
     const handleSeek = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -566,18 +614,10 @@ function WhatsAppAudioPlayer({
                 onPause={() => setIsPlaying(false)}
                 onEnded={() => { setIsPlaying(false); setCurrentTime(0); }}
                 onTimeUpdate={() => audioRef.current && setCurrentTime(audioRef.current.currentTime)}
-                onLoadedMetadata={() => {
-                    if (audioRef.current) {
-                        const d = audioRef.current.duration;
-                        if (Number.isFinite(d) && d > 0) setDuration(d);
-                    }
-                }}
-                onDurationChange={() => {
-                    if (audioRef.current) {
-                        const d = audioRef.current.duration;
-                        if (Number.isFinite(d) && d > 0) setDuration(d);
-                    }
-                }}
+                onLoadedMetadata={syncDuration}
+                onDurationChange={syncDuration}
+                onCanPlay={syncDuration}
+                onError={() => { setIsPlaying(false); }}
             />
             <div className="flex items-center gap-2 pt-0.5">
                 {fromMe && avatarNode}
@@ -621,12 +661,12 @@ function WhatsAppAudioPlayer({
                     </div>
                     <div className="flex items-center gap-2 text-[11px] text-[#667781] dark:text-[#8696a0] tabular-nums h-4">
                         <span>{formatTime(isPlaying || currentTime > 0 ? currentTime : duration)}</span>
-                        <span className="flex items-center gap-1 opacity-0 group-hover/audio:opacity-100 transition-opacity">
+                        <span className="flex items-center gap-1.5 opacity-80 group-hover/audio:opacity-100 transition-opacity">
                             <button
                                 type="button"
                                 onClick={handleTranscribe}
                                 disabled={isTranscribing}
-                                className="flex items-center gap-0.5 text-[#00a884] dark:text-[#25d366] font-semibold cursor-pointer"
+                                className="flex items-center gap-0.5 text-[#00a884] dark:text-[#25d366] font-semibold cursor-pointer hover:underline"
                                 title="Transcrever áudio em texto com IA (Groq Whisper)"
                             >
                                 {isTranscribing ? <Loader2 className="h-3 w-3 animate-spin" /> : <Sparkles className="h-3 w-3" />}
@@ -635,8 +675,13 @@ function WhatsAppAudioPlayer({
                             {downloadFileName && (
                                 <button
                                     type="button"
-                                    onClick={(e) => { e.stopPropagation(); handleDownload(src, downloadFileName); }}
-                                    className="hover:text-foreground cursor-pointer"
+                                    onClick={(e) => {
+                                        e.stopPropagation();
+                                        const ext = src.includes(".ogg") ? ".ogg" : src.includes(".webm") ? ".webm" : src.includes(".wav") ? ".wav" : src.includes(".m4a") ? ".m4a" : ".mp3";
+                                        const actualName = downloadFileName.replace(/\.[^.]+$/, ext);
+                                        handleDownload(src, actualName);
+                                    }}
+                                    className="hover:text-foreground cursor-pointer p-0.5 text-[#667781] dark:text-[#8696a0]"
                                     title="Baixar áudio"
                                 >
                                     <Download className="h-3 w-3" />
@@ -690,15 +735,45 @@ function useDateLabel() {
 }
 
 function handleDownload(url: string, fileName: string) {
-    toast.info("Baixando...");
-    fetch(url).then(res => { if (!res.ok) throw new Error(); return res.blob(); }).then(blob => {
-        const dlUrl = window.URL.createObjectURL(blob);
-        const link = document.createElement('a');
-        link.href = dlUrl; link.download = fileName;
+    if (!url) {
+        toast.error("Arquivo indisponível para download");
+        return;
+    }
+
+    // 1. Direct blob: or data: URL download
+    if (url.startsWith("blob:") || url.startsWith("data:")) {
+        try {
+            const link = document.createElement("a");
+            link.href = url;
+            link.download = fileName || "arquivo";
+            document.body.appendChild(link);
+            link.click();
+            link.remove();
+            toast.success("Download iniciado!");
+            return;
+        } catch {}
+    }
+
+    // 2. Server URL: trigger native attachment download via ?download=1 and filename
+    try {
+        const sep = url.includes("?") ? "&" : "?";
+        const downloadUrl = `${url}${sep}download=1&filename=${encodeURIComponent(fileName || "arquivo")}`;
+        const link = document.createElement("a");
+        link.href = downloadUrl;
+        link.download = fileName || "arquivo";
+        link.target = "_blank";
+        link.rel = "noopener noreferrer";
         document.body.appendChild(link);
-        link.click(); link.remove();
-        window.URL.revokeObjectURL(dlUrl);
-    }).catch(() => toast.error("Falha ao baixar o arquivo"));
+        link.click();
+        link.remove();
+        toast.success("Download iniciado!");
+    } catch {
+        try {
+            window.open(url, "_blank");
+        } catch {
+            toast.error("Falha ao abrir download");
+        }
+    }
 }
 
 // ─── Context Menu ──────────────────
@@ -4252,8 +4327,20 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
         formData.append("jid", jid);
 
         try {
-            await sendMediaMessage(formData);
-            setMessages(prev => prev.map(m => m.keyId === tempKeyId ? { ...m, status: "SENT" } : m));
+            const res = await sendMediaMessage(formData);
+            if (res?.keyId) {
+                const finalKeyId = String(res.keyId);
+                const finalMediaUrl = res.mediaUrl || undefined;
+                setMessages(prev => prev.map(m => m.keyId === tempKeyId ? {
+                    ...m,
+                    id: finalKeyId,
+                    keyId: finalKeyId,
+                    ...(finalMediaUrl ? { mediaUrl: finalMediaUrl } : {}),
+                    status: "SENT" as const
+                } : m));
+            } else {
+                setMessages(prev => prev.map(m => m.keyId === tempKeyId ? { ...m, status: "SENT" as const } : m));
+            }
             setTimeout(() => fetchMessages(undefined, true), 1200);
         } catch (error: any) {
             console.error("Erro ao enviar áudio:", error);
@@ -6390,10 +6477,10 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
                                         )}
 
                                         {/* AUDIO (WhatsApp Voice Note Player with 1x, 1.5x, 2x speed) */}
-                                        {msg.type === 'AUDIO' && msg.mediaUrl && (
+                                        {msg.type === 'AUDIO' && (msg.mediaUrl || (!msg.keyId.startsWith("temp-") && `/api/media/${sessionId}-${msg.keyId}.ogg`)) && (
                                             <WhatsAppAudioPlayer
-                                                src={msg.mediaUrl}
-                                                downloadFileName={`AUDIO-${msg.keyId}.mp3`}
+                                                src={msg.mediaUrl || `/api/media/${sessionId}-${msg.keyId}.ogg`}
+                                                downloadFileName={`AUDIO-${msg.keyId}.ogg`}
                                                 fromMe={msg.fromMe}
                                                 avatarUrl={
                                                     msg.fromMe

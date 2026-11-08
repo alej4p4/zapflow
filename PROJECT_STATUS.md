@@ -10,7 +10,7 @@
 - **Repositório Git:** `https://github.com/alej4p4/zapflow.git`
 - **Branch Ativo:** `main`
 - **Deploy em Produção:** Railway (`https://zapflow-production-40ae.up.railway.app`)
-- **Versão Atual:** `1.6.21`
+- **Versão Atual:** `1.6.22`
 
 ---
 
@@ -25,7 +25,21 @@
 
 ## 🚀 3. O que já foi implementado e entregue recentemente
 
-### Rebranding Completo
+### Módulo de Áudio Completo (v1.6.22)
+- **Streaming de Áudio HTTP 206 Partial Content (`/api/media/[filename]`):**
+  - Implementado suporte completo ao cabeçalho `Range` HTTP para áudio e vídeo, permitindo ao navegador (Chrome, Edge, Safari, Firefox) carregar por partes, avançar/voltar na barra de progresso e calcular a duração exata do arquivo sem travar.
+- **Resolução do bug `Infinity:NaN` do Chromium:**
+  - Adicionada detecção e contorno para arquivos gravados pelo MediaRecorder onde o browser reporta `duration === Infinity`, além de proteção numérica com `Number.isFinite()` que garante fallback visual para `"0:00"`.
+- **Persistência Imediata de Mensagens de Voz Enviadas (`ChatService.sendMediaMessage`):**
+  - O áudio gravado e enviado pelo atendente agora é gravado imediatamente em disco (`mediaDir/${sessionId}-${keyId}.${ext}`) e gravado no banco com URL permanente (`/api/media/...`), garantindo que o áudio continue tocando mesmo após atualizar a página ou após o sync do Baileys.
+- **Download Nativo de Mídias e Áudios:**
+  - Fluxo de download corrigido: URLs `blob:` são baixadas síncronas sem bloqueio de pop-up; URLs de servidor usam `?download=1&filename=...` com `Content-Disposition: attachment` forçando o navegador a salvar o arquivo diretamente no dispositivo com o nome e formato corretos (.ogg, .mp3, etc.).
+- **Transcrição de Voz com IA ("Ler") Resiliente:**
+  - Ação "Ler" agora suporta conversão automática de áudios em Base64 para envio ao Whisper, suporta chaves gratuitas da Groq Whisper V3 Turbo e OpenAI, busca de áudios no banco de dados e persistência do texto lido no `localStorage`.
+- **Botões Visíveis e Acessíveis:**
+  - Os botões "Ler" e "Baixar" agora ficam sempre visíveis no player com opacidade suave (`opacity-80`), facilitando o uso tanto no desktop quanto em telas touch / celulares.
+
+### Rebranding Completo (v1.6.21)
 - Todo o sistema foi renomeado de **WA-AKG** para **BarraSoftware** (telas de Login, Registro, Navbar, Documentação Swagger, Webhooks e schemas Prisma).
 - Favicon oficial atualizado com o ícone do robô arredondado verde em SVG dinâmico (`src/app/icon.tsx`).
 
@@ -52,11 +66,11 @@
 
 1. **Pipeline / Kanban de Atendimento (CRM):**
    - Criar visualização em colunas no estilo Kanban/Trello organizada por Etiquetas (`Novo Lead` ➔ `Em Negociação` ➔ `Aguardando Pagamento` ➔ `Fechado`).
-   - Permitir arrastar e soltar (drag & drop) o cartão do contato entre colunas para atualizar a etiqueta no WhatsApp.
-2. **Transcrição de Áudios Recebidos com IA:**
-   - Botão de transcrição rápida para áudios longos recebidos usando Whisper (Groq ou OpenAI).
+   - Permitir arrastar e soltar (drag & drop) o cartão do contato entre colunas para atualizar a etiqueta no WhatsApp em tempo real.
+2. **Resumo Automático de Conversas por IA:**
+   - Botão para resumir a conversa inteira do contato em 3 tópicos para troca de turno rápida de operadores.
 3. **Relatórios Gerenciais e Métricas de Atendimento:**
-   - Dashboard com Tempo Médio de Resposta (TMR), horários de pico e volume por operador.
+   - Dashboard com Tempo Médio de Resposta (TMR), horários de pico e volume de atendimentos por operador.
 
 ---
 
