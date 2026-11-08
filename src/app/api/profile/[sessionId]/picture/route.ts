@@ -1,6 +1,7 @@
 import { NextResponse, NextRequest } from "next/server";
 import { getAuthenticatedUser, canAccessSession } from "@/lib/api-auth";
 import { waManager } from "@/modules/whatsapp/manager";
+import { jidNormalizedUser } from "@whiskeysockets/baileys";
 
 export async function PUT(
     request: NextRequest,
@@ -31,9 +32,11 @@ export async function PUT(
         }
 
         const buffer = Buffer.from(await image.arrayBuffer());
+        const rawJid = instance.socket.user?.id || "";
+        const myJid = rawJid ? jidNormalizedUser(rawJid) : "";
 
         // WhatsApp Baileys updates profile picture
-        await instance.socket.updateProfilePicture(instance.socket.user?.id || "", buffer);
+        await instance.socket.updateProfilePicture(myJid, buffer);
 
         return NextResponse.json({ status: true, message: "Profile picture updated" });
 
@@ -64,8 +67,11 @@ export async function DELETE(
             return NextResponse.json({ status: false, message: "WhatsApp instance not connected" }, { status: 503 });
         }
 
+        const rawJid = instance.socket.user?.id || "";
+        const myJid = rawJid ? jidNormalizedUser(rawJid) : "";
+
         // WhatsApp Baileys removes profile picture
-        await instance.socket.removeProfilePicture(instance.socket.user?.id || "");
+        await instance.socket.removeProfilePicture(myJid);
 
         return NextResponse.json({ status: true, message: "Profile picture removed" });
 

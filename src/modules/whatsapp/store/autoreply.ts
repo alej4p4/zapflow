@@ -333,6 +333,37 @@ export async function bindAutoReply(sock: WASocket, sessionId: string) {
                     }
                 }
 
+                // ─── Welcome Message Check (First Contact / Daily Welcome) ───
+                if (!keywordMatched && !fromMe && !isGroup && config?.welcomeMessage?.trim()) {
+                    try {
+                        const welcomeKey = `welcome:${sessionId}:${remoteJid}`;
+                        const lastSent = awayCooldownMap.get(welcomeKey) || 0;
+                        const cooldownMs = 24 * 60 * 60 * 1000; // 24 horas por contato
+                        const nowMs = Date.now();
+
+                        if (nowMs - lastSent >= cooldownMs) {
+                            awayCooldownMap.set(welcomeKey, nowMs);
+                            const { greeting } = getNowInSaoPaulo();
+                            const pushName = msg.pushName || "";
+                            const firstName = pushName.trim().split(/\s+/)[0] || "";
+                            const botName = config.botName || "BarraSoftware";
+
+                            const finalWelcome = config.welcomeMessage
+                                .replace(/\{saudacao\}/gi, greeting)
+                                .replace(/\{nome\}/gi, firstName || pushName || "cliente")
+                                .replace(/\{primeiro_nome\}/gi, firstName || "cliente")
+                                .replace(/\{nome_completo\}/gi, pushName || "cliente")
+                                .replace(/\{empresa\}/gi, botName);
+
+                            const welcomeSent = await sock.sendMessage(remoteJid, { text: finalWelcome }, { quoted: msg });
+                            if (welcomeSent?.key?.id) botSentKeys.add(welcomeSent.key.id);
+                            logger.info("AutoReply", `Sent automated welcome message to ${remoteJid}`);
+                        }
+                    } catch (welcomeErr) {
+                        logger.error("AutoReply", "Failed to send welcome message", welcomeErr);
+                    }
+                }
+
             } catch (e) {
                 logger.error("AutoReply", "Error executing auto-reply", e);
             }

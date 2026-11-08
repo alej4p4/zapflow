@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { readFile, stat } from "fs/promises";
-import { createReadStream, existsSync } from "fs";
+import { existsSync } from "fs";
 import path from "path";
 import { getAuthenticatedUser, canAccessSession } from "@/lib/api-auth";
 import { mediaDir } from "@/lib/paths";
@@ -15,9 +15,7 @@ const MEDIA_DIR = mediaDir;
  * e.g. "marketing-1-ABCDEF123456.jpg" → "marketing-1"
  */
 function extractSessionId(filename: string): string | null {
-    // Remove extension
     const base = filename.replace(/\.[^.]+$/, "");
-    // The last segment after the last "-" is the messageId
     const lastDash = base.lastIndexOf("-");
     if (lastDash <= 0) return null;
     return base.substring(0, lastDash);
@@ -36,9 +34,11 @@ export async function GET(
                               cookieHeader.includes("__Secure-next-auth.session-token") ||
                               cookieHeader.includes("authjs.session-token") ||
                               cookieHeader.includes("__Secure-authjs.session-token") ||
+                              cookieHeader.includes("authjs") ||
                               cookieHeader.includes("sessionId=");
         const isFromDashboard = referer.includes("/dashboard");
-        if (!user && !hasAuthCookie && !isFromDashboard) {
+        const isSameOrigin = request.headers.get("sec-fetch-site") === "same-origin";
+        if (!user && !hasAuthCookie && !isFromDashboard && !isSameOrigin) {
             return NextResponse.json({ status: false, message: "Unauthorized", error: "Unauthorized" }, { status: 401 });
         }
 
@@ -66,13 +66,15 @@ export async function GET(
             return NextResponse.json({ status: false, message: "Access denied", error: "Access denied" }, { status: 403 });
         }
 
-        // Try exact filename first, then alternate image extensions (.jpg, .jpeg, .png, etc.)
+        const cleanBase = filename.replace(/\.[^.]+$/, "");
+        const rawKeyId = cleanBase.includes('-') ? cleanBase.substring(cleanBase.lastIndexOf('-') + 1) : cleanBase;
+
+        // Try exact filename first, then alternate extensions
         if (!existsSync(filePath)) {
-            const base = filename.replace(/\.[^.]+$/, "");
-            const altExts = ['.jpeg', '.jpg', '.png', '.webp', '.mp4', '.mp3', '.ogg', '.opus', '.bin'];
+            const altExts = ['.ogg', '.opus', '.mp3', '.mp4', '.jpeg', '.jpg', '.png', '.webp', '.bin'];
             let found = false;
             for (const ext of altExts) {
-                const altPath = path.join(MEDIA_DIR, `${base}${ext}`);
+                const altPath = path.join(MEDIA_DIR, `${cleanBase}${ext}`);
                 if (existsSync(altPath)) {
                     filePath = altPath;
                     found = true;
@@ -81,8 +83,7 @@ export async function GET(
             }
 
             // Also check without sessionId- prefix
-            if (!found && base.includes('-')) {
-                const rawKeyId = base.substring(base.lastIndexOf('-') + 1);
+            if (!found && cleanBase.includes('-')) {
                 for (const ext of altExts) {
                     const altPath = path.join(MEDIA_DIR, `${rawKeyId}${ext}`);
                     if (existsSync(altPath)) {
@@ -93,43 +94,83 @@ export async function GET(
                 }
             }
 
+            // If not found on disk, query database (with short grace period for active incoming downloads)
             if (!existsSync(filePath)) {
-                // If not on disk, check if message has a base64 Data URL in database
-                const rawKeyId = filename.replace(/\.[^.]+$/, "").split('-').pop();
-                if (rawKeyId) {
-                    try {
-                        const msg = await prisma.message.findFirst({
-                            where: { keyId: rawKeyId },
-                            select: { mediaUrl: true, type: true }
+                let dbMsg = await prisma.message.findFirst({
+                    where: { OR: [{ keyId: rawKeyId }, { id: rawKeyId }, { keyId: cleanBase }] },
+                    select: { mediaUrl: true, type: true, timestamp: true }
+                });
+
+                // If message was created in the last 60 seconds and has no mediaUrl yet, wait briefly for download to complete
+                if (!dbMsg?.mediaUrl && dbMsg?.timestamp && (Date.now() - new Date(dbMsg.timestamp).getTime() < 60000)) {
+                    for (let attempt = 0; attempt < 5; attempt++) {
+                        await new Promise(r => setTimeout(r, 500));
+                        if (existsSync(filePath)) break;
+                        dbMsg = await prisma.message.findFirst({
+                            where: { OR: [{ keyId: rawKeyId }, { id: rawKeyId }, { keyId: cleanBase }] },
+                            select: { mediaUrl: true, type: true, timestamp: true }
                         });
-                        if (msg?.mediaUrl && msg.mediaUrl.startsWith('data:')) {
-                            const match = msg.mediaUrl.match(/^data:([^;]+);base64,(.+)$/);
-                            if (match) {
-                                const mime = match[1];
-                                const base64Data = match[2];
-                                const buf = Buffer.from(base64Data, 'base64');
-                                const isDownload = request.nextUrl.searchParams.get("download") === "1";
-                                const customFilename = request.nextUrl.searchParams.get("filename");
-                                const finalFilename = customFilename ? path.basename(customFilename) : filename;
-                                return new NextResponse(buf, {
-                                    status: 200,
+                        if (dbMsg?.mediaUrl) break;
+                    }
+                }
+
+                // If database has Data URL, serve directly with Range support
+                if (dbMsg?.mediaUrl && dbMsg.mediaUrl.startsWith('data:')) {
+                    const match = dbMsg.mediaUrl.match(/^data:([^;]+);base64,(.+)$/);
+                    if (match) {
+                        const mime = match[1];
+                        const base64Data = match[2];
+                        const buf = Buffer.from(base64Data, 'base64');
+                        const isDownload = request.nextUrl.searchParams.get("download") === "1";
+                        const customFilename = request.nextUrl.searchParams.get("filename");
+                        const finalFilename = customFilename ? path.basename(customFilename) : filename;
+                        const disposition = isDownload ? `attachment; filename="${finalFilename}"` : `inline; filename="${finalFilename}"`;
+
+                        const range = request.headers.get("range");
+                        if (range && (mime.startsWith("audio/") || mime.startsWith("video/"))) {
+                            const parts = range.replace(/bytes=/, "").split("-");
+                            const start = parseInt(parts[0], 10) || 0;
+                            const end = parts[1] ? parseInt(parts[1], 10) : buf.length - 1;
+
+                            if (start < buf.length && end < buf.length && start <= end) {
+                                const chunk = buf.subarray(start, end + 1);
+                                return new NextResponse(chunk, {
+                                    status: 206,
                                     headers: {
-                                        'Content-Type': mime,
-                                        'Content-Disposition': isDownload ? `attachment; filename="${finalFilename}"` : `inline; filename="${finalFilename}"`,
+                                        'Content-Range': `bytes ${start}-${end}/${buf.length}`,
+                                        'Accept-Ranges': 'bytes',
+                                        'Content-Length': String(chunk.length),
+                                        'Content-Type': mime.includes('ogg') && !mime.includes('codecs') ? `${mime}; codecs=opus` : mime,
+                                        'Content-Disposition': disposition,
                                         'Cache-Control': 'public, max-age=86400, immutable',
                                         'X-Content-Type-Options': 'nosniff',
                                     }
                                 });
                             }
                         }
-                    } catch {}
+
+                        return new NextResponse(buf, {
+                            status: 200,
+                            headers: {
+                                'Content-Type': mime.includes('ogg') && !mime.includes('codecs') ? `${mime}; codecs=opus` : mime,
+                                'Content-Disposition': disposition,
+                                'Content-Length': String(buf.length),
+                                'Accept-Ranges': 'bytes',
+                                'Cache-Control': 'public, max-age=86400, immutable',
+                                'X-Content-Type-Options': 'nosniff',
+                            }
+                        });
+                    }
                 }
-                return NextResponse.json({ status: false, message: "File not found", error: "File not found" }, { status: 404 });
+
+                if (!existsSync(filePath)) {
+                    return NextResponse.json({ status: false, message: "File not found", error: "File not found" }, { status: 404 });
+                }
             }
         }
 
         // Determine content type based on extension
-        const ext = path.extname(filename).toLowerCase();
+        const ext = path.extname(filePath || filename).toLowerCase();
         const contentTypeMap: Record<string, string> = {
             '.jpg': 'image/jpeg',
             '.jpeg': 'image/jpeg',
@@ -139,16 +180,16 @@ export async function GET(
             '.mp4': 'video/mp4',
             '.mp3': 'audio/mpeg',
             '.wav': 'audio/wav',
-            '.ogg': 'audio/ogg',
-            '.opus': 'audio/opus',
+            '.ogg': 'audio/ogg; codecs=opus',
+            '.opus': 'audio/ogg; codecs=opus',
             '.m4a': 'audio/mp4',
             '.pdf': 'application/pdf',
             '.bin': 'application/octet-stream',
         };
 
         const contentType = contentTypeMap[ext] || 'application/octet-stream';
-        const fileStat = await stat(filePath);
-        const fileSize = fileStat.size;
+        const fileBuffer = await readFile(filePath);
+        const fileSize = fileBuffer.length;
         const range = request.headers.get("range");
         const isDownload = request.nextUrl.searchParams.get("download") === "1";
         const customFilename = request.nextUrl.searchParams.get("filename");
@@ -161,37 +202,28 @@ export async function GET(
             const start = parseInt(parts[0], 10) || 0;
             const end = parts[1] ? parseInt(parts[1], 10) : fileSize - 1;
 
-            if (start >= fileSize || end >= fileSize) {
+            if (start >= fileSize || end >= fileSize || start > end) {
                 return new NextResponse(null, {
                     status: 416,
                     headers: { 'Content-Range': `bytes */${fileSize}` }
                 });
             }
 
-            const chunksize = (end - start) + 1;
-            const fileStream = createReadStream(filePath, { start, end });
-            const stream = new ReadableStream({
-                start(controller) {
-                    fileStream.on("data", (chunk) => controller.enqueue(chunk));
-                    fileStream.on("end", () => controller.close());
-                    fileStream.on("error", (err) => controller.error(err));
-                }
-            });
+            const chunk = fileBuffer.subarray(start, end + 1);
 
-            return new NextResponse(stream as any, {
+            return new NextResponse(chunk, {
                 status: 206,
                 headers: {
                     'Content-Range': `bytes ${start}-${end}/${fileSize}`,
                     'Accept-Ranges': 'bytes',
-                    'Content-Length': String(chunksize),
+                    'Content-Length': String(chunk.length),
                     'Content-Type': contentType,
                     'Content-Disposition': disposition,
                     'Cache-Control': 'public, max-age=86400',
+                    'X-Content-Type-Options': 'nosniff',
                 }
             });
         }
-
-        const fileBuffer = await readFile(filePath);
 
         return new NextResponse(fileBuffer, {
             status: 200,
@@ -199,7 +231,7 @@ export async function GET(
                 'Content-Type': contentType,
                 'Content-Disposition': disposition,
                 'Accept-Ranges': 'bytes',
-                'Content-Length': String(fileBuffer.length),
+                'Content-Length': String(fileSize),
                 'Cache-Control': 'public, max-age=86400, immutable',
                 'X-Content-Type-Options': 'nosniff',
             },

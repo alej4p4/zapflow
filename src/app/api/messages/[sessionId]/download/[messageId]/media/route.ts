@@ -3,6 +3,7 @@ import { getAuthenticatedUser, canAccessSession } from "@/lib/api-auth";
 import { prisma } from "@/lib/prisma";
 import fs from "fs";
 import path from "path";
+import { mediaDir } from "@/lib/paths";
 
 // GET: Download media from message
 export async function GET(
@@ -22,50 +23,79 @@ export async function GET(
             return NextResponse.json({ status: false, message: "Forbidden - Cannot access this session", error: "Forbidden - Cannot access this session" }, { status: 403 });
         }
 
-        // Find message in database
-        const message = await prisma.message.findUnique({
-            where: { id: messageId },
+        // Resolve session DB ID
+        const session = await prisma.session.findFirst({
+            where: { OR: [{ sessionId }, { id: sessionId }] },
+            select: { id: true }
+        });
+
+        if (!session) {
+            return NextResponse.json({ status: false, message: "Session not found", error: "Session not found" }, { status: 404 });
+        }
+
+        // Find message in database (search by DB id or keyId)
+        const message = await prisma.message.findFirst({
+            where: {
+                sessionId: session.id,
+                OR: [{ id: messageId }, { keyId: messageId }]
+            },
         });
 
         if (!message) {
             return NextResponse.json({ status: false, message: "Message not found", error: "Message not found" }, { status: 404 });
         }
 
-        if (message.sessionId !== sessionId) {
-            return NextResponse.json({ status: false, message: "Message does not belong to this session", error: "Message does not belong to this session" }, { status: 403 });
-        }
-
         if (!message.mediaUrl) {
             return NextResponse.json({ status: false, message: "Message has no media", error: "Message has no media" }, { status: 404 });
         }
 
-        // If mediaUrl is a local path, return it
-        // If it's external URL, redirect to it
-        if (message.mediaUrl.startsWith('http')) {
+        // 1. External URL: redirect
+        if (message.mediaUrl.startsWith("http://") || message.mediaUrl.startsWith("https://")) {
             return NextResponse.redirect(message.mediaUrl);
         }
 
-        // For local files, read and return
-        const filePath = path.join(process.cwd(), message.mediaUrl);
-        
+        // 2. Data URL: decode Base64
+        if (message.mediaUrl.startsWith("data:")) {
+            const match = message.mediaUrl.match(/^data:([^;]+);base64,(.+)$/);
+            if (match) {
+                const mimeType = match[1];
+                const fileBuffer = Buffer.from(match[2], "base64");
+                const ext = mimeType.split("/")[1]?.split(";")[0] || "bin";
+                const fileName = `media-${message.keyId}.${ext}`;
+                return new NextResponse(fileBuffer, {
+                    headers: {
+                        "Content-Type": mimeType,
+                        "Content-Disposition": `attachment; filename="${fileName}"`,
+                    },
+                });
+            }
+        }
+
+        // 3. Local file in mediaDir or relative
+        const baseFilename = path.basename(message.mediaUrl);
+        let filePath = path.join(mediaDir, baseFilename);
+
         if (!fs.existsSync(filePath)) {
-            return NextResponse.json({ status: false, message: "Media file not found on disk", error: "Media file not found on disk" }, { status: 404 });
+            // Fallback to process.cwd()
+            const fallbackPath = path.join(process.cwd(), message.mediaUrl);
+            if (fs.existsSync(fallbackPath)) {
+                filePath = fallbackPath;
+            } else {
+                return NextResponse.json({ status: false, message: "Media file not found on disk", error: "Media file not found on disk" }, { status: 404 });
+            }
         }
 
         const fileBuffer = fs.readFileSync(filePath);
-        const mimeType = message.type === 'IMAGE' ? 'image/jpeg' 
-            : message.type === 'VIDEO' ? 'video/mp4'
-            : message.type === 'AUDIO' ? 'audio/mpeg'
-            : message.type === 'DOCUMENT' ? 'application/pdf'
-            : 'application/octet-stream';
-
-        // Extract filename from path
-        const fileName = path.basename(message.mediaUrl);
+        const mimeType = message.type === "IMAGE" ? "image/jpeg"
+            : message.type === "VIDEO" ? "video/mp4"
+            : message.type === "AUDIO" ? "audio/ogg"
+            : message.type === "DOCUMENT" ? "application/pdf"
+            : "application/octet-stream";
 
         return new NextResponse(fileBuffer, {
             headers: {
-                'Content-Type': mimeType,
-                'Content-Disposition': `attachment; filename="${fileName}"`,
+                "Content-Type": mimeType,
+                "Content-Disposition": `attachment; filename="${baseFilename}"`,
             },
         });
 

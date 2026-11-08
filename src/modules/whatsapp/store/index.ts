@@ -687,6 +687,26 @@ async function processAndSaveMessage(
             }
         });
 
+        // ⚡ INSTANT MEDIA READY EMIT: Notify frontend that mediaUrl is downloaded and ready for playback
+        if (triggerWebhook && io && fileUrl) {
+            io.to(sessionId).emit('message.update', [{
+                id: keyId,
+                sessionId: dbSessionId,
+                remoteJid: finalNormalizedRemoteJid,
+                senderJid,
+                fromMe: fromMe || false,
+                keyId,
+                pushName,
+                type: messageType,
+                content: text,
+                mediaUrl: fileUrl,
+                status: fromMe ? "SENT" : "PENDING",
+                timestamp: timestamp.toISOString(),
+                quoteId,
+                quoted: quotedPreviewObj
+            }]);
+        }
+
         // If this message quotes an image and carries a thumbnail, backfill the original message
         if (quoteId && quotedThumbnail) {
             void prisma.message.updateMany({

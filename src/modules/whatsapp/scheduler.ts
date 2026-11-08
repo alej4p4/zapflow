@@ -1,6 +1,10 @@
 import { prisma } from "@/lib/prisma";
 import { waManager } from "./manager";
 import { logger } from "@/lib/logger";
+import path from "path";
+import { readFile } from "fs/promises";
+import { existsSync } from "fs";
+import { mediaDir } from "@/lib/paths";
 
 /** Evita disparo duplo se dois ticks do agendador se sobrepuserem. */
 const inFlight = new Set<string>();
@@ -9,13 +13,30 @@ const MAX_ATTEMPTS = 3;
 /** Monta o conteúdo da mensagem (texto ou mídia de URL). */
 async function buildContent(msg: any): Promise<any> {
     if (msg.mediaUrl) {
-        const res = await fetch(msg.mediaUrl);
-        if (!res.ok) throw new Error(`Falha ao baixar mídia: ${res.status} ${res.statusText}`);
-        const buffer = Buffer.from(await res.arrayBuffer());
+        let buffer: Buffer;
         const type = msg.mediaType || "image";
+
+        if (msg.mediaUrl.startsWith("data:")) {
+            const cleanBase64 = msg.mediaUrl.replace(/^data:[^;]+;base64,/, "");
+            buffer = Buffer.from(cleanBase64, "base64");
+        } else if (msg.mediaUrl.startsWith("/api/media/") || (!msg.mediaUrl.startsWith("http://") && !msg.mediaUrl.startsWith("https://"))) {
+            const filename = path.basename(msg.mediaUrl);
+            const filePath = path.join(mediaDir, filename);
+            if (existsSync(filePath)) {
+                buffer = await readFile(filePath);
+            } else {
+                throw new Error(`Arquivo de mídia não encontrado no disco: ${filename}`);
+            }
+        } else {
+            const res = await fetch(msg.mediaUrl);
+            if (!res.ok) throw new Error(`Falha ao baixar mídia: ${res.status} ${res.statusText}`);
+            buffer = Buffer.from(await res.arrayBuffer());
+        }
+
         if (type === "video") return { video: buffer, caption: msg.content };
+        if (type === "audio") return { audio: buffer, mimetype: "audio/mp4", ptt: false };
         if (type === "document")
-            return { document: buffer, caption: msg.content, fileName: msg.mediaUrl.split("/").pop() || "file", mimetype: "application/octet-stream" };
+            return { document: buffer, caption: msg.content, fileName: path.basename(msg.mediaUrl) || "arquivo", mimetype: "application/octet-stream" };
         return { image: buffer, caption: msg.content };
     }
     return { text: msg.content };

@@ -1,6 +1,7 @@
 import { NextResponse, NextRequest } from "next/server";
 import { getAuthenticatedUser, canAccessSession } from "@/lib/api-auth";
 import { waManager } from "@/modules/whatsapp/manager";
+import { jidNormalizedUser } from "@whiskeysockets/baileys";
 
 export async function GET(
     request: NextRequest,
@@ -25,19 +26,21 @@ export async function GET(
 
         // Fetch display name from creds
         const pushname = instance.socket.user?.name || "";
-        const myJid = instance.socket.user?.id || "";
+        const rawJid = instance.socket.user?.id || "";
+        const myJid = rawJid ? jidNormalizedUser(rawJid) : "";
 
         // Fetch status/about safely
         let status = "Hey there! I am using WhatsApp.";
         try {
-            const statusResult = await (instance.socket as any).fetchStatus(myJid);
-            if (statusResult) {
-                // Baileys might return an array or an object depending on version
-                if (Array.isArray(statusResult)) {
-                    const first = statusResult[0];
-                    if (first?.status) status = first.status;
-                } else if (statusResult.status) {
-                    status = statusResult.status;
+            if (myJid) {
+                const statusResult = await (instance.socket as any).fetchStatus(myJid);
+                if (statusResult) {
+                    if (Array.isArray(statusResult)) {
+                        const first = statusResult[0];
+                        if (first?.status) status = first.status;
+                    } else if (statusResult.status) {
+                        status = statusResult.status;
+                    }
                 }
             }
         } catch (e) {
@@ -47,7 +50,9 @@ export async function GET(
         // Fetch profile picture safely
         let pictureUrl = "";
         try {
-            pictureUrl = await instance.socket.profilePictureUrl(myJid, 'image') || "";
+            if (myJid) {
+                pictureUrl = await instance.socket.profilePictureUrl(myJid, 'image') || "";
+            }
         } catch (e) {
             // No profile picture set
         }
@@ -58,7 +63,8 @@ export async function GET(
                 name: pushname,
                 pushname: pushname,
                 status: status,
-                pictureUrl: pictureUrl
+                pictureUrl: pictureUrl,
+                phone: myJid.split("@")[0].split(":")[0]
             }
         });
 

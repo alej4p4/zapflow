@@ -417,14 +417,19 @@ function WhatsAppAudioPlayer({
     src,
     downloadFileName,
     avatarUrl,
-    fromMe = false
+    fromMe = false,
+    sessionId,
+    keyId,
 }: {
     src: string;
     downloadFileName?: string;
     avatarUrl?: string;
     fromMe?: boolean;
+    sessionId?: string;
+    keyId?: string;
 }) {
     const audioRef = useRef<HTMLAudioElement | null>(null);
+    const [audioSrc, setAudioSrc] = useState(src);
     const [isPlaying, setIsPlaying] = useState(false);
     const [hasError, setHasError] = useState(false);
     const [currentTime, setCurrentTime] = useState(0);
@@ -432,32 +437,59 @@ function WhatsAppAudioPlayer({
     const [playbackRate, setPlaybackRate] = useState<number>(1);
     const [transcription, setTranscription] = useState<string | null>(null);
     const [isTranscribing, setIsTranscribing] = useState(false);
+    const [hasRetriedFallback, setHasRetriedFallback] = useState(false);
 
     useEffect(() => {
-        if (typeof window === "undefined" || !src) return;
+        setAudioSrc(src);
+        setHasError(false);
+        setIsPlaying(false);
+        setHasRetriedFallback(false);
+        if (audioRef.current) {
+            try {
+                audioRef.current.load();
+            } catch {}
+        }
+    }, [src]);
+
+    useEffect(() => {
+        if (typeof window === "undefined" || !audioSrc) return;
         try {
             const raw = localStorage.getItem(AUDIO_TRANSCRIPTIONS_STORAGE);
             if (raw) {
                 const map: Record<string, string> = JSON.parse(raw);
-                if (map[src]) setTranscription(map[src]);
+                if (map[audioSrc]) setTranscription(map[audioSrc]);
             }
         } catch {}
-    }, [src]);
+    }, [audioSrc]);
+
+    const handleAudioError = () => {
+        setIsPlaying(false);
+        // Automatic fallback: if /api/media/... failed, attempt on-demand recovery from Baileys download endpoint
+        if (!hasRetriedFallback && sessionId && keyId && !keyId.startsWith("temp-") && !audioSrc.startsWith("data:") && !audioSrc.startsWith("blob:")) {
+            const fallbackSrc = "/api/messages/" + sessionId + "/download/" + keyId + "/media";
+            if (audioSrc !== fallbackSrc) {
+                setHasRetriedFallback(true);
+                setAudioSrc(fallbackSrc);
+                return;
+            }
+        }
+        setHasError(true);
+    };
 
     const handleTranscribe = async (e: React.MouseEvent) => {
         e.stopPropagation();
         if (isTranscribing) return;
-        if (hasError && !src.startsWith("blob:") && !src.startsWith("data:")) {
-            toast.error("Áudio indisponível ou expirado no servidor para transcrição.");
+        if (hasError && !audioSrc.startsWith("blob:") && !audioSrc.startsWith("data:")) {
+            toast.error("Áudio indisponível ou expirado no WhatsApp.");
             return;
         }
         setIsTranscribing(true);
         try {
             const keys = loadSavedLLMKeys();
             let audioBase64: string | undefined = undefined;
-            if (src.startsWith("blob:") || src.startsWith("data:")) {
+            if (audioSrc.startsWith("blob:") || audioSrc.startsWith("data:")) {
                 try {
-                    const blobRes = await fetch(src);
+                    const blobRes = await fetch(audioSrc);
                     const blobData = await blobRes.blob();
                     const reader = new FileReader();
                     audioBase64 = await new Promise<string>((resolve, reject) => {
@@ -472,12 +504,12 @@ function WhatsAppAudioPlayer({
                     console.warn("Could not read local audio blob as base64:", bErr);
                 }
             }
-            const res = await transcribeChatAudioMessage(src, keys, audioBase64);
+            const res = await transcribeChatAudioMessage(audioSrc, keys, audioBase64);
             setTranscription(res.text);
             try {
                 const raw = localStorage.getItem(AUDIO_TRANSCRIPTIONS_STORAGE);
                 const map: Record<string, string> = raw ? JSON.parse(raw) : {};
-                map[src] = res.text;
+                map[audioSrc] = res.text;
                 localStorage.setItem(AUDIO_TRANSCRIPTIONS_STORAGE, JSON.stringify(map));
             } catch {}
             toast.success("🎙️ Áudio transcrito com sucesso!");
@@ -490,21 +522,23 @@ function WhatsAppAudioPlayer({
 
     const togglePlay = async () => {
         if (!audioRef.current) return;
-        if (hasError) {
-            toast.error("Áudio indisponível ou expirado no servidor.");
-            return;
-        }
         if (isPlaying) {
             audioRef.current.pause();
-        } else {
-            try {
-                await audioRef.current.play();
-            } catch (err: any) {
-                console.error("Audio playback error:", err);
-                setIsPlaying(false);
-                setHasError(true);
-                toast.error("Áudio indisponível ou expirado no servidor.");
+            return;
+        }
+
+        try {
+            // If it had an error or wasn't loaded, reload and retry
+            if (hasError) {
+                setHasError(false);
+                audioRef.current.load();
             }
+            await audioRef.current.play();
+        } catch (err: any) {
+            console.error("Audio playback error:", err);
+            setIsPlaying(false);
+            setHasError(true);
+            toast.error("Não foi possível reproduzir este áudio. O arquivo pode estar expirado no WhatsApp.");
         }
     };
 
@@ -618,7 +652,7 @@ function WhatsAppAudioPlayer({
         <div className="flex flex-col gap-1 min-w-[260px] max-w-[340px] select-none group/audio">
             <audio
                 ref={audioRef}
-                src={src}
+                src={audioSrc}
                 preload="metadata"
                 onPlay={() => { setIsPlaying(true); setHasError(false); }}
                 onPause={() => setIsPlaying(false)}
@@ -627,7 +661,7 @@ function WhatsAppAudioPlayer({
                 onLoadedMetadata={syncDuration}
                 onDurationChange={syncDuration}
                 onCanPlay={syncDuration}
-                onError={() => { setIsPlaying(false); setHasError(true); }}
+                onError={handleAudioError}
             />
             <div className="flex items-center gap-2 pt-0.5">
                 {fromMe && avatarNode}
@@ -694,7 +728,7 @@ function WhatsAppAudioPlayer({
                                         e.stopPropagation();
                                         const ext = src.includes(".ogg") ? ".ogg" : src.includes(".webm") ? ".webm" : src.includes(".wav") ? ".wav" : src.includes(".m4a") ? ".m4a" : ".mp3";
                                         const actualName = downloadFileName.replace(/\.[^.]+$/, ext);
-                                        handleDownload(src, actualName);
+                                        handleDownload(audioSrc, actualName);
                                     }}
                                     className="hover:text-foreground cursor-pointer p-0.5 text-[#667781] dark:text-[#8696a0]"
                                     title="Baixar áudio"
@@ -6573,6 +6607,8 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
                                         {msg.type === 'AUDIO' && (msg.mediaUrl || (!msg.keyId.startsWith("temp-") && `/api/media/${sessionId}-${msg.keyId}.ogg`)) && (
                                             <WhatsAppAudioPlayer
                                                 src={msg.mediaUrl || `/api/media/${sessionId}-${msg.keyId}.ogg`}
+                                                sessionId={sessionId}
+                                                keyId={msg.keyId}
                                                 downloadFileName={`AUDIO-${msg.keyId}.ogg`}
                                                 fromMe={msg.fromMe}
                                                 avatarUrl={

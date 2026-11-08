@@ -206,7 +206,7 @@ export default function SchedulerPage() {
 
     const handleSaveSchedule = async () => {
         if (!selectedSessionId || !newJid || (!newContent && !newMediaUrl)) {
-            toast.error("Please fill required fields (JID, Content/Media)");
+            toast.error("Por favor, preencha os campos obrigatórios (Destinatário e Mensagem/Mídia)");
             return;
         }
 

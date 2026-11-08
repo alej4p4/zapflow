@@ -1,3 +1,15 @@
+## [v1.6.27] - 2026-11-08
+
+### Added
+- **Configurações do Bot Redesenhada (`/dashboard/bot-settings`)**: 4 Perfis Prontos (Atendimento SAC, Autoatendimento 24h, Proteção Anti-Ban, Completo), templates de boas-vindas com variáveis dinâmicas (`{nome}`, `{saudacao}`, `{empresa}`), simulador WhatsApp ao vivo, medidor de segurança anti-spam e botão unificado de salvar.
+- **Execução Real de Mensagem de Boas-Vindas**: Disparo automático no primeiro contato privado com cooldown de 24h e interpolação de tags dinâmicas.
+- **Aba de Grupos Turbinada**: Botão "Abrir Chat" direto, "Copiar Link Convite", exportação de participantes para CSV (UTF-8 BOM) e diálogo de confirmação seguro para "Sair do Grupo".
+
+### Fixed
+- **Reprodução de Áudios e Range Requests (HTTP 206)**: Emissão de socket de 2ª fase (`message.update`) assim que o download do áudio é salvo, evitando condição de corrida 404; streaming via `Buffer.subarray` sem travamentos de stream; tolerância ativa de download recente na rota de mídia; auto-recuperação do player de áudio com fallback sob demanda para `/api/messages/[sessionId]/download/[keyId]/media`.
+- **Download de Mídias no Scheduler**: Corrigido `TypeError: Invalid URL` ao buscar mídias relativas (`/api/media/...`) e Data URLs Base64 no disparo de agendamentos em background.
+- **Perfil do Bot com Dispositivos Múltiplos**: Remoção automática de sufixos de dispositivo Baileys (`:12`) na atualização de foto e status de perfil, eliminando erros 400/404 do WhatsApp.
+
 ## [v1.6.22] - 2026-11-08
 
 ### Fixed
