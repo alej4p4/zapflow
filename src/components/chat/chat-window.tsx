@@ -31,6 +31,7 @@ import {
     Users,
     Play,
     Pause,
+    Bot,
     AtSign,
     FileDown,
     Zap,
@@ -3268,6 +3269,19 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
             setStarredIds(rawStars ? JSON.parse(rawStars) : []);
             const savedNote = localStorage.getItem(`zapflow_notes_${sessionId}_${jid}`);
             setChatNote(savedNote || "");
+            // Sincroniza nota do banco de dados na nuvem (multi-atendentes)
+            fetch(`/api/contacts/${sessionId}/note?jid=${encodeURIComponent(jid)}`)
+                .then(r => r.json())
+                .then(data => {
+                    if (data?.status && typeof data.note === "string") {
+                        setChatNote(data.note);
+                        try {
+                            if (data.note) localStorage.setItem(`zapflow_notes_${sessionId}_${jid}`, data.note);
+                            else localStorage.removeItem(`zapflow_notes_${sessionId}_${jid}`);
+                        } catch {}
+                    }
+                })
+                .catch(() => {});
             const rawMuted = localStorage.getItem(`zapflow_muted_${sessionId}`);
             const mutedList: string[] = rawMuted ? JSON.parse(rawMuted) : [];
             setIsChatMuted(Array.isArray(mutedList) && mutedList.includes(jid));
@@ -3335,7 +3349,72 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
                 localStorage.removeItem(`zapflow_notes_${sessionId}_${jid}`);
             }
         } catch {}
+        // Persistência em nuvem compartilhada entre atendentes
+        fetch(`/api/contacts/${sessionId}/note`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ jid, note: val })
+        }).catch(() => {});
     }, [sessionId, jid]);
+
+    // ─── BOT AUTO-REPLY STATUS & PAUSE CONTROL (#C22) ───
+    const [isBotPaused, setIsBotPaused] = useState(false);
+    const [botPauseRemainingMin, setBotPauseRemainingMin] = useState(0);
+
+    const checkBotPauseStatus = useCallback(async () => {
+        if (!sessionId || !jid) return;
+        try {
+            const res = await fetch(`/api/autoreplies/${sessionId}/pause?jid=${encodeURIComponent(jid)}`);
+            const data = await res.json();
+            if (data?.status) {
+                setIsBotPaused(Boolean(data.paused));
+                const mins = Math.max(1, Math.ceil((data.remainingMs || 0) / 60000));
+                setBotPauseRemainingMin(mins);
+            }
+        } catch {}
+    }, [sessionId, jid]);
+
+    useEffect(() => {
+        checkBotPauseStatus();
+        const interval = setInterval(checkBotPauseStatus, 15000);
+        return () => clearInterval(interval);
+    }, [checkBotPauseStatus]);
+
+    const handlePauseBot = async (durationMinutes: number) => {
+        try {
+            const res = await fetch(`/api/autoreplies/${sessionId}/pause`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ jid, action: "pause", durationMinutes })
+            });
+            const data = await res.json();
+            if (data?.status) {
+                setIsBotPaused(true);
+                setBotPauseRemainingMin(durationMinutes);
+                toast.success(`⏸️ Robô pausado para esta conversa por ${durationMinutes} minutos`);
+            }
+        } catch {
+            toast.error("Erro ao pausar robô");
+        }
+    };
+
+    const handleResumeBot = async () => {
+        try {
+            const res = await fetch(`/api/autoreplies/${sessionId}/pause`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ jid, action: "resume" })
+            });
+            const data = await res.json();
+            if (data?.status) {
+                setIsBotPaused(false);
+                setBotPauseRemainingMin(0);
+                toast.success("▶️ Robô reativado para esta conversa");
+            }
+        } catch {
+            toast.error("Erro ao reativar robô");
+        }
+    };
 
     const toggleSelectMessage = useCallback((keyId: string) => {
         setSelectedMsgIds(prev => prev.includes(keyId) ? prev.filter(id => id !== keyId) : [...prev, keyId]);
@@ -5566,6 +5645,70 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
                             <span>Exportar ({participantsList.length})</span>
                         </Button>
                     )}
+                    {/* Bot Auto-Reply Status & Pause Control (#C22) */}
+                    <Popover>
+                        <PopoverTrigger asChild>
+                            <Button
+                                variant="ghost"
+                                size="sm"
+                                className={cn(
+                                    "h-8 px-2.5 rounded-full text-xs font-medium cursor-pointer transition-colors flex items-center gap-1.5",
+                                    isBotPaused
+                                        ? "bg-amber-500/15 text-amber-600 dark:text-amber-400 hover:bg-amber-500/25 border border-amber-500/30"
+                                        : "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500/20 border border-emerald-500/20"
+                                )}
+                                title={isBotPaused ? `Robô pausado para esta conversa (~${botPauseRemainingMin}m restantes)` : "Robô ativo nesta conversa"}
+                            >
+                                <Bot className="h-3.5 w-3.5" />
+                                <span className="hidden sm:inline">
+                                    {isBotPaused ? `Bot Pausado (${botPauseRemainingMin}m)` : "Bot Ativo"}
+                                </span>
+                            </Button>
+                        </PopoverTrigger>
+                        <PopoverContent align="end" className="w-64 p-3 rounded-2xl shadow-2xl bg-white dark:bg-[#233138] border border-border/30 z-50">
+                            <div className="flex items-center gap-2 mb-2 pb-2 border-b border-border/20">
+                                <Bot className={cn("h-4 w-4", isBotPaused ? "text-amber-500" : "text-emerald-500")} />
+                                <span className="text-xs font-semibold text-foreground">
+                                    {isBotPaused ? "Robô em Pausa" : "Robô Ativo na Conversa"}
+                                </span>
+                            </div>
+                            <p className="text-[11px] text-muted-foreground mb-3">
+                                {isBotPaused
+                                    ? `O robô não responderá automaticamente por mais ${botPauseRemainingMin} min nesta conversa (atendimento humano ativo).`
+                                    : "O robô responderá automaticamente de acordo com as regras configuradas."}
+                            </p>
+                            {isBotPaused ? (
+                                <Button
+                                    size="sm"
+                                    className="w-full h-8 text-xs bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl gap-1.5 cursor-pointer"
+                                    onClick={handleResumeBot}
+                                >
+                                    <Play className="h-3.5 w-3.5 fill-current" />
+                                    Reativar Robô Agora
+                                </Button>
+                            ) : (
+                                <div className="flex flex-col gap-1.5">
+                                    <Button
+                                        variant="outline"
+                                        size="sm"
+                                        className="w-full h-8 text-xs rounded-xl justify-start text-muted-foreground hover:text-foreground cursor-pointer"
+                                        onClick={() => handlePauseBot(15)}
+                                    >
+                                        <Pause className="h-3 w-3 mr-1.5" /> Pausar por 15 minutos
+                                    </Button>
+                                    <Button
+                                        variant="outline"
+                                        size="sm"
+                                        className="w-full h-8 text-xs rounded-xl justify-start text-muted-foreground hover:text-foreground cursor-pointer"
+                                        onClick={() => handlePauseBot(60)}
+                                    >
+                                        <Pause className="h-3 w-3 mr-1.5" /> Pausar por 1 hora
+                                    </Button>
+                                </div>
+                            )}
+                        </PopoverContent>
+                    </Popover>
+
                     {/* Internal Chat Notes Popover (#C21) */}
                     <Popover>
                         <PopoverTrigger asChild>
@@ -5611,7 +5754,7 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
                                 className="w-full rounded-xl bg-amber-50/60 dark:bg-amber-950/20 border border-amber-500/30 px-3 py-2 text-xs text-foreground placeholder:text-muted-foreground outline-none focus:border-amber-500 resize-none"
                             />
                             <p className="text-[10px] text-muted-foreground mt-1.5">
-                                Salvo automaticamente neste navegador para esta conversa.
+                                Sincronizado na nuvem e visível para toda a equipe.
                             </p>
                         </PopoverContent>
                     </Popover>

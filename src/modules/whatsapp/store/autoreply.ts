@@ -49,6 +49,20 @@ export function isBotPausedForChat(sessionId: string, remoteJid: string): boolea
     return true;
 }
 
+/**
+ * Retorna os milissegundos restantes da pausa do robô (0 se não estiver pausado).
+ */
+export function getBotPauseRemainingMs(sessionId: string, remoteJid: string): number {
+    const until = humanPauseMap.get(`${sessionId}:${remoteJid}`);
+    if (!until) return 0;
+    const diff = until - Date.now();
+    if (diff <= 0) {
+        humanPauseMap.delete(`${sessionId}:${remoteJid}`);
+        return 0;
+    }
+    return diff;
+}
+
 function getNowInSaoPaulo(): { dayOfWeek: number; timeHHMM: string; greeting: string } {
     const now = new Date();
     const parts = new Intl.DateTimeFormat("en-US", {
