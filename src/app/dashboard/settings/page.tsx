@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { useSession } from "next-auth/react";
+import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from "@/components/ui/card";
@@ -33,6 +34,7 @@ import { toast } from "sonner";
 
 export default function SettingsPage() {
     const { data: authSession } = useSession();
+    const router = useRouter();
     const isSuperAdmin = (authSession?.user as any)?.role === "SUPERADMIN";
 
     const [systemConfig, setSystemConfig] = useState({
@@ -180,34 +182,48 @@ export default function SettingsPage() {
                 </Card>
 
                 {/* 2. Card: Perfis & Permissões de Usuários */}
-                <Card className="border hover:border-primary/50 transition-all shadow-sm hover:shadow-md flex flex-col justify-between">
+                <Card 
+                    className="cursor-pointer border hover:border-primary/50 transition-all shadow-sm hover:shadow-md flex flex-col justify-between group"
+                    onClick={() => router.push("/dashboard/users")}
+                >
                     <CardHeader>
                         <div className="flex items-center justify-between">
-                            <div className="p-2.5 rounded-xl bg-blue-500/10 text-blue-600 dark:text-blue-400">
+                            <div className="p-2.5 rounded-xl bg-blue-500/10 text-blue-600 dark:text-blue-400 group-hover:scale-105 transition-transform">
                                 <ShieldCheck className="h-6 w-6" />
                             </div>
                             <Badge variant="outline" className="text-xs bg-blue-500/5 border-blue-500/20 text-blue-600 dark:text-blue-400">
                                 Controle de Acesso
                             </Badge>
                         </div>
-                        <CardTitle className="text-lg mt-3">
-                            Perfis e permissões por abas
+                        <CardTitle className="text-lg mt-3 group-hover:text-primary transition-colors">
+                            Perfis e seletores de abas
                         </CardTitle>
                         <CardDescription>
-                            Configure quais abas cada atendente pode ver e acessar (Painel, Conversas, Kanban, Disparos, etc.).
+                            Configure com seletores (interruptores) exatamente quais abas cada atendente pode ver e acessar.
                         </CardDescription>
                     </CardHeader>
                     <CardContent className="space-y-2 text-xs text-muted-foreground">
-                        <div className="p-2 rounded-lg bg-muted/40 space-y-1">
-                            <p className="font-medium text-foreground">Controle Granular por Abas:</p>
-                            <p>Ao marcar a aba, o atendente visualiza o menu. Desmarcado, a aba fica invisível e bloqueada.</p>
+                        <div className="p-2.5 rounded-lg bg-muted/40 space-y-1.5">
+                            <p className="font-medium text-foreground flex items-center gap-1.5">
+                                <span className="h-2 w-2 rounded-full bg-emerald-500 inline-block" /> Seletores Granulares de Abas:
+                            </p>
+                            <p>
+                                <strong>Marcado:</strong> o usuário visualiza a aba no menu e navega normalmente.<br />
+                                <strong>Desmarcado:</strong> a aba é totalmente ocultada e o acesso bloqueado.
+                            </p>
                         </div>
                     </CardContent>
                     <CardFooter className="pt-2 border-t border-border/50">
-                        <Button variant="outline" size="sm" className="w-full gap-2" asChild>
-                            <Link href="/dashboard/users">
-                                <Users className="h-4 w-4" /> Gerenciar usuários e abas
-                            </Link>
+                        <Button 
+                            variant="secondary" 
+                            size="sm" 
+                            className="w-full gap-2 group-hover:bg-primary group-hover:text-primary-foreground transition-all"
+                            onClick={(e) => {
+                                e.stopPropagation();
+                                router.push("/dashboard/users");
+                            }}
+                        >
+                            <Users className="h-4 w-4" /> Gerenciar perfis e seletores
                         </Button>
                     </CardFooter>
                 </Card>
@@ -220,7 +236,7 @@ export default function SettingsPage() {
                                 <RefreshCw className="h-6 w-6" />
                             </div>
                             <Badge variant="outline" className="text-xs bg-emerald-500/5 border-emerald-500/20 text-emerald-600 dark:text-emerald-400">
-                                v1.6.28
+                                v1.6.32
                             </Badge>
                         </div>
                         <CardTitle className="text-lg mt-3">
@@ -233,7 +249,7 @@ export default function SettingsPage() {
                     <CardContent className="space-y-2 text-xs text-muted-foreground">
                         <div className="flex items-center justify-between p-2 rounded-lg bg-muted/40">
                             <span className="font-medium text-foreground">Versão instalada:</span>
-                            <span className="font-semibold text-emerald-600 dark:text-emerald-400">v1.6.28</span>
+                            <span className="font-semibold text-emerald-600 dark:text-emerald-400">v1.6.32</span>
                         </div>
                         <div className="flex items-center justify-between p-2 rounded-lg bg-muted/40">
                             <span className="font-medium text-foreground">Status do Banco:</span>

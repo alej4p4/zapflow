@@ -152,6 +152,19 @@ export default function UsersPage() {
         });
     };
 
+    const setPermissionValue = (path: string, checked: boolean) => {
+        setFormData(prev => {
+            const has = prev.permissions.includes(path);
+            if (checked && !has) {
+                return { ...prev, permissions: [...prev.permissions, path] };
+            }
+            if (!checked && has) {
+                return { ...prev, permissions: prev.permissions.filter(p => p !== path) };
+            }
+            return prev;
+        });
+    };
+
     const applyPreset = (paths: string[]) => {
         setFormData(prev => ({
             ...prev,
@@ -435,7 +448,7 @@ export default function UsersPage() {
                                                                 <Switch
                                                                     id={`tab-${tab.path}`}
                                                                     checked={isChecked}
-                                                                    onCheckedChange={() => togglePermission(tab.path)}
+                                                                    onCheckedChange={(checked) => setPermissionValue(tab.path, checked)}
                                                                     onClick={e => e.stopPropagation()}
                                                                     className="mt-0.5"
                                                                 />
