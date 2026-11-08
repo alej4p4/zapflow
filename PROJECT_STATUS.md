@@ -11,19 +11,29 @@
 - **Branch Ativo:** `main`
 - **Deploy em Produção:** Railway (`https://zapflow-production-40ae.up.railway.app`)
 - **Versão Atual:** `1.6.22`
+- **Banco de Dados Oficial:** PostgreSQL 18.6 Nativo no Railway (Volume persistente `/var/lib/postgresql/data`, rede privada `postgres.railway.internal:5432`)
 
 ---
 
 ## 🛠️ 2. Stack Tecnológica
 - **Framework:** Next.js 16 (App Router) + React 19 + TypeScript
 - **WhatsApp Engine:** `@whiskeysockets/baileys` (Multi-Device WebSockets)
-- **Banco de Dados & ORM:** PostgreSQL (Neon) gerenciado via **Prisma 6.7** (`prisma/schema.prisma`)
+- **Banco de Dados & ORM:** PostgreSQL 18.6 nativo co-alocado no Railway, gerenciado via **Prisma 6.7** (`prisma/schema.prisma`)
 - **Estilização & UI:** Tailwind CSS, Radix UI / Shadcn, Lucide React, Sonner (Toasts)
 - **Runtime:** Node.js 20+ no Windows (desenvolvimento local) e Docker / Linux (Railway)
 
 ---
 
 ## 🚀 3. O que já foi implementado e entregue recentemente
+
+### Migração de Alta Performance para PostgreSQL Nativo no Railway
+- **Fim da Latência Externa e Cold Starts:**
+  - Migrado do Neon Serverless para um serviço de **PostgreSQL 18.6 dedicado dentro da rede interna do Railway** (`postgres.railway.internal:5432`).
+  - Latência entre o ZapFlow e o banco reduzida de ~80ms (com picos de 3s no cold start do Neon) para **< 2ms** em rede interna contínua.
+  - Zero auto-suspend / sleep: o banco fica 100% ativo 24 horas por dia.
+- **Migração Completa dos Dados com Zero Perda:**
+  - Todos os dados foram migrados com integridade referencial: 1 Admin, 1 Sessão, **21.447 chaves de autenticação do WhatsApp (AuthState)**, **4.940 Contatos**, **171 Grupos**, **14.726 Mensagens** e 2.283 logs de disparos.
+  - O banco Neon antigo permanece intacto como backup externo.
 
 ### Módulo de Áudio Completo (v1.6.22)
 - **Streaming de Áudio HTTP 206 Partial Content (`/api/media/[filename]`):**
