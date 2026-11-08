@@ -3455,6 +3455,31 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
         return () => window.removeEventListener("zapflow:mute-changed", handleMuteChanged);
     }, [jid]);
 
+    // Scroll and highlight message from global search or internal jump
+    useEffect(() => {
+        const handleScrollToMessage = (e: Event) => {
+            const { keyId, jid: targetJid } = (e as CustomEvent<{ keyId: string; jid?: string }>).detail || {};
+            if (!keyId) return;
+            if (targetJid && targetJid !== jid) return;
+
+            let attempts = 0;
+            const tryScroll = () => {
+                const el = document.getElementById('msg-' + keyId);
+                if (el) {
+                    el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                    el.classList.add('bg-[#00a884]/25', 'transition-colors', 'duration-500');
+                    setTimeout(() => el.classList.remove('bg-[#00a884]/25'), 2200);
+                } else if (attempts < 8) {
+                    attempts++;
+                    setTimeout(tryScroll, 200);
+                }
+            };
+            setTimeout(tryScroll, 120);
+        };
+        window.addEventListener('zapflow:scroll-to-message', handleScrollToMessage);
+        return () => window.removeEventListener('zapflow:scroll-to-message', handleScrollToMessage);
+    }, [jid]);
+
     const handleToggleChatMute = useCallback(() => {
         setIsChatMuted(prev => {
             const next = !prev;

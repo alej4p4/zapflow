@@ -29,7 +29,7 @@ import {
     PaginationItem,
 } from "@/components/ui/pagination";
 
-import { Search, Loader2, User, Sparkles, Trash2, AlertTriangle, CheckCircle2, Ban, Copy } from "lucide-react";
+import { Search, Loader2, User, Sparkles, Trash2, AlertTriangle, CheckCircle2, Ban, Copy, Download } from "lucide-react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import {
     Select,
@@ -86,6 +86,60 @@ export default function ContactListPage() {
     const [cleanInvalid, setCleanInvalid] = useState(true);
     const [cleanFailed, setCleanFailed] = useState(true);
     const [syncBroadcastExclude, setSyncBroadcastExclude] = useState(true);
+    const [exporting, setExporting] = useState(false);
+
+    const handleExportCSV = async () => {
+        if (!sessionId) return;
+        setExporting(true);
+        try {
+            const res = await fetch(`/api/contacts/${sessionId}?limit=all`);
+            const json = await res.json();
+            if (!res.ok || !json.data) throw new Error(json.error || "Falha ao obter contatos");
+
+            const list = json.data as Contact[];
+            if (list.length === 0) {
+                toast.info("Nenhum contato encontrado para exportação.");
+                return;
+            }
+
+            const getContactPhone = (c: Contact) => {
+                if (c.jid?.endsWith("@s.whatsapp.net")) {
+                    return c.jid.split("@")[0].split(":")[0];
+                }
+                if (c.remoteJidAlt?.endsWith("@s.whatsapp.net")) {
+                    return c.remoteJidAlt.split("@")[0].split(":")[0];
+                }
+                return c.remoteJidAlt || c.jid || "";
+            };
+
+            const headers = ["Nome", "Nome Notificacao", "Telefone", "JID", "ID Alternativo"];
+            const rows = list.map(c => [
+                `"${(c.name || c.verifiedName || "").replace(/"/g, '""')}"`,
+                `"${(c.notify || "").replace(/"/g, '""')}"`,
+                `"${getContactPhone(c)}"`,
+                `"${c.jid || ""}"`,
+                `"${c.remoteJidAlt || ""}"`
+            ].join(";"));
+
+            const csvContent = "\uFEFF" + [headers.join(";"), ...rows].join("\r\n");
+            const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement("a");
+            link.href = url;
+            const nowStr = new Date().toISOString().slice(0, 10);
+            link.download = `contatos_barrasoftware_${nowStr}.csv`;
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            URL.revokeObjectURL(url);
+            toast.success(`${list.length} contatos exportados com sucesso!`);
+        } catch (err: any) {
+            console.error("Export error:", err);
+            toast.error("Erro ao exportar contatos: " + (err.message || "desconhecido"));
+        } finally {
+            setExporting(false);
+        }
+    };
 
     // Debounce Search
     useEffect(() => {
@@ -287,6 +341,21 @@ export default function ContactListPage() {
                                         onChange={(e) => setSearch(e.target.value)}
                                     />
                                 </div>
+                                <Button
+                                    variant="outline"
+                                    size="sm"
+                                    onClick={handleExportCSV}
+                                    disabled={exporting || loading}
+                                    className="gap-2 shrink-0 border-border/40 hover:bg-muted text-xs h-9 cursor-pointer"
+                                    title="Baixar lista completa de contatos em formato CSV compatível com Excel"
+                                >
+                                    {exporting ? (
+                                        <Loader2 className="h-4 w-4 animate-spin text-[#00a884]" />
+                                    ) : (
+                                        <Download className="h-4 w-4 text-[#00a884]" />
+                                    )}
+                                    <span>{exporting ? "Exportando..." : "Exportar CSV"}</span>
+                                </Button>
                             </div>
                         </div>
                     </CardHeader>

@@ -10,7 +10,7 @@
 - **Repositório Git:** `https://github.com/alej4p4/zapflow.git`
 - **Branch Ativo:** `main`
 - **Deploy em Produção:** Railway (`https://zapflow-production-40ae.up.railway.app`)
-- **Versão Atual:** `1.6.25`
+- **Versão Atual:** `1.6.26`
 - **Banco de Dados Oficial:** PostgreSQL 18.6 Nativo no Railway (Volume persistente `/var/lib/postgresql/data`, rede privada `postgres.railway.internal:5432`)
 - **Volume Persistente de Arquivos:** `zapflow-volume-XrQh` montado em `/app/data` no serviço `zapflow`
 
@@ -26,6 +26,17 @@
 ---
 
 ## 🚀 3. O que já foi implementado e entregue recentemente
+
+### Busca Global de Mensagens no Histórico & Exportação de Contatos (v1.6.26)
+- **Busca Global de Mensagens no Histórico Completo (`/dashboard/chat`):**
+  - Agora os atendentes podem buscar qualquer termo (ex: "PIX", "orçamento", "comprovante", "endereço") diretamente na barra de busca do chat.
+  - Exibição de abas inteligentes: **Conversas** e **Mensagens**.
+  - A busca em mensagens pesquisa em todas as mais de 14.800 mensagens do banco de dados com sensibilidade desativada (case-insensitive) e exibe os resultados com nome do cliente, foto, horário e prévia destacada.
+  - Ao clicar na mensagem encontrada, o sistema abre a conversa imediatamente e rola com animação suave e destaque verde até a mensagem exata no histórico.
+- **Exportação de Contatos em Formato CSV / Excel (`/dashboard/contacts`):**
+  - Novo botão "Exportar CSV" na tela de Contatos que baixa a base de contatos em formato CSV compatível com Excel (com codificação UTF-8 BOM para preservar acentuação em português).
+- **Busca Insensível a Maiúsculas/Minúsculas nas APIs:**
+  - Melhoradas as rotas de busca de contatos e mensagens no PostgreSQL com `mode: 'insensitive'`.
 
 ### Painel Executivo com Métricas e Inteligência Operacional (v1.6.25)
 - **Dashboard com Métricas em Tempo Real (`/dashboard`):**

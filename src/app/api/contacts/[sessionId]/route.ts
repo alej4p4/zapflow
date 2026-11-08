@@ -53,11 +53,11 @@ export async function GET(
         if (search) {
             and.push({
                 OR: [
-                    { name: { contains: search } },
-                    { notify: { contains: search } },
-                    { verifiedName: { contains: search } },
-                    { jid: { contains: search } },
-                    { remoteJidAlt: { contains: search } }
+                    { name: { contains: search, mode: "insensitive" } },
+                    { notify: { contains: search, mode: "insensitive" } },
+                    { verifiedName: { contains: search, mode: "insensitive" } },
+                    { jid: { contains: search, mode: "insensitive" } },
+                    { remoteJidAlt: { contains: search, mode: "insensitive" } }
                 ]
             });
         }

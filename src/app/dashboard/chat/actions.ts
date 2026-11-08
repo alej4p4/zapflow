@@ -84,6 +84,65 @@ export async function searchWhatsAppContacts(sessionId: string, query: string) {
     }));
 }
 
+// Global Message Search across all chats in database
+export async function searchGlobalMessages(sessionId: string, query: string) {
+    const user = await getAuthenticatedUserForAction();
+    if (!user) throw new Error("Unauthorized");
+
+    const canAccess = await canAccessSession(user.id, user.role, sessionId);
+    if (!canAccess) throw new Error("Forbidden");
+
+    const session = await prisma.session.findFirst({
+        where: { OR: [{ sessionId }, { id: sessionId }] },
+        select: { id: true }
+    });
+    if (!session) return [];
+
+    const q = query.trim();
+    if (!q || q.length < 2) return [];
+
+    const messages = await prisma.message.findMany({
+        where: {
+            sessionId: session.id,
+            content: { contains: q, mode: "insensitive" }
+        },
+        orderBy: { timestamp: "desc" },
+        take: 40,
+        select: {
+            id: true,
+            keyId: true,
+            remoteJid: true,
+            fromMe: true,
+            content: true,
+            timestamp: true,
+            type: true,
+            pushName: true,
+            contract: {
+                select: {
+                    name: true,
+                    notify: true,
+                    profilePic: true
+                }
+            }
+        }
+    });
+
+    return messages.map(m => {
+        const contactName = m.contract?.name || m.contract?.notify || m.pushName || m.remoteJid.replace("@s.whatsapp.net", "").replace("@g.us", "");
+        return {
+            id: m.id,
+            keyId: m.keyId,
+            jid: m.remoteJid,
+            fromMe: m.fromMe,
+            content: m.content || "",
+            timestamp: m.timestamp.toISOString(),
+            type: m.type,
+            contactName,
+            profilePic: (m.contract?.profilePic && m.contract.profilePic.startsWith("http")) ? m.contract.profilePic : null
+        };
+    });
+}
+
 // Fetch messages for a specific chat with cursor pagination
 export async function getChatMessages(
     sessionId: string,

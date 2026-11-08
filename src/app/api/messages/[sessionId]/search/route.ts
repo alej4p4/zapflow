@@ -58,7 +58,7 @@ export async function GET(
         };
 
         if (q) {
-            where.content = { contains: q };
+            where.content = { contains: q, mode: "insensitive" };
         }
 
         if (jid) {
