@@ -62,7 +62,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
                 );
 
                 if (chosen) {
-                    setSessionIdState(chosen);
+                    setSessionIdState(prev => prev === chosen ? prev : chosen);
                     setCookie("sessionId", chosen);
                     if (typeof window !== "undefined") {
                         try { sessionStorage.setItem("zapflow_active_session", chosen); } catch {}
@@ -71,13 +71,13 @@ export function SessionProvider({ children }: { children: ReactNode }) {
                     // Default to first connected or first
                     const connected = data.find((s: Session) => s.status === "CONNECTED");
                     const target = connected ? connected.sessionId : data[0].sessionId;
-                    setSessionIdState(target);
+                    setSessionIdState(prev => prev === target ? prev : target);
                     setCookie("sessionId", target);
                     if (typeof window !== "undefined") {
                         try { sessionStorage.setItem("zapflow_active_session", target); } catch {}
                     }
                 } else {
-                    setSessionIdState("");
+                    setSessionIdState(prev => prev === "" ? prev : "");
                     setCookie("sessionId", "");
                     if (typeof window !== "undefined") {
                         try { sessionStorage.removeItem("zapflow_active_session"); } catch {}

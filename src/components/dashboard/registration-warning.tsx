@@ -96,14 +96,14 @@ export function RegistrationWarning({ role, registrationEnabled }: RegistrationW
             if (prevStatus === "CONNECTED" && s.status !== "CONNECTED") {
                 newlyDisconnected = s;
                 // Reset dismissal when a fresh disconnect occurs
-                setDismissedForSession(prev => ({ ...prev, [s.sessionId]: false }));
+                setDismissedForSession(prev => prev[s.sessionId] ? { ...prev, [s.sessionId]: false } : prev);
             }
             prevStatusMapRef.current[s.sessionId] = s.status;
         }
 
         if (newlyDisconnected) {
             playDisconnectAlertSound();
-            setDisconnectedSession(newlyDisconnected);
+            setDisconnectedSession(prev => prev?.sessionId === newlyDisconnected.sessionId ? prev : newlyDisconnected);
             toast.error(`Conexão perdida: ${newlyDisconnected.name || newlyDisconnected.sessionId}`, {
                 description: "A sessão do WhatsApp desconectou. Reconecte para continuar enviando mensagens.",
                 duration: 10000,
@@ -115,9 +115,9 @@ export function RegistrationWarning({ role, registrationEnabled }: RegistrationW
         const active = sessions.find(s => s.sessionId === sessionId) || sessions[0];
         // Only warn if the session is genuinely DISCONNECTED or LOGGED_OUT (never during transient CONNECTING/reconnect)
         if (active && (active.status === "DISCONNECTED" || active.status === "LOGGED_OUT") && !dismissedForSession[active.sessionId]) {
-            setDisconnectedSession(active);
+            setDisconnectedSession(prev => prev?.sessionId === active.sessionId && prev?.status === active.status ? prev : active);
         } else if (active && (active.status === "CONNECTED" || active.status === "CONNECTING")) {
-            setDisconnectedSession(null);
+            setDisconnectedSession(prev => prev ? null : prev);
         }
     }, [sessions, sessionId, dismissedForSession]);
 

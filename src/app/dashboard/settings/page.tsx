@@ -236,7 +236,7 @@ export default function SettingsPage() {
                                 <RefreshCw className="h-6 w-6" />
                             </div>
                             <Badge variant="outline" className="text-xs bg-emerald-500/5 border-emerald-500/20 text-emerald-600 dark:text-emerald-400">
-                                v1.6.32
+                                v1.6.33
                             </Badge>
                         </div>
                         <CardTitle className="text-lg mt-3">
@@ -249,7 +249,7 @@ export default function SettingsPage() {
                     <CardContent className="space-y-2 text-xs text-muted-foreground">
                         <div className="flex items-center justify-between p-2 rounded-lg bg-muted/40">
                             <span className="font-medium text-foreground">Versão instalada:</span>
-                            <span className="font-semibold text-emerald-600 dark:text-emerald-400">v1.6.32</span>
+                            <span className="font-semibold text-emerald-600 dark:text-emerald-400">v1.6.33</span>
                         </div>
                         <div className="flex items-center justify-between p-2 rounded-lg bg-muted/40">
                             <span className="font-medium text-foreground">Status do Banco:</span>
