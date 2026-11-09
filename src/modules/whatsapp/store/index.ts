@@ -92,7 +92,7 @@ export const bindSessionStore = (sock: WASocket, sessionId: string, io: Server |
 
     // Handle Message History Sync (when connecting for the first time or syncing)
     sock.ev.on('messaging-history.set', async ({ messages, chats, contacts, isLatest }) => {
-        logger.info("Store", `History sync: ${messages?.length || 0} messages, ${chats?.length || 0} chats, ${contacts?.length || 0} contacts, latest: ${isLatest}`);
+        logger.info("Store", `History sync received: ${messages?.length || 0} messages, ${chats?.length || 0} chats, ${contacts?.length || 0} contacts, latest: ${isLatest}`);
 
         // Ensure we have the database session ID
         if (!dbSessionId) {
@@ -101,22 +101,28 @@ export const bindSessionStore = (sock: WASocket, sessionId: string, io: Server |
             dbSessionId = session.id;
         }
 
-        // Save all historical messages
+        // Save historical messages with batching and cap (max 200 recent) to protect event loop
         if (messages && messages.length > 0) {
-            logger.info("Store", `Syncing ${messages.length} historical messages...`);
-            for (const msg of messages) {
-                try {
-                    await processAndSaveMessage(msg, dbSessionId, sessionId, false, sock, undefined, io);
-                } catch (error) {
-                    logger.error("Store", "Error saving historical message", error);
-                }
+            const MAX_HISTORY = 200;
+            const messagesToProcess = messages.length > MAX_HISTORY ? messages.slice(-MAX_HISTORY) : messages;
+            logger.info("Store", `Syncing ${messagesToProcess.length} historical messages (capped to keep server fast)...`);
+
+            const BATCH_SIZE = 20;
+            for (let i = 0; i < messagesToProcess.length; i += BATCH_SIZE) {
+                const batch = messagesToProcess.slice(i, i + BATCH_SIZE);
+                await Promise.all(
+                    batch.map(msg =>
+                        processAndSaveMessage(msg, dbSessionId!, sessionId, false, sock, undefined, io).catch(e => {
+                            logger.error("Store", "Error saving historical message", e?.message || e);
+                        })
+                    )
+                );
+                // Yield to Node.js event loop
+                await new Promise(resolve => setImmediate(resolve));
             }
-            logger.success("Store", `Finished syncing ${messages.length} historical messages`);
+            logger.success("Store", `Finished syncing ${messagesToProcess.length} historical messages`);
         }
 
-
-        // Note: Contacts and Chats are synced by src/modules/whatsapp/store/contacts.ts
-        // We only handle messages here to avoid P2002 Unique Constraint Race Conditions.
         logger.debug("Store", `Finished syncing messages`);
     });
 
@@ -661,31 +667,65 @@ async function processAndSaveMessage(
         }]);
     }
 
-    // Download Media (to save URL to DB)
+    // Download Media (to save URL to DB) - only for live messages (triggerWebhook=true)
     let fileUrl: string | null = null;
-    try {
-        fileUrl = await downloadAndSaveMedia(msg, sessionId);
-    } catch (e) {
-        logger.error("Store", "Error downloading media in store", e);
+    if (triggerWebhook) {
+        try {
+            fileUrl = await downloadAndSaveMedia(msg, sessionId);
+        } catch (e) {
+            logger.error("Store", "Error downloading media in store", e);
+        }
     }
 
     try {
-        const newMessage = await prisma.message.create({
-            data: {
-                sessionId: dbSessionId,
-                remoteJid: finalNormalizedRemoteJid,
-                senderJid,
-                fromMe: fromMe || false,
-                keyId,
-                pushName,
-                type: messageType as any,
-                content: text,
-                mediaUrl: fileUrl, // Save Media URL
-                status: fromMe ? "SENT" : "PENDING",
-                timestamp,
-                quoteId
+        let activeSessionId = dbSessionId;
+        let newMessage;
+        try {
+            newMessage = await prisma.message.create({
+                data: {
+                    sessionId: activeSessionId,
+                    remoteJid: finalNormalizedRemoteJid,
+                    senderJid,
+                    fromMe: fromMe || false,
+                    keyId,
+                    pushName,
+                    type: messageType as any,
+                    content: text,
+                    mediaUrl: fileUrl, // Save Media URL
+                    status: fromMe ? "SENT" : "PENDING",
+                    timestamp,
+                    quoteId
+                }
+            });
+        } catch (createErr: any) {
+            if (createErr.code === 'P2003') {
+                // Foreign key constraint violated: refresh dbSessionId
+                const ref = await prisma.session.findUnique({ where: { sessionId }, select: { id: true } });
+                if (ref) {
+                    activeSessionId = ref.id;
+                    newMessage = await prisma.message.create({
+                        data: {
+                            sessionId: activeSessionId,
+                            remoteJid: finalNormalizedRemoteJid,
+                            senderJid,
+                            fromMe: fromMe || false,
+                            keyId,
+                            pushName,
+                            type: messageType as any,
+                            content: text,
+                            mediaUrl: fileUrl,
+                            status: fromMe ? "SENT" : "PENDING",
+                            timestamp,
+                            quoteId
+                        }
+                    });
+                } else {
+                    throw createErr;
+                }
+            } else {
+                throw createErr;
             }
-        });
+        }
 
         // ⚡ INSTANT MEDIA READY EMIT: Notify frontend that mediaUrl is downloaded and ready for playback
         if (triggerWebhook && io && fileUrl) {

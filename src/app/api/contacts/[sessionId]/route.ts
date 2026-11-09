@@ -75,16 +75,19 @@ export async function GET(
             ...(and.length ? { AND: and } : {}),
         };
 
+        const withCount = searchParams.get("withCount") === "1";
         const [contacts, total] = await Promise.all([
             prisma.contact.findMany({
                 where,
                 ...(isAll ? {} : { skip: (page - 1) * limit, take: limit }),
                 orderBy: { name: 'asc' },
-                include: {
-                    _count: {
-                        select: { messages: true }
+                ...(withCount ? {
+                    include: {
+                        _count: {
+                            select: { messages: true }
+                        }
                     }
-                }
+                } : {})
             }),
             prisma.contact.count({ where })
         ]);

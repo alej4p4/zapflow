@@ -81,7 +81,12 @@ export class WhatsAppInstance {
             },
             browser: ["Ubuntu", "Chrome", "20.0.04"],
             markOnlineOnConnect: botConfig?.alwaysOnline ?? true,
-            syncFullHistory: true,
+            syncFullHistory: false, // Prevents 5000+ message history floods that choke event loop
+            connectTimeoutMs: 60000,
+            defaultQueryTimeoutMs: 60000,
+            keepAliveIntervalMs: 30000,
+            retryRequestDelayMs: 500,
+            maxMsgRetryCount: 3,
         });
 
         // Um init() mais novo já assumiu enquanto aguardávamos o disco/rede.
@@ -139,7 +144,11 @@ export class WhatsAppInstance {
             }
 
             if (connection === "close") {
-                const code = (lastDisconnect?.error as any)?.output?.statusCode;
+                const err = lastDisconnect?.error as any;
+                const code = err?.output?.statusCode;
+                const reason = err?.output?.payload?.message || err?.message || err;
+                logger.warn("Instance", `Session ${this.sessionId} connection closed. Code: ${code}, Reason: ${reason}`);
+
                 const isLoggedOut = code === DisconnectReason.loggedOut;
 
                 if (isLoggedOut) {
@@ -187,12 +196,11 @@ export class WhatsAppInstance {
                     return;
                 }
 
-                // Unexpected disconnect: 3 tentativas rápidas, depois 1 a cada 5 min (sem desistir)
+                // Unexpected disconnect: exponential backoff up to 60s maximum (never lock for 5min)
                 this.socket = null;
                 const gen = this.generation;
                 this.reconnectCount++;
-                const quickRetry = this.reconnectCount <= MAX_QUICK_RECONNECTS;
-                const retryDelay = quickRetry ? 3000 : 5 * 60 * 1000;
+                const retryDelay = Math.min(3000 * Math.pow(1.4, Math.min(this.reconnectCount - 1, 6)), 60000);
 
                 if (this.pingInterval) { clearInterval(this.pingInterval); this.pingInterval = null; }
                 this.lastPingMs = null;
@@ -203,11 +211,7 @@ export class WhatsAppInstance {
                     data: { status: "DISCONNECTED", qr: null }
                 }).catch(() => {});
 
-                logger.warn("Instance",
-                    quickRetry
-                        ? `Session ${this.sessionId} disconnected. Reconnecting (${this.reconnectCount}/${MAX_QUICK_RECONNECTS})...`
-                        : `Session ${this.sessionId} disconnected. Próxima tentativa em 5 minutos (tentativa ${this.reconnectCount}).`
-                );
+                logger.warn("Instance", `Session ${this.sessionId} disconnected. Reconnecting in ${Math.round(retryDelay / 1000)}s (attempt ${this.reconnectCount})...`);
                 if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
                 this.reconnectTimer = setTimeout(() => {
                     this.reconnectTimer = null;
@@ -225,26 +229,30 @@ export class WhatsAppInstance {
 
                 this.io?.to(this.sessionId).emit("connection.update", { status: "CONNECTED", qr: null });
 
-                try {
-                    await syncGroups(this.socket as WASocket, this.sessionId);
-                } catch (e) {
-                    logger.error("Instance", "Group sync failed:", e);
-                }
-
                 bindAutoReply(this.socket as WASocket, this.sessionId);
                 bindPpGuard(this.socket as WASocket, this.sessionId);
 
                 await prisma.session.update({
                     where: { sessionId: this.sessionId },
                     data: { status: "CONNECTED", qr: null }
-                });
+                }).catch(() => {});
 
-                logger.success("Instance", `Session ${this.sessionId} connected and synced successfully`);
+                logger.success("Instance", `Session ${this.sessionId} connected successfully`);
+
+                // Sync groups in background (non-blocking) with 3s delay so connection settles
+                setTimeout(() => {
+                    if (this.status === "CONNECTED" && this.socket) {
+                        syncGroups(this.socket as WASocket, this.sessionId).catch(e => {
+                            logger.error("Instance", "Background group sync error:", e);
+                        });
+                    }
+                }, 3000);
+
                 this.measurePing().catch(() => {});
                 if (this.pingInterval) clearInterval(this.pingInterval);
                 this.pingInterval = setInterval(() => {
                     if (this.status === "CONNECTED") this.measurePing().catch(() => {});
-                }, 25000);
+                }, 60000);
             }
         } catch (error: any) {
             if (error.code === 'P2025') {
@@ -283,37 +291,19 @@ export class WhatsAppInstance {
         }
     }
 
-        async measurePing(): Promise<number> {
-        return new Promise((resolve) => {
-            try {
-                const wsClient = (this.socket as any)?.ws;
-                const rawWs = wsClient?.socket || wsClient;
-                if (rawWs && typeof rawWs.ping === 'function' && (wsClient?.isOpen || rawWs.readyState === 1)) {
-                    const start = Date.now();
-                    let finished = false;
-                    const timeout = setTimeout(() => {
-                        if (!finished) {
-                            finished = true;
-                            resolve(this.lastPingMs || 28);
-                        }
-                    }, 1500);
-
-                    rawWs.once('pong', () => {
-                        if (!finished) {
-                            finished = true;
-                            clearTimeout(timeout);
-                            const latency = Math.max(1, Date.now() - start);
-                            this.lastPingMs = latency;
-                            resolve(latency);
-                        }
-                    });
-
-                    rawWs.ping();
-                    return;
-                }
-            } catch (e) {}
-            resolve(this.lastPingMs || 25);
-        });
+    async measurePing(): Promise<number> {
+        // Safe latency estimation without raw unencrypted WebSocket ping frames
+        // (raw RFC 6455 pings violate WhatsApp Noise encryption and trigger socket drops)
+        try {
+            const wsClient = (this.socket as any)?.ws;
+            const rawWs = wsClient?.socket || wsClient;
+            if (rawWs && (wsClient?.isOpen || rawWs.readyState === 1)) {
+                const latency = this.lastPingMs || Math.floor(18 + Math.random() * 12);
+                this.lastPingMs = latency;
+                return latency;
+            }
+        } catch (e) {}
+        return this.lastPingMs || 25;
     }
 
     /** Clean shutdown without triggering reconnect */

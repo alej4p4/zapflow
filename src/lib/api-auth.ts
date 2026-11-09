@@ -172,7 +172,19 @@ export async function isSessionOwner(userId: string, userRole: string, sessionId
  * - SUPERADMIN sees all
  * - Others see only their own
  */
-export async function getAccessibleSessions(userId: string, userRole: string) {
+export async function getAccessibleSessions(userId: string, userRole: string, includeCounts = false) {
+    const countsInclude = includeCounts ? {
+        _count: {
+            select: {
+                contacts: true,
+                messages: true,
+                groups: true,
+                autoReplies: true,
+                scheduledMessages: true
+            }
+        }
+    } : {};
+
     if (isAdmin(userRole)) {
         return prisma.session.findMany({
             orderBy: { createdAt: 'desc' },
@@ -184,16 +196,7 @@ export async function getAccessibleSessions(userId: string, userRole: string) {
                     }
                 },
                 botConfig: true,
-                webhooks: true,
-                _count: {
-                    select: {
-                        contacts: true,
-                        messages: true,
-                        groups: true,
-                        autoReplies: true,
-                        scheduledMessages: true
-                    }
-                }
+                ...countsInclude
             }
         });
     }
@@ -211,16 +214,7 @@ export async function getAccessibleSessions(userId: string, userRole: string) {
                     }
                 },
                 botConfig: true,
-                webhooks: true,
-                _count: {
-                    select: {
-                        contacts: true,
-                        messages: true,
-                        groups: true,
-                        autoReplies: true,
-                        scheduledMessages: true
-                    }
-                }
+                ...countsInclude
             }
         }),
         prisma.sessionAccess.findMany({
@@ -248,16 +242,7 @@ export async function getAccessibleSessions(userId: string, userRole: string) {
                 }
             },
             botConfig: true,
-            webhooks: true,
-            _count: {
-                select: {
-                    contacts: true,
-                    messages: true,
-                    groups: true,
-                    autoReplies: true,
-                    scheduledMessages: true
-                }
-            }
+            ...countsInclude
         }
     });
 

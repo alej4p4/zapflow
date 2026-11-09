@@ -32,6 +32,23 @@ import { redirect } from "next/navigation";
 
 export const dynamic = 'force-dynamic';
 
+// In-memory cache for aggregated overview metrics (30s TTL)
+let metricsCache: {
+    timestamp: number;
+    data: {
+        totalMessages: number;
+        messagesToday: number;
+        messagesSentToday: number;
+        messagesRecvToday: number;
+        totalContacts: number;
+        totalGroups: number;
+        autoReplyCount: number;
+        hourlyStats: Array<{ hour: number; count: number }>;
+        topLabels: Array<{ id: string; name: string; colorHex: string; count: number }>;
+    };
+} | null = null;
+const METRICS_TTL = 30 * 1000;
+
 export default async function DashboardPage() {
     let session = null;
     try {
@@ -70,61 +87,89 @@ export default async function DashboardPage() {
     let hourlyStats: Array<{ hour: number; count: number }> = [];
     let topLabels: Array<{ id: string; name: string; colorHex: string; count: number }> = [];
 
-    try {
-        const [
-            msgsCount,
-            todayCount,
-            sentTodayCount,
-            contactsCount,
-            groupsCount,
-            autoReplies,
-            hourlyRaw,
-            labelsRaw
-        ] = await Promise.all([
-            prisma.message.count(),
-            prisma.message.count({ where: { timestamp: { gte: todayStart } } }),
-            prisma.message.count({ where: { timestamp: { gte: todayStart }, fromMe: true } }),
-            prisma.contact.count(),
-            prisma.group.count(),
-            sessionIds.length > 0 ? prisma.autoReply.count({ where: { sessionId: { in: sessionIds } } }) : 0,
-            prisma.$queryRaw<Array<{ hour: number; count: number }>>`
-                SELECT EXTRACT(HOUR FROM timestamp)::int as hour, count(*)::int as count
-                FROM "Message"
-                WHERE timestamp >= NOW() - INTERVAL '7 days'
-                GROUP BY hour
-                ORDER BY hour ASC
-            `,
-            prisma.label.findMany({
-                where: dbSessionIds.length > 0 ? { sessionId: { in: dbSessionIds } } : undefined,
-                select: {
-                    id: true,
-                    name: true,
-                    colorHex: true,
-                    chatLabels: { select: { id: true } }
-                },
-                take: 8
-            })
-        ]);
+    const now = Date.now();
+    if (metricsCache && (now - metricsCache.timestamp) < METRICS_TTL) {
+        totalMessages = metricsCache.data.totalMessages;
+        messagesToday = metricsCache.data.messagesToday;
+        messagesSentToday = metricsCache.data.messagesSentToday;
+        messagesRecvToday = metricsCache.data.messagesRecvToday;
+        totalContacts = metricsCache.data.totalContacts;
+        totalGroups = metricsCache.data.totalGroups;
+        autoReplyCount = metricsCache.data.autoReplyCount;
+        hourlyStats = metricsCache.data.hourlyStats;
+        topLabels = metricsCache.data.topLabels;
+    } else {
+        try {
+            const [
+                msgsCount,
+                todayCount,
+                sentTodayCount,
+                contactsCount,
+                groupsCount,
+                autoReplies,
+                hourlyRaw,
+                labelsRaw
+            ] = await Promise.all([
+                prisma.message.count(),
+                prisma.message.count({ where: { timestamp: { gte: todayStart } } }),
+                prisma.message.count({ where: { timestamp: { gte: todayStart }, fromMe: true } }),
+                prisma.contact.count(),
+                prisma.group.count(),
+                sessionIds.length > 0 ? prisma.autoReply.count({ where: { sessionId: { in: sessionIds } } }) : 0,
+                prisma.$queryRaw<Array<{ hour: number; count: number }>>`
+                    SELECT EXTRACT(HOUR FROM timestamp)::int as hour, count(*)::int as count
+                    FROM "Message"
+                    WHERE timestamp >= NOW() - INTERVAL '7 days'
+                    GROUP BY hour
+                    ORDER BY hour ASC
+                `,
+                prisma.label.findMany({
+                    where: dbSessionIds.length > 0 ? { sessionId: { in: dbSessionIds } } : undefined,
+                    select: {
+                        id: true,
+                        name: true,
+                        colorHex: true,
+                        chatLabels: { select: { id: true } }
+                    },
+                    take: 8
+                })
+            ]);
 
-        totalMessages = msgsCount;
-        messagesToday = todayCount;
-        messagesSentToday = sentTodayCount;
-        messagesRecvToday = todayCount - sentTodayCount;
-        totalContacts = contactsCount;
-        totalGroups = groupsCount;
-        autoReplyCount = autoReplies;
-        hourlyStats = hourlyRaw || [];
-        topLabels = labelsRaw
-            .map(l => ({
-                id: l.id,
-                name: l.name,
-                colorHex: l.colorHex,
-                count: l.chatLabels.length
-            }))
-            .sort((a, b) => b.count - a.count)
-            .slice(0, 5);
-    } catch (err) {
-        console.error("Dashboard metrics error:", err);
+            totalMessages = msgsCount;
+            messagesToday = todayCount;
+            messagesSentToday = sentTodayCount;
+            messagesRecvToday = todayCount - sentTodayCount;
+            totalContacts = contactsCount;
+            totalGroups = groupsCount;
+            autoReplyCount = autoReplies;
+            hourlyStats = hourlyRaw || [];
+            topLabels = labelsRaw
+                .map(l => ({
+                    id: l.id,
+                    name: l.name,
+                    colorHex: l.colorHex,
+                    count: l.chatLabels.length
+                }))
+                .sort((a, b) => b.count - a.count)
+                .slice(0, 5);
+
+            metricsCache = {
+                timestamp: now,
+                data: {
+                    totalMessages,
+                    messagesToday,
+                    messagesSentToday,
+                    messagesRecvToday,
+                    totalContacts,
+                    totalGroups,
+                    autoReplyCount,
+                    hourlyStats,
+                    topLabels
+                }
+            };
+        } catch (err) {
+            console.error("Dashboard metrics error:", err);
+        }
     }
 
     // Build 24h chart data
