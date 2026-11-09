@@ -53,100 +53,100 @@
 
 :root {
   --radius: 0.75rem;
-  /* Light Mode - Ultra clean, subtle cool tints */
-  --background: oklch(0.99 0.01 240);
-  --foreground: oklch(0.15 0.05 240);
+  /* Light Mode - Authentic WhatsApp Web Light Theme */
+  --background: #ffffff;
+  --foreground: #111b21;
   
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.15 0.05 240);
+  --card: #ffffff;
+  --card-foreground: #111b21;
   
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.15 0.05 240);
+  --popover: #ffffff;
+  --popover-foreground: #111b21;
   
-  /* Primary - Vibrant Emerald/Teal */
-  --primary: oklch(0.6 0.18 160);
-  --primary-foreground: oklch(0.98 0.02 160);
+  /* Primary - Official WhatsApp Emerald */
+  --primary: #00a884;
+  --primary-foreground: #ffffff;
   
-  /* Secondary - Soft slate-blue */
-  --secondary: oklch(0.96 0.03 240);
-  --secondary-foreground: oklch(0.3 0.05 240);
+  --secondary: #f0f2f5;
+  --secondary-foreground: #111b21;
   
-  --muted: oklch(0.95 0.02 240);
-  --muted-foreground: oklch(0.45 0.04 240);
+  --muted: #f0f2f5;
+  --muted-foreground: #667781;
   
-  --accent: oklch(0.96 0.04 240);
-  --accent-foreground: oklch(0.2 0.05 240);
+  --accent: #f0f2f5;
+  --accent-foreground: #111b21;
   
-  --destructive: oklch(0.6 0.25 25);
-  --destructive-foreground: oklch(0.98 0 0);
+  --destructive: #ea4335;
+  --destructive-foreground: #ffffff;
   
-  --border: oklch(0.9 0.02 240);
-  --input: oklch(0.9 0.02 240);
-  --ring: oklch(0.6 0.18 160);
+  --border: #e9edef;
+  --input: #f0f2f5;
+  --ring: #00a884;
   
-  --chart-1: oklch(0.65 0.2 160);
-  --chart-2: oklch(0.7 0.15 200);
-  --chart-3: oklch(0.5 0.1 260);
-  --chart-4: oklch(0.8 0.15 80);
-  --chart-5: oklch(0.75 0.18 40);
+  --chart-1: #00a884;
+  --chart-2: #0284c7;
+  --chart-3: #6366f1;
+  --chart-4: #f59e0b;
+  --chart-5: #ec4899;
 
-  --sidebar: oklch(0.98 0.01 240);
-  --sidebar-foreground: oklch(0.2 0.04 240);
-  --sidebar-primary: oklch(0.6 0.18 160);
-  --sidebar-primary-foreground: oklch(0.98 0.02 160);
-  --sidebar-accent: oklch(0.95 0.02 240);
-  --sidebar-accent-foreground: oklch(0.2 0.04 240);
-  --sidebar-border: oklch(0.9 0.02 240);
-  --sidebar-ring: oklch(0.6 0.18 160);
+  --sidebar: #f0f2f5;
+  --sidebar-foreground: #111b21;
+  --sidebar-primary: #00a884;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #e9edef;
+  --sidebar-accent-foreground: #111b21;
+  --sidebar-border: #e9edef;
+  --sidebar-ring: #00a884;
   --wa-bg: #efeae2;
 }
 
 .dark {
-  /* Dark Mode - Deep, rich blue-black */
-  --background: oklch(0.15 0.02 240);
-  --foreground: oklch(0.98 0.01 240);
+  /* Dark Mode - Authentic WhatsApp Web Dark Palette */
+  --background: #111b21;
+  --foreground: #e9edef;
   
-  /* Slightly elevated surfaces for cards */
-  --card: oklch(0.18 0.03 240);
-  --card-foreground: oklch(0.98 0.01 240);
+  /* Slightly elevated surfaces for cards and bars */
+  --card: #202c33;
+  --card-foreground: #e9edef;
   
-  --popover: oklch(0.18 0.03 240);
-  --popover-foreground: oklch(0.98 0.01 240);
+  --popover: #233138;
+  --popover-foreground: #e9edef;
   
-  /* Primary - Bright, glowing Emerald/Teal */
-  --primary: oklch(0.7 0.18 160);
-  --primary-foreground: oklch(0.15 0.05 160);
+  /* Primary - Official WhatsApp Brand Emerald */
+  --primary: #00a884;
+  --primary-foreground: #ffffff;
   
-  --secondary: oklch(0.22 0.04 240);
-  --secondary-foreground: oklch(0.95 0.02 240);
+  --secondary: #202c33;
+  --secondary-foreground: #e9edef;
   
-  --muted: oklch(0.2 0.03 240);
-  --muted-foreground: oklch(0.65 0.04 240);
+  --muted: #202c33;
+  --muted-foreground: #8696a0;
   
-  --accent: oklch(0.25 0.05 240);
-  --accent-foreground: oklch(0.98 0.01 240);
+  --accent: #2a3942;
+  --accent-foreground: #e9edef;
   
-  --destructive: oklch(0.5 0.25 25);
+  --destructive: #ef4444;
+  --destructive-foreground: #ffffff;
   
-  --border: oklch(0.25 0.04 240);
-  --input: oklch(0.25 0.04 240);
-  --ring: oklch(0.7 0.18 160);
+  --border: #222e35;
+  --input: #2a3942;
+  --ring: #00a884;
 
-  --chart-1: oklch(0.7 0.2 160);
-  --chart-2: oklch(0.75 0.15 200);
-  --chart-3: oklch(0.6 0.1 260);
-  --chart-4: oklch(0.85 0.15 80);
-  --chart-5: oklch(0.8 0.18 40);
+  --chart-1: #00a884;
+  --chart-2: #53bdeb;
+  --chart-3: #aebac1;
+  --chart-4: #f59e0b;
+  --chart-5: #ec4899;
 
-  --sidebar: oklch(0.16 0.02 240);
+  --sidebar: #111b21;
   --wa-bg: #0b141a;
-  --sidebar-foreground: oklch(0.95 0.01 240);
-  --sidebar-primary: oklch(0.7 0.18 160);
-  --sidebar-primary-foreground: oklch(0.15 0.05 160);
-  --sidebar-accent: oklch(0.22 0.04 240);
-  --sidebar-accent-foreground: oklch(0.98 0.01 240);
-  --sidebar-border: oklch(0.25 0.04 240);
-  --sidebar-ring: oklch(0.7 0.18 160);
+  --sidebar-foreground: #e9edef;
+  --sidebar-primary: #00a884;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #202c33;
+  --sidebar-accent-foreground: #e9edef;
+  --sidebar-border: #222e35;
+  --sidebar-ring: #00a884;
 }
 
 @layer base {

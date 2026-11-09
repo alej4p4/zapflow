@@ -3377,6 +3377,8 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
 
     // Live typing / recording presence state
     const [presenceInfo, setPresenceInfo] = useState<{ isComposing: boolean; isRecording: boolean; sender?: string } | null>(null);
+    const [isBotDialogOpen, setIsBotDialogOpen] = useState(false);
+    const [isNotesDialogOpen, setIsNotesDialogOpen] = useState(false);
     const presenceTimerRef = useRef<NodeJS.Timeout | null>(null);
 
     // Active chat assigned labels
@@ -5838,182 +5840,9 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
                     </div>
                 </div>
 
-                {/* Header right icons */}
-                <div className="flex items-center gap-1 text-[#54656f] dark:text-[#aebac1]">
-                    {isGroup && participantsList.length > 0 && (
-                        <Button
-                            type="button"
-                            variant="ghost"
-                            size="sm"
-                            onClick={exportGroupParticipants}
-                            className="flex items-center gap-1 h-8 px-2 xl:px-2.5 text-xs font-medium text-[#00a884] hover:bg-[#00a884]/10 rounded-full cursor-pointer transition-colors shrink-0"
-                            title={`Exportar ${participantsList.length} participantes para CSV`}
-                        >
-                            <FileDown className="h-4 w-4 shrink-0" />
-                            <span className="hidden xl:inline">Exportar ({participantsList.length})</span>
-                        </Button>
-                    )}
-                    {/* Bot Auto-Reply Status & Pause Control (#C22) */}
-                    <Popover>
-                        <PopoverTrigger asChild>
-                            <Button
-                                variant="ghost"
-                                size="sm"
-                                className={cn(
-                                    "h-8 px-2.5 rounded-full text-xs font-medium cursor-pointer transition-colors flex items-center gap-1.5",
-                                    isBotPaused
-                                        ? "bg-amber-500/15 text-amber-600 dark:text-amber-400 hover:bg-amber-500/25 border border-amber-500/30"
-                                        : "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500/20 border border-emerald-500/20"
-                                )}
-                                title={isBotPaused ? `Robô pausado para esta conversa (~${botPauseRemainingMin}m restantes)` : "Robô ativo nesta conversa"}
-                            >
-                                <Bot className="h-3.5 w-3.5" />
-                                <span className="hidden xl:inline">
-                                    {isBotPaused ? `Bot Pausado (${botPauseRemainingMin}m)` : "Bot Ativo"}
-                                </span>
-                            </Button>
-                        </PopoverTrigger>
-                        <PopoverContent align="end" className="w-64 p-3 rounded-2xl shadow-2xl bg-white dark:bg-[#233138] border border-border/30 z-50">
-                            <div className="flex items-center gap-2 mb-2 pb-2 border-b border-border/20">
-                                <Bot className={cn("h-4 w-4", isBotPaused ? "text-amber-500" : "text-emerald-500")} />
-                                <span className="text-xs font-semibold text-foreground">
-                                    {isBotPaused ? "Robô em Pausa" : "Robô Ativo na Conversa"}
-                                </span>
-                            </div>
-                            <p className="text-[11px] text-muted-foreground mb-3">
-                                {isBotPaused
-                                    ? `O robô não responderá automaticamente por mais ${botPauseRemainingMin} min nesta conversa (atendimento humano ativo).`
-                                    : "O robô responderá automaticamente de acordo com as regras configuradas."}
-                            </p>
-                            {isBotPaused ? (
-                                <Button
-                                    size="sm"
-                                    className="w-full h-8 text-xs bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl gap-1.5 cursor-pointer"
-                                    onClick={handleResumeBot}
-                                >
-                                    <Play className="h-3.5 w-3.5 fill-current" />
-                                    Reativar Robô Agora
-                                </Button>
-                            ) : (
-                                <div className="flex flex-col gap-1.5">
-                                    <Button
-                                        variant="outline"
-                                        size="sm"
-                                        className="w-full h-8 text-xs rounded-xl justify-start text-muted-foreground hover:text-foreground cursor-pointer"
-                                        onClick={() => handlePauseBot(15)}
-                                    >
-                                        <Pause className="h-3 w-3 mr-1.5" /> Pausar por 15 minutos
-                                    </Button>
-                                    <Button
-                                        variant="outline"
-                                        size="sm"
-                                        className="w-full h-8 text-xs rounded-xl justify-start text-muted-foreground hover:text-foreground cursor-pointer"
-                                        onClick={() => handlePauseBot(60)}
-                                    >
-                                        <Pause className="h-3 w-3 mr-1.5" /> Pausar por 1 hora
-                                    </Button>
-                                </div>
-                            )}
-                        </PopoverContent>
-                    </Popover>
-
-                    {/* Internal Chat Notes Popover (#C21) */}
-                    <Popover>
-                        <PopoverTrigger asChild>
-                            <Button
-                                variant="ghost"
-                                size="icon"
-                                className={cn(
-                                    "h-9 w-9 rounded-full hover:bg-black/5 dark:hover:bg-white/10 cursor-pointer relative",
-                                    chatNote.trim().length > 0 && "text-amber-500 bg-amber-500/10"
-                                )}
-                                title={chatNote.trim().length > 0 ? "Notas internas da conversa (com anotação)" : "Adicionar nota interna da conversa"}
-                            >
-                                <StickyNote className="h-4 w-4" />
-                                {chatNote.trim().length > 0 && (
-                                    <span className="absolute top-1.5 right-1.5 h-2 w-2 rounded-full bg-amber-500" />
-                                )}
-                            </Button>
-                        </PopoverTrigger>
-                        <PopoverContent align="end" className="w-80 p-3 rounded-2xl shadow-2xl bg-white dark:bg-[#233138] border border-border/30 z-50">
-                            <div className="flex items-center justify-between mb-2">
-                                <span className="text-xs font-semibold flex items-center gap-1.5 text-amber-600 dark:text-amber-400">
-                                    <StickyNote className="h-3.5 w-3.5" />
-                                    Bloco de Notas Interno
-                                </span>
-                                {chatNote.trim().length > 0 && (
-                                    <button
-                                        type="button"
-                                        onClick={() => {
-                                            handleSaveChatNote("");
-                                            toast.info("Nota interna limpa");
-                                        }}
-                                        className="text-[10px] text-muted-foreground hover:text-destructive cursor-pointer"
-                                    >
-                                        Limpar
-                                    </button>
-                                )}
-                            </div>
-                            <textarea
-                                value={chatNote}
-                                onChange={(e) => handleSaveChatNote(e.target.value)}
-                                rows={4}
-                                placeholder="Anote informações sobre este cliente/grupo (visível apenas para você no painel)..."
-                                className="w-full rounded-xl bg-amber-50/60 dark:bg-amber-950/20 border border-amber-500/30 px-3 py-2 text-xs text-foreground placeholder:text-muted-foreground outline-none focus:border-amber-500 resize-none"
-                            />
-                            <p className="text-[10px] text-muted-foreground mt-1.5">
-                                Sincronizado na nuvem e visível para toda a equipe.
-                            </p>
-                        </PopoverContent>
-                    </Popover>
-
-                                        {/* Quick AI Summary Button in Header */}
+                {/* Header right icons — Clean WhatsApp Web Style: Search & 3-dots Menu */}
+                <div className="flex items-center gap-1 text-[#54656f] dark:text-[#aebac1] shrink-0">
                     <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => handleOpenAIAssistant("summarize_chat", "")}
-                        className="h-8 px-2 xl:px-2.5 rounded-full text-xs font-medium cursor-pointer transition-colors flex items-center gap-1 bg-purple-500/10 text-purple-600 dark:text-purple-400 hover:bg-purple-500/20 border border-purple-500/20 shrink-0"
-                        title="Resumir conversa com IA"
-                    >
-                        <Sparkles className="h-3.5 w-3.5 shrink-0" />
-                        <span className="hidden xl:inline">Resumo IA</span>
-                    </Button>
-
-<Button
-                        variant="ghost"
-                        size="icon"
-                        className={cn(
-                            "h-9 w-9 rounded-full hover:bg-black/5 dark:hover:bg-white/10 cursor-pointer relative",
-                            starredIds.length > 0 && "text-amber-500"
-                        )}
-                        title={`Mensagens favoritas (${starredIds.length})`}
-                        onClick={() => {
-                            setChatInfoModalTab("starred");
-                            setIsChatInfoModalOpen(true);
-                        }}
-                    >
-                        <Star className={cn("h-4 w-4", starredIds.length > 0 && "fill-amber-400 text-amber-400")} />
-                    </Button>
-                                        {/* Quick Mute / Unmute Button */}
-                    <Button
-                        variant="ghost"
-                        size="icon"
-                        className={cn(
-                            "h-9 w-9 rounded-full cursor-pointer transition-colors",
-                            isChatMuted
-                                ? "text-amber-500 bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/30"
-                                : "text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/10"
-                        )}
-                        title={isChatMuted ? `Notificações do ${isGroup ? 'grupo' : 'contato'} silenciadas. Clique para ativar.` : `Silenciar notificações deste ${isGroup ? 'grupo' : 'contato'}`}
-                        onClick={handleToggleChatMute}
-                    >
-                        {isChatMuted ? <VolumeX className="h-4.5 w-4.5" /> : <Volume2 className="h-4.5 w-4.5" />}
-                    </Button>
-
-                    {/* Quick Light / Dark Theme Toggle */}
-                    <ThemeToggle variant="compact" className="h-9 w-9" />
-
-<Button
                         variant="ghost"
                         size="icon"
                         className={cn(
@@ -6032,34 +5861,14 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
                     >
                         <Search className="h-4.5 w-4.5" />
                     </Button>
+
                     <Popover>
                         <PopoverTrigger asChild>
                             <Button variant="ghost" size="icon" className="h-9 w-9 rounded-full hover:bg-black/5 dark:hover:bg-white/10 cursor-pointer" title="Mais opções">
                                 <MoreVertical className="h-4.5 w-4.5" />
                             </Button>
                         </PopoverTrigger>
-                        <PopoverContent align="end" className="w-56 p-1.5 rounded-2xl shadow-2xl bg-white dark:bg-[#233138] border border-border/30 z-50 animate-in fade-in zoom-in-95 duration-100">
-                            {isGroup && (
-                                <>
-                                    <button
-                                        type="button"
-                                        onClick={exportGroupParticipants}
-                                        className="w-full flex items-center gap-2.5 px-3 py-2 text-xs font-medium text-foreground rounded-xl hover:bg-black/5 dark:hover:bg-white/10 transition-colors text-left cursor-pointer"
-                                    >
-                                        <FileDown className="h-4 w-4 text-[#00a884]" />
-                                        <span>Exportar membros (CSV)</span>
-                                    </button>
-                                    <button
-                                        type="button"
-                                        onClick={sendBroadcastToGroupMembers}
-                                        className="w-full flex items-center gap-2.5 px-3 py-2 text-xs font-medium text-foreground rounded-xl hover:bg-black/5 dark:hover:bg-white/10 transition-colors text-left cursor-pointer"
-                                    >
-                                        <Zap className="h-4 w-4 text-amber-500" />
-                                        <span>Criar disparo com membros</span>
-                                    </button>
-                                    <div className="h-px bg-border/15 my-1" />
-                                </>
-                            )}
+                        <PopoverContent align="end" className="w-64 p-1.5 rounded-2xl shadow-2xl bg-white dark:bg-[#233138] border border-border/30 dark:border-[#2a3942] z-50 animate-in fade-in zoom-in-95 duration-100 max-h-[85vh] overflow-y-auto styled-scrollbar">
                             <button
                                 type="button"
                                 onClick={() => { setChatInfoModalTab(isGroup ? "members" : "media"); setIsChatInfoModalOpen(true); }}
@@ -6068,6 +5877,7 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
                                 <Info className="h-4 w-4 text-muted-foreground" />
                                 <span>Dados do {isGroup ? "grupo" : "contato"}</span>
                             </button>
+
                             <button
                                 type="button"
                                 onClick={() => { setChatInfoModalTab("media"); setIsChatInfoModalOpen(true); }}
@@ -6076,14 +5886,7 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
                                 <ImageIcon className="h-4 w-4 text-blue-500" />
                                 <span>Mídias, links e docs</span>
                             </button>
-                            <button
-                                type="button"
-                                onClick={() => { setChatInfoModalTab("starred"); setIsChatInfoModalOpen(true); }}
-                                className="w-full flex items-center gap-2.5 px-3 py-2 text-xs font-medium text-foreground rounded-xl hover:bg-black/5 dark:hover:bg-white/10 transition-colors text-left cursor-pointer"
-                            >
-                                <Star className="h-4 w-4 text-amber-500" />
-                                <span>Mensagens favoritas ({starredIds.length})</span>
-                            </button>
+
                             <LabelAssignPopover sessionId={sessionId} jid={jid}>
                                 <button
                                     type="button"
@@ -6091,8 +5894,60 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
                                 >
                                     <Tag className="h-4 w-4 text-emerald-500" />
                                     <span>Etiquetas da conversa</span>
+                                    {chatLabels.length > 0 && (
+                                        <span className="ml-auto text-[10px] px-1.5 py-0.2 rounded-full bg-[#00a884]/20 text-[#00a884] font-bold">
+                                            {chatLabels.length}
+                                        </span>
+                                    )}
                                 </button>
                             </LabelAssignPopover>
+
+                            <button
+                                type="button"
+                                onClick={() => setIsBotDialogOpen(true)}
+                                className="w-full flex items-center gap-2.5 px-3 py-2 text-xs font-medium text-foreground rounded-xl hover:bg-black/5 dark:hover:bg-white/10 transition-colors text-left cursor-pointer"
+                            >
+                                <Bot className={cn("h-4 w-4", isBotPaused ? "text-amber-500" : "text-[#00a884]")} />
+                                <span>Robô de Atendimento</span>
+                                <span className={cn(
+                                    "ml-auto text-[10px] px-2 py-0.5 rounded-full font-semibold",
+                                    isBotPaused
+                                        ? "bg-amber-500/20 text-amber-500"
+                                        : "bg-emerald-500/20 text-emerald-600 dark:text-emerald-400"
+                                )}>
+                                    {isBotPaused ? `Pausado (${botPauseRemainingMin}m)` : "Ativo"}
+                                </span>
+                            </button>
+
+                            <button
+                                type="button"
+                                onClick={() => setIsNotesDialogOpen(true)}
+                                className="w-full flex items-center gap-2.5 px-3 py-2 text-xs font-medium text-foreground rounded-xl hover:bg-black/5 dark:hover:bg-white/10 transition-colors text-left cursor-pointer"
+                            >
+                                <StickyNote className="h-4 w-4 text-amber-500" />
+                                <span>Bloco de Notas Interno</span>
+                                {chatNote.trim().length > 0 && (
+                                    <span className="ml-auto h-2 w-2 rounded-full bg-amber-500" title="Possui anotações" />
+                                )}
+                            </button>
+
+                            <button
+                                type="button"
+                                onClick={() => handleOpenAIAssistant("summarize_chat", "")}
+                                className="w-full flex items-center gap-2.5 px-3 py-2 text-xs font-medium text-foreground rounded-xl hover:bg-black/5 dark:hover:bg-white/10 transition-colors text-left cursor-pointer"
+                            >
+                                <Sparkles className="h-4 w-4 text-purple-500" />
+                                <span>Resumo da Conversa (IA)</span>
+                            </button>
+
+                            <button
+                                type="button"
+                                onClick={() => { setChatInfoModalTab("starred"); setIsChatInfoModalOpen(true); }}
+                                className="w-full flex items-center gap-2.5 px-3 py-2 text-xs font-medium text-foreground rounded-xl hover:bg-black/5 dark:hover:bg-white/10 transition-colors text-left cursor-pointer"
+                            >
+                                <Star className={cn("h-4 w-4", starredIds.length > 0 ? "fill-amber-400 text-amber-400" : "text-amber-500")} />
+                                <span>Mensagens favoritas ({starredIds.length})</span>
+                            </button>
 
                             <button
                                 type="button"
@@ -6115,15 +5970,29 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
                                 <span>Selecionar mensagens</span>
                             </button>
 
-                            <button
-                                type="button"
-                                onClick={() => handleOpenAIAssistant("summarize_chat", "")}
-                                className="w-full flex items-center gap-2.5 px-3 py-2 text-xs font-medium text-foreground rounded-xl hover:bg-black/5 dark:hover:bg-white/10 transition-colors text-left cursor-pointer"
-                            >
-                                <Sparkles className="h-4 w-4 text-purple-500" />
-                                <span>Assistente IA (Resumir / Sugerir)</span>
-                            </button>
+                            {isGroup && (
+                                <>
+                                    <div className="h-px bg-border/15 my-1" />
+                                    <button
+                                        type="button"
+                                        onClick={exportGroupParticipants}
+                                        className="w-full flex items-center gap-2.5 px-3 py-2 text-xs font-medium text-foreground rounded-xl hover:bg-black/5 dark:hover:bg-white/10 transition-colors text-left cursor-pointer"
+                                    >
+                                        <FileDown className="h-4 w-4 text-[#00a884]" />
+                                        <span>Exportar membros ({participantsList.length}) CSV</span>
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={sendBroadcastToGroupMembers}
+                                        className="w-full flex items-center gap-2.5 px-3 py-2 text-xs font-medium text-foreground rounded-xl hover:bg-black/5 dark:hover:bg-white/10 transition-colors text-left cursor-pointer"
+                                    >
+                                        <Zap className="h-4 w-4 text-amber-500" />
+                                        <span>Criar disparo com membros</span>
+                                    </button>
+                                </>
+                            )}
 
+                            <div className="h-px bg-border/15 my-1" />
                             <button
                                 type="button"
                                 onClick={handleExportConversation}
@@ -6198,7 +6067,6 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
                                 <ArrowLeft className="h-4 w-4" />
                                 <span>Fechar conversa (Esc)</span>
                             </button>
-
                         </PopoverContent>
                     </Popover>
                 </div>
@@ -6346,6 +6214,135 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
                     </button>
                 </div>
             )}
+
+            
+            {/* Dedicated Bot Auto-Reply Control Dialog */}
+            <Dialog open={isBotDialogOpen} onOpenChange={setIsBotDialogOpen}>
+                <DialogContent className="max-w-md rounded-2xl bg-white dark:bg-[#202c33] border border-border/30 dark:border-[#2a3942] p-6 shadow-2xl">
+                    <DialogHeader>
+                        <DialogTitle className="flex items-center gap-2 text-foreground">
+                            <Bot className={cn("h-5 w-5", isBotPaused ? "text-amber-500" : "text-[#00a884]")} />
+                            <span>Robô de Atendimento - {displayName}</span>
+                        </DialogTitle>
+                    </DialogHeader>
+                    <div className="py-3 space-y-3">
+                        <div className={cn(
+                            "p-3 rounded-xl border flex items-center justify-between",
+                            isBotPaused
+                                ? "bg-amber-500/10 border-amber-500/30 text-amber-600 dark:text-amber-400"
+                                : "bg-emerald-500/10 border-emerald-500/30 text-emerald-600 dark:text-emerald-400"
+                        )}>
+                            <div className="flex items-center gap-2">
+                                <span className={cn("h-2.5 w-2.5 rounded-full animate-pulse", isBotPaused ? "bg-amber-500" : "bg-emerald-500")} />
+                                <span className="font-semibold text-sm">
+                                    {isBotPaused ? `Robô Pausado (~${botPauseRemainingMin} min restantes)` : "Robô Ativo nesta Conversa"}
+                                </span>
+                            </div>
+                        </div>
+                        <p className="text-xs text-muted-foreground leading-relaxed">
+                            {isBotPaused
+                                ? "O robô não responderá automaticamente enquanto estiver em pausa, permitindo atendimento manual sem interrupções."
+                                : "O robô está monitorando e responderá automaticamente conforme as regras configuradas."}
+                        </p>
+                        {isBotPaused ? (
+                            <Button
+                                className="w-full bg-[#00a884] hover:bg-[#00a884]/90 text-white rounded-xl gap-2 font-medium cursor-pointer"
+                                onClick={() => {
+                                    handleResumeBot();
+                                    setIsBotDialogOpen(false);
+                                }}
+                            >
+                                <Play className="h-4 w-4 fill-current" />
+                                Reativar Robô Agora
+                            </Button>
+                        ) : (
+                            <div className="space-y-2">
+                                <Button
+                                    variant="outline"
+                                    className="w-full justify-start rounded-xl gap-2 text-xs h-9 cursor-pointer"
+                                    onClick={() => {
+                                        handlePauseBot(15);
+                                        setIsBotDialogOpen(false);
+                                    }}
+                                >
+                                    <Pause className="h-3.5 w-3.5 text-amber-500" />
+                                    Pausar Robô por 15 minutos
+                                </Button>
+                                <Button
+                                    variant="outline"
+                                    className="w-full justify-start rounded-xl gap-2 text-xs h-9 cursor-pointer"
+                                    onClick={() => {
+                                        handlePauseBot(60);
+                                        setIsBotDialogOpen(false);
+                                    }}
+                                >
+                                    <Pause className="h-3.5 w-3.5 text-amber-500" />
+                                    Pausar Robô por 1 hora
+                                </Button>
+                                <Button
+                                    variant="outline"
+                                    className="w-full justify-start rounded-xl gap-2 text-xs h-9 cursor-pointer"
+                                    onClick={() => {
+                                        handlePauseBot(240);
+                                        setIsBotDialogOpen(false);
+                                    }}
+                                >
+                                    <Pause className="h-3.5 w-3.5 text-amber-500" />
+                                    Pausar Robô por 4 horas
+                                </Button>
+                            </div>
+                        )}
+                    </div>
+                </DialogContent>
+            </Dialog>
+
+            {/* Dedicated Internal Notes Dialog */}
+            <Dialog open={isNotesDialogOpen} onOpenChange={setIsNotesDialogOpen}>
+                <DialogContent className="max-w-md rounded-2xl bg-white dark:bg-[#202c33] border border-border/30 dark:border-[#2a3942] p-6 shadow-2xl">
+                    <DialogHeader>
+                        <DialogTitle className="flex items-center justify-between text-foreground">
+                            <span className="flex items-center gap-2">
+                                <StickyNote className="h-5 w-5 text-amber-500" />
+                                <span>Anotações Internas</span>
+                            </span>
+                            {chatNote.trim().length > 0 && (
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        handleSaveChatNote("");
+                                        toast.info("Nota interna limpa");
+                                    }}
+                                    className="text-xs text-muted-foreground hover:text-destructive cursor-pointer font-normal"
+                                >
+                                    Limpar nota
+                                </button>
+                            )}
+                        </DialogTitle>
+                    </DialogHeader>
+                    <div className="py-2 space-y-3">
+                        <p className="text-xs text-muted-foreground">
+                            Notas privadas sobre <strong>{displayName}</strong>. Visível apenas no painel e sincronizado com toda a equipe.
+                        </p>
+                        <textarea
+                            value={chatNote}
+                            onChange={(e) => handleSaveChatNote(e.target.value)}
+                            rows={6}
+                            placeholder="Ex: Cliente VIP, prefere contato à tarde, transportadora de confiança..."
+                            className="w-full rounded-xl bg-amber-50/50 dark:bg-amber-950/20 border border-amber-500/30 p-3 text-xs text-foreground placeholder:text-muted-foreground outline-none focus:border-amber-500 resize-none leading-relaxed"
+                            autoFocus
+                        />
+                        <div className="flex justify-end">
+                            <Button
+                                size="sm"
+                                className="bg-[#00a884] hover:bg-[#00a884]/90 text-white rounded-xl text-xs px-4 cursor-pointer"
+                                onClick={() => setIsNotesDialogOpen(false)}
+                            >
+                                Concluído
+                            </Button>
+                        </div>
+                    </div>
+                </DialogContent>
+            </Dialog>
 
             {/* WhatsApp Chat Wallpaper & Message Stream (#C33) */}
             <div

@@ -21,7 +21,7 @@ export function SidebarShell({ appName, userName, userEmail, version }: SidebarS
     return (
         <aside
             className={`
-                bg-background/80 backdrop-blur-xl border-r border-border/40
+                bg-white/80 dark:bg-[#111b21] backdrop-blur-xl border-r border-border/40 dark:border-[#222e35]
                 hidden md:flex flex-col h-full sticky left-0 top-0 z-20
                 shadow-[1px_0_12px_-4px_rgba(0,0,0,0.08)]
                 transition-all duration-300 ease-in-out

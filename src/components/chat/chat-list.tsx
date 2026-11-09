@@ -296,8 +296,8 @@ function ChatRow({
                 className={cn(
                     "relative w-full flex items-center gap-3 px-3.5 py-3 transition-colors duration-75 border-b border-border/10 group overflow-hidden cursor-pointer select-none",
                     isSelected
-                        ? "bg-[#f0f2f5] dark:bg-[#2a3942] border-l-4 border-l-[#00a884]"
-                        : "hover:bg-[#f5f6f6] dark:hover:bg-[#202c33]/70 border-l-4 border-l-transparent"
+                        ? "bg-[#f0f2f5] dark:bg-[#2a3942]"
+                        : "hover:bg-[#f5f6f6] dark:hover:bg-[#202c33]"
                 )}
                 onClick={() => onSelect(chat.jid, displayName, chat.profilePic)}
                 onMouseEnter={() => prefetchChatMessages(sessionId, chat.jid)}
