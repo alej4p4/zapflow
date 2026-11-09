@@ -974,13 +974,23 @@ export function ChatList({ sessionId, onSelectChat, selectedJid }: ChatListProps
             setChats(prev => {
                 const updated = [...prev];
                 newMessages.forEach(msg => {
-                    const jid = msg.remoteJid;
+                    const rawJid = (msg.remoteJid || (msg as any).jid || "").trim();
+                    if (!rawJid || rawJid === "status@broadcast") return;
+                    const jid = rawJid;
+
+                    const norm = (j?: string | null) => (j || "").replace("@c.us", "@s.whatsapp.net").toLowerCase();
+                    const msgJid = norm(rawJid);
+                    const isMsgGroup = msgJid.endsWith("@g.us");
+                    const bareMsgNum = isMsgGroup ? "" : msgJid.split("@")[0].replace(/\D/g, "");
+
+                    const selectedNorm = norm(selectedJidRef.current);
+                    const isCurrentChat = (selectedNorm === msgJid) || (!isMsgGroup && !selectedNorm.endsWith("@g.us") && bareMsgNum && bareMsgNum === selectedNorm.split("@")[0].replace(/\D/g, ""));
                     if (!jid || jid === "status@broadcast") return;
 
                     const isNewKey = msg.keyId ? !seenIncomingKeysRef.current.has(msg.keyId) : true;
                     if (msg.keyId) seenIncomingKeysRef.current.add(msg.keyId);
 
-                    const isIncomingFromOther = !msg.fromMe && jid !== selectedJidRef.current;
+                    const isIncomingFromOther = !msg.fromMe && !isCurrentChat;
                     if (isIncomingFromOther && isNewKey) {
                         if (!mutedJidsRef.current.includes(jid)) {
                             shouldPlaySound = true;
@@ -1004,15 +1014,23 @@ export function ChatList({ sessionId, onSelectChat, selectedJid }: ChatListProps
                         return copy;
                     });
 
-                    const idx = updated.findIndex(c => c.jid === jid);
+                    const idx = updated.findIndex(c => {
+                        const cNorm = norm(c.jid);
+                        if (cNorm === msgJid) return true;
+                        if (!isMsgGroup && !cNorm.endsWith("@g.us") && bareMsgNum) {
+                            const bareCNum = cNorm.split("@")[0].replace(/\D/g, "");
+                            return bareCNum === bareMsgNum;
+                        }
+                        return false;
+                    });
                     if (idx !== -1) {
                         const currentUnread = updated[idx].unreadCount || 0;
                         updated[idx] = {
                             ...updated[idx],
-                            name: updated[idx].name || (!msg.fromMe && !jid.endsWith("@g.us") ? msg.pushName : null) || updated[idx].name,
+                            name: updated[idx].name || (!msg.fromMe && !isMsgGroup ? msg.pushName : null) || updated[idx].name,
                             unreadCount: isIncomingFromOther && isNewKey
                                 ? currentUnread + 1
-                                : (jid === selectedJidRef.current ? 0 : currentUnread),
+                                : (isCurrentChat ? 0 : currentUnread),
                             lastMessage: {
                                 keyId: msg.keyId,
                                 content: msg.content,
@@ -1026,8 +1044,8 @@ export function ChatList({ sessionId, onSelectChat, selectedJid }: ChatListProps
                         // Add brand new chat immediately to top of list in 0ms!
                         updated.unshift({
                             jid,
-                            name: !msg.fromMe ? (msg.pushName || jid.split("@")[0]) : jid.split("@")[0],
-                            notify: !msg.fromMe ? (msg.pushName || null) : null,
+                            name: isMsgGroup ? `Grupo (${rawJid.split("@")[0]})` : (!msg.fromMe ? (msg.pushName || rawJid.split("@")[0]) : rawJid.split("@")[0]),
+                            notify: !msg.fromMe && !isMsgGroup ? (msg.pushName || null) : null,
                             profilePic: null,
                             unreadCount: isIncomingFromOther ? 1 : 0,
                             lastMessage: {

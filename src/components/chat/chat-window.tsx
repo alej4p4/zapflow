@@ -3783,7 +3783,16 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
 
         if (cached && cached.messages.length > 0) {
             // INSTANT DISPLAY: Immediately show cached conversation in 0ms!
-            setMessages(cached.messages);
+            const normTarget = jid.replace("@c.us", "@s.whatsapp.net").toLowerCase();
+            const isGroupChat = normTarget.endsWith("@g.us");
+            const cleanCachedMessages = cached.messages.filter(m => {
+                const rJid = (m.remoteJid || (m as any).jid || "").trim().replace("@c.us", "@s.whatsapp.net").toLowerCase();
+                if (!rJid) return true;
+                if (isGroupChat) return rJid === normTarget;
+                if (rJid.endsWith("@g.us")) return false;
+                return true;
+            });
+            setMessages(cleanCachedMessages);
             setHasMore(cached.hasMore);
             setOldestTimestamp(cached.oldestTimestamp);
             if (cached.contactMap) setContactMap(cached.contactMap);
@@ -3817,9 +3826,38 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
         const normalizedJid = jid.endsWith("@c.us") ? jid.replace("@c.us", "@s.whatsapp.net") : jid;
         const handler = (newMessages: Message[]) => {
             setMessages(prev => {
-                const norm = (j?: string | null) => (j || "").replace("@c.us", "@s.whatsapp.net");
+                const norm = (j?: string | null) => (j || "").replace("@c.us", "@s.whatsapp.net").toLowerCase();
                 const currentTargetJid = norm(normalizedJid);
-                const relevant = newMessages.filter(m => norm(m.remoteJid) === currentTargetJid || prev.some(p => norm(p.remoteJid) === norm(m.remoteJid)));
+                const isTargetGroup = currentTargetJid.endsWith("@g.us");
+                const bareTarget = isTargetGroup ? "" : currentTargetJid.split("@")[0].replace(/\D/g, "");
+
+                const relevant = newMessages.filter(m => {
+                    if (!m) return false;
+                    const rawMsgJid = (m.remoteJid || (m as any).jid || "").trim();
+                    if (!rawMsgJid) return false;
+                    const cleanMsg = norm(rawMsgJid);
+
+                    // Group chat: message MUST be for this exact group
+                    if (isTargetGroup) {
+                        return cleanMsg === currentTargetJid;
+                    }
+
+                    // 1-on-1 contact chat: group messages NEVER belong to a contact chat!
+                    if (cleanMsg.endsWith("@g.us")) {
+                        return false;
+                    }
+
+                    // Direct match (normalized @s.whatsapp.net)
+                    if (cleanMsg === currentTargetJid) return true;
+
+                    // Match bare phone digits (e.g. 55119999@s.whatsapp.net vs 55119999)
+                    const bareMsg = cleanMsg.split("@")[0].replace(/\D/g, "");
+                    if (bareMsg && bareTarget && bareMsg === bareTarget) {
+                        return true;
+                    }
+
+                    return false;
+                });
                 if (relevant.length === 0) return prev;
 
                 // Play chime and desktop notification if there are incoming messages from someone else (unless muted #C26)
