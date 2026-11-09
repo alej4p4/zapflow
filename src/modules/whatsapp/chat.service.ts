@@ -473,9 +473,19 @@ export class ChatService {
     }
 
     static async sendTextMessage(sessionId: string, jid: string, messagePayload: any, mentions?: string[], quotedMessageId?: string) {
-        const instance = waManager.getInstance(sessionId);
+        let instance = waManager.getInstance(sessionId);
+
+        // Se a sessão estiver reconectando ou aguardando socket (queda temporária de rede), aguarda até 6s
+        if (instance && (!instance.socket || instance.status === "CONNECTING")) {
+            for (let i = 0; i < 12; i++) {
+                await new Promise(r => setTimeout(r, 500));
+                instance = waManager.getInstance(sessionId);
+                if (instance?.socket && instance.status === "CONNECTED") break;
+            }
+        }
+
         if (!instance || !instance.socket) {
-            throw new Error("WhatsApp session is disconnected or not found");
+            throw new Error("WhatsApp desconectado ou reconectando. Tente novamente em alguns segundos.");
         }
 
         // Handle quoted/reply message
@@ -668,9 +678,19 @@ export class ChatService {
         fileName: string,
         caption: string
     ) {
-        const instance = waManager.getInstance(sessionId);
+        let instance = waManager.getInstance(sessionId);
+
+        // Se a sessão estiver reconectando ou aguardando socket (queda temporária de rede), aguarda até 6s
+        if (instance && (!instance.socket || instance.status === "CONNECTING")) {
+            for (let i = 0; i < 12; i++) {
+                await new Promise(r => setTimeout(r, 500));
+                instance = waManager.getInstance(sessionId);
+                if (instance?.socket && instance.status === "CONNECTED") break;
+            }
+        }
+
         if (!instance || !instance.socket) {
-            throw new Error("WhatsApp session is disconnected or not found");
+            throw new Error("WhatsApp desconectado ou reconectando. Tente novamente em alguns segundos.");
         }
 
         const messageOptions: any = {};

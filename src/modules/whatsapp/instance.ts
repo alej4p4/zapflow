@@ -200,7 +200,7 @@ export class WhatsAppInstance {
                 this.socket = null;
                 const gen = this.generation;
                 this.reconnectCount++;
-                const retryDelay = Math.min(3000 * Math.pow(1.4, Math.min(this.reconnectCount - 1, 6)), 60000);
+                const retryDelay = this.reconnectCount <= 1 ? 1000 : Math.min(2500 * Math.pow(1.3, Math.min(this.reconnectCount - 2, 6)), 60000);
 
                 if (this.pingInterval) { clearInterval(this.pingInterval); this.pingInterval = null; }
                 this.lastPingMs = null;

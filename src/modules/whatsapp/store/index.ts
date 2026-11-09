@@ -458,6 +458,11 @@ async function processAndSaveMessage(
                 where: { id: existingMessage.id },
                 data: { status: 'SENT' }
             });
+            io?.to(sessionId).emit("message.status", {
+                keyId,
+                remoteJid,
+                status: 'SENT'
+            });
         }
         // Return null to indicate "Not New"
         return null;
@@ -638,7 +643,7 @@ async function processAndSaveMessage(
     }
 
     // ⚡ INSTANT REAL-TIME SOCKET EMIT (< 15ms) before media download / DB write finishes!
-    if (triggerWebhook && io) {
+    if (io) {
         let inlineMediaPreview: string | null = null;
         if (mediaInfo?.media?.jpegThumbnail) {
             try {

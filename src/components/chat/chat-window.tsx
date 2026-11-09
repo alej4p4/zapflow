@@ -5744,8 +5744,8 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
             )}
 
             {/* WhatsApp Header */}
-            <div className="shrink-0 px-4 py-2.5 border-b border-border/15 bg-[#f0f2f5] dark:bg-[#202c33] flex items-center justify-between z-10 select-none">
-                <div className="flex items-center gap-3 min-w-0">
+            <div className="shrink-0 px-3 sm:px-4 py-2 sm:py-2.5 border-b border-border/15 bg-[#f0f2f5] dark:bg-[#202c33] flex items-center justify-between z-10 select-none gap-2">
+                <div className="flex items-center gap-2.5 sm:gap-3 min-w-0 flex-1 mr-1 sm:mr-2">
                     {onBack && (
                         <Button variant="ghost" size="icon" className="h-8 w-8 md:hidden shrink-0 text-muted-foreground hover:text-foreground" onClick={onBack}>
                             <ArrowLeft className="h-5 w-5" />
@@ -5763,8 +5763,8 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
                         </AvatarFallback>
                     </Avatar>
                     <div className="flex-1 min-w-0 cursor-pointer" onClick={() => { setChatInfoModalTab("media"); setIsChatInfoModalOpen(true); }}>
-                        <div className="flex items-center gap-2">
-                            <h3 className="text-[15px] font-semibold text-foreground truncate leading-snug">
+                        <div className="flex items-center gap-2 min-w-0">
+                            <h3 className="text-[14px] sm:text-[15.5px] font-bold text-foreground leading-snug break-words line-clamp-2 hover:line-clamp-none transition-all" title={displayName}>
                                 {displayName}
                             </h3>
                             {isChatMuted && (
@@ -5846,11 +5846,11 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
                             variant="ghost"
                             size="sm"
                             onClick={exportGroupParticipants}
-                            className="hidden md:flex items-center gap-1.5 h-8 px-2.5 text-xs font-medium text-[#00a884] hover:bg-[#00a884]/10 rounded-full cursor-pointer transition-colors"
+                            className="flex items-center gap-1 h-8 px-2 xl:px-2.5 text-xs font-medium text-[#00a884] hover:bg-[#00a884]/10 rounded-full cursor-pointer transition-colors shrink-0"
                             title={`Exportar ${participantsList.length} participantes para CSV`}
                         >
-                            <FileDown className="h-4 w-4" />
-                            <span>Exportar ({participantsList.length})</span>
+                            <FileDown className="h-4 w-4 shrink-0" />
+                            <span className="hidden xl:inline">Exportar ({participantsList.length})</span>
                         </Button>
                     )}
                     {/* Bot Auto-Reply Status & Pause Control (#C22) */}
@@ -5868,7 +5868,7 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
                                 title={isBotPaused ? `Robô pausado para esta conversa (~${botPauseRemainingMin}m restantes)` : "Robô ativo nesta conversa"}
                             >
                                 <Bot className="h-3.5 w-3.5" />
-                                <span className="hidden sm:inline">
+                                <span className="hidden xl:inline">
                                     {isBotPaused ? `Bot Pausado (${botPauseRemainingMin}m)` : "Bot Ativo"}
                                 </span>
                             </Button>
@@ -5972,11 +5972,11 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
                         variant="ghost"
                         size="sm"
                         onClick={() => handleOpenAIAssistant("summarize_chat", "")}
-                        className="h-8 px-2.5 rounded-full text-xs font-medium cursor-pointer transition-colors flex items-center gap-1.5 bg-purple-500/10 text-purple-600 dark:text-purple-400 hover:bg-purple-500/20 border border-purple-500/20"
+                        className="h-8 px-2 xl:px-2.5 rounded-full text-xs font-medium cursor-pointer transition-colors flex items-center gap-1 bg-purple-500/10 text-purple-600 dark:text-purple-400 hover:bg-purple-500/20 border border-purple-500/20 shrink-0"
                         title="Resumir conversa com IA"
                     >
-                        <Sparkles className="h-3.5 w-3.5" />
-                        <span className="hidden md:inline">Resumo IA</span>
+                        <Sparkles className="h-3.5 w-3.5 shrink-0" />
+                        <span className="hidden xl:inline">Resumo IA</span>
                     </Button>
 
 <Button
