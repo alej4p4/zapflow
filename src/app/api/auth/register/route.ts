@@ -13,6 +13,7 @@ export async function POST(req: Request) {
     try {
         const body = await req.json();
         const { email, password, name } = registerSchema.parse(body);
+        const normalizedEmail = email.toLowerCase().trim();
 
         // Allow registration only if explicitly enabled by SUPERADMIN or if no user exists yet (initial setup)
         const [systemConfig, userCount] = await Promise.all([
@@ -31,7 +32,7 @@ export async function POST(req: Request) {
 
         // Check if user already exists
         const existingUser = await prisma.user.findUnique({
-            where: { email },
+            where: { email: normalizedEmail },
         });
 
         if (existingUser) {
@@ -47,8 +48,8 @@ export async function POST(req: Request) {
         // Create the user
         const newUser = await prisma.user.create({
             data: {
-                name,
-                email,
+                name: name.trim(),
+                email: normalizedEmail,
                 password: hashedPassword,
                 ...(userCount === 0 ? { role: "SUPERADMIN" } : {}),
             },

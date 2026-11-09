@@ -73,6 +73,8 @@ model Session {
   webhooks    Webhook[]
   botConfig   BotConfig?
   sessionAccesses SessionAccess[]
+
+  @@index([userId])
 }
 
 model Contact {
@@ -93,6 +95,7 @@ model Contact {
   messages    Message[]
 
   @@unique([sessionId, jid])
+  @@index([sessionId, lid])
 }
 
 model Message {
@@ -118,6 +121,7 @@ model Message {
   @@unique([sessionId, keyId])
   @@index([sessionId, remoteJid])
   @@index([sessionId, remoteJid, timestamp])
+  @@index([sessionId, timestamp])
 }
 
 model Group {
@@ -161,6 +165,8 @@ model AutoReply {
   createdAt   DateTime @default(now())
 
   session     Session  @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@index([sessionId])
 }
 
 model Story {
@@ -174,6 +180,8 @@ model Story {
   viewed      Boolean  @default(false)
 
   session     Session  @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@index([sessionId])
 }
 
 model ScheduledMessage {
@@ -190,6 +198,9 @@ model ScheduledMessage {
   createdAt   DateTime @default(now())
 
   session     Session  @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@index([sessionId])
+  @@index([status, sendAt])
 }
 
 // Store for Baileys MultiFileAuthState (in DB)
@@ -218,6 +229,9 @@ model Webhook {
   user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   session     Session? @relation(fields: [sessionId], references: [id], onDelete: Cascade)
   logs        WebhookLog[]
+
+  @@index([userId])
+  @@index([sessionId])
 }
 
 // Webhook delivery logs — tracks every webhook request attempt
@@ -343,6 +357,9 @@ model Notification {
   createdAt DateTime @default(now())
 
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([userId, read])
 }
 
 // Shared session access — allows session owners to grant access to other users

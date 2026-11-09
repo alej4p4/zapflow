@@ -6,11 +6,13 @@ import { io, Socket } from "socket.io-client";
 type SocketContextValue = {
     getSocket: () => Socket | null;
     joinSession: (sessionId: string) => void;
+    leaveSession: (sessionId: string) => void;
 };
 
 const SocketContext = createContext<SocketContextValue>({
     getSocket: () => null,
     joinSession: () => {},
+    leaveSession: () => {},
 });
 
 export function useSocket() {
@@ -48,13 +50,20 @@ export function SocketProvider({ children }: { children: React.ReactNode }) {
 
     const joinSession = (sessionId: string) => {
         const s = socketRef.current;
-        if (s?.connected) {
+        if (s?.connected && sessionId) {
             s.emit("join-session", sessionId);
         }
     };
 
+    const leaveSession = (sessionId: string) => {
+        const s = socketRef.current;
+        if (s?.connected && sessionId) {
+            s.emit("leave-session", sessionId);
+        }
+    };
+
     return (
-        <SocketContext.Provider value={{ getSocket, joinSession }}>
+        <SocketContext.Provider value={{ getSocket, joinSession, leaveSession }}>
             {children}
         </SocketContext.Provider>
     );

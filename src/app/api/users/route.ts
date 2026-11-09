@@ -1,6 +1,7 @@
 import { NextResponse, NextRequest } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getAuthenticatedUser, isAdmin } from "@/lib/api-auth";
+import { SYSTEM_TABS } from "@/lib/permissions";
 import bcrypt from "bcryptjs";
 import { z } from "zod";
 
@@ -59,22 +60,38 @@ export async function POST(request: NextRequest) {
         }
 
         const { name, email, password, role, permissions } = parseResult.data;
+        const normalizedEmail = email.toLowerCase().trim();
 
         // Check if email exists
-        const existing = await prisma.user.findUnique({ where: { email } });
+        const existing = await prisma.user.findUnique({ where: { email: normalizedEmail } });
         if (existing) {
-            return NextResponse.json({ status: false, message: "Email already exists", error: "Email already exists" }, { status: 400 });
+            return NextResponse.json({ status: false, message: "Email already exists", error: "E-mail já está cadastrado no sistema" }, { status: 400 });
+        }
+
+        // Validate and sanitize permissions against SYSTEM_TABS
+        const validPaths = new Set(SYSTEM_TABS.map(t => t.path));
+        let sanitizedPermissions: string[] | undefined = undefined;
+
+        if (role === "SUPERADMIN") {
+            sanitizedPermissions = SYSTEM_TABS.map(t => t.path);
+        } else if (Array.isArray(permissions)) {
+            sanitizedPermissions = permissions.filter(p => {
+                if (!validPaths.has(p)) return false;
+                const tab = SYSTEM_TABS.find(t => t.path === p);
+                if (tab?.superadminOnly) return false;
+                return true;
+            });
         }
 
         const hashedPassword = await bcrypt.hash(password, 10);
 
         const newUser = await prisma.user.create({
             data: {
-                name,
-                email,
+                name: name.trim(),
+                email: normalizedEmail,
                 password: hashedPassword,
                 role: role as any,
-                permissions: permissions ?? undefined
+                permissions: sanitizedPermissions ?? undefined
             },
             select: {
                 id: true,
