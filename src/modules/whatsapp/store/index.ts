@@ -101,13 +101,84 @@ export const bindSessionStore = (sock: WASocket, sessionId: string, io: Server |
             dbSessionId = session.id;
         }
 
-        // Save historical messages with batching and cap (max 200 recent) to protect event loop
-        if (messages && messages.length > 0) {
-            const MAX_HISTORY = 200;
-            const messagesToProcess = messages.length > MAX_HISTORY ? messages.slice(-MAX_HISTORY) : messages;
-            logger.info("Store", `Syncing ${messagesToProcess.length} historical messages (capped to keep server fast)...`);
+        // 1. Sync chats (Groups & 1-on-1 Chats)
+        if (chats && chats.length > 0) {
+            logger.info("Store", `Syncing ${chats.length} chats from history...`);
+            const BATCH_SIZE = 25;
+            for (let i = 0; i < chats.length; i += BATCH_SIZE) {
+                const chunk = chats.slice(i, i + BATCH_SIZE);
+                await Promise.all(
+                    chunk.map(chat => {
+                        if (!chat.id) return Promise.resolve();
+                        if (chat.id.endsWith('@g.us')) {
+                            return prisma.group.upsert({
+                                where: { sessionId_jid: { sessionId: dbSessionId!, jid: chat.id } },
+                                create: {
+                                    sessionId: dbSessionId!,
+                                    jid: chat.id,
+                                    subject: chat.name || "Grupo"
+                                },
+                                update: {
+                                    subject: chat.name || undefined
+                                }
+                            }).catch(() => {});
+                        } else if (!chat.id.includes('@broadcast')) {
+                            return prisma.contact.upsert({
+                                where: { sessionId_jid: { sessionId: dbSessionId!, jid: chat.id } },
+                                create: {
+                                    sessionId: dbSessionId!,
+                                    jid: chat.id,
+                                    name: chat.name || undefined
+                                },
+                                update: {
+                                    name: chat.name || undefined
+                                }
+                            }).catch(() => {});
+                        }
+                        return Promise.resolve();
+                    })
+                );
+                await new Promise(r => setImmediate(r));
+            }
+        }
 
-            const BATCH_SIZE = 20;
+        // 2. Sync contacts from address book
+        if (contacts && contacts.length > 0) {
+            logger.info("Store", `Syncing ${contacts.length} contacts from history...`);
+            const validContacts = contacts.filter(c => c.id && !c.id.includes('@broadcast'));
+            const BATCH_SIZE = 25;
+            for (let i = 0; i < validContacts.length; i += BATCH_SIZE) {
+                const chunk = validContacts.slice(i, i + BATCH_SIZE);
+                await Promise.all(
+                    chunk.map(c =>
+                        prisma.contact.upsert({
+                            where: { sessionId_jid: { sessionId: dbSessionId!, jid: c.id } },
+                            create: {
+                                sessionId: dbSessionId!,
+                                jid: c.id,
+                                name: c.name || c.notify || (c as any).verifiedName || null,
+                                notify: c.notify || null,
+                                profilePic: (c.imgUrl && typeof c.imgUrl === "string" && c.imgUrl.startsWith("http")) ? c.imgUrl : undefined
+                            },
+                            update: {
+                                name: c.name || c.notify || (c as any).verifiedName || undefined,
+                                notify: c.notify || undefined,
+                                profilePic: (c.imgUrl && typeof c.imgUrl === "string" && c.imgUrl.startsWith("http")) ? c.imgUrl : undefined
+                            }
+                        }).catch(() => {})
+                    )
+                );
+                await new Promise(r => setImmediate(r));
+            }
+        }
+
+        // 3. Save historical messages with batching (up to 2500 recent messages)
+        if (messages && messages.length > 0) {
+            const MAX_HISTORY = 2500;
+            const messagesToProcess = messages.length > MAX_HISTORY ? messages.slice(-MAX_HISTORY) : messages;
+            logger.info("Store", `Syncing ${messagesToProcess.length} historical messages...`);
+
+            const BATCH_SIZE = 30;
             for (let i = 0; i < messagesToProcess.length; i += BATCH_SIZE) {
                 const batch = messagesToProcess.slice(i, i + BATCH_SIZE);
                 await Promise.all(
@@ -123,7 +194,10 @@ export const bindSessionStore = (sock: WASocket, sessionId: string, io: Server |
             logger.success("Store", `Finished syncing ${messagesToProcess.length} historical messages`);
         }
 
-        logger.debug("Store", `Finished syncing messages`);
+        // 4. Emit to frontend in real-time so conversation list appears automatically
+        io?.to(sessionId).emit('chats.update');
+        io?.to(sessionId).emit('message.update', []);
+        logger.debug("Store", `Finished syncing history`);
     });
 
     // Handle Contacts Upsert

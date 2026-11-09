@@ -81,7 +81,8 @@ export class WhatsAppInstance {
             },
             browser: ["Ubuntu", "Chrome", "20.0.04"],
             markOnlineOnConnect: botConfig?.alwaysOnline ?? true,
-            syncFullHistory: false, // Prevents 5000+ message history floods that choke event loop
+            syncFullHistory: true, // Enables full history sync (chats, contacts, messages) like WhatsApp Web
+            shouldSyncHistoryMessage: () => true,
             connectTimeoutMs: 60000,
             defaultQueryTimeoutMs: 60000,
             keepAliveIntervalMs: 30000,

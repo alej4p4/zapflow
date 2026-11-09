@@ -359,7 +359,7 @@ export default function WebhooksPage() {
                 </CardHeader>
                 <CardContent>
                     <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 sm:gap-3">
-                        <div className="flex-1 bg-slate-100 rounded-md p-2 sm:p-3 font-mono text-xs sm:text-sm overflow-x-auto">
+                        <div className="flex-1 bg-slate-100 dark:bg-[#111b21] dark:border dark:border-[#2a3942] rounded-md p-2 sm:p-3 font-mono text-xs sm:text-sm overflow-x-auto">
                             {apiKey ? (
                                 showApiKey ? apiKey : "••••••••••••••••••••••••••••••••"
                             ) : (

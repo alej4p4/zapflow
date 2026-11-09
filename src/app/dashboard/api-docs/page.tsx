@@ -263,16 +263,16 @@ export default function ApiDocsPage() {
     }
 
     return (
-        <div className="min-h-screen bg-gray-50 p-3 sm:p-6">
+        <div className="min-h-screen bg-gray-50 dark:bg-background p-3 sm:p-6 text-foreground">
             <div className="max-w-7xl mx-auto">
                 {/* Header */}
                 <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-6 sm:mb-8">
                     <div>
-                        <h1 className="text-xl sm:text-3xl font-bold text-gray-900 tracking-tight flex items-center gap-2">
+                        <h1 className="text-xl sm:text-3xl font-bold text-gray-900 dark:text-foreground tracking-tight flex items-center gap-2">
                             <FileText className="w-6 h-6 sm:w-8 sm:h-8 text-blue-600" />
                              Documentação da API
                         </h1>
-                        <p className="text-gray-500 mt-2">
+                        <p className="text-gray-500 dark:text-muted-foreground mt-2">
                              Referência completa dos {apiEndpoints.length} endpoints da API.
                         </p>
                     </div>
@@ -288,17 +288,17 @@ export default function ApiDocsPage() {
                 </div>
 
                 {/* Master Documentation Alert */}
-                <div className="bg-blue-50 border-l-4 border-blue-500 p-4 rounded-r shadow-sm mb-6">
+                <div className="bg-blue-50 dark:bg-blue-950/40 border-l-4 border-blue-500 p-4 rounded-r shadow-sm mb-6">
                     <div className="flex items-start">
                         <div className="flex-shrink-0">
                             <FileText className="h-5 w-5 text-blue-600" />
                         </div>
                         <div className="ml-3">
-                    <h3 className="text-sm font-medium text-blue-800">📘 Documentação do projeto disponível</h3>
-                            <div className="mt-2 text-sm text-blue-700">
+                    <h3 className="text-sm font-medium text-blue-800 dark:text-blue-300">📘 Documentação do projeto disponível</h3>
+                            <div className="mt-2 text-sm text-blue-700 dark:text-blue-400">
                                 <p>
                                     Para detalhes sobre a <strong>arquitetura do projeto</strong>, o <strong>esquema do banco de dados</strong> e o <strong>roteamento do frontend</strong>,
-                                    consulte a <a href="/docs/PROJECT_DOCUMENTATION.md" className="font-bold underline hover:text-blue-900">documentação principal do projeto</a>.
+                                    consulte a <a href="/docs/PROJECT_DOCUMENTATION.md" className="font-bold underline hover:text-blue-900 dark:hover:text-blue-200">documentação principal do projeto</a>.
                                 </p>
                             </div>
                         </div>
@@ -306,61 +306,61 @@ export default function ApiDocsPage() {
                 </div>
 
                 {/* Quick Links */}
-                <div className="bg-white rounded-lg shadow p-6 mb-6">
-                    <h2 className="text-lg font-semibold mb-4">Links rápidos</h2>
+                <div className="bg-white dark:bg-[#111b21] dark:border dark:border-[#2a3942] rounded-lg shadow p-6 mb-6">
+                    <h2 className="text-lg font-semibold mb-4 text-gray-900 dark:text-foreground">Links rápidos</h2>
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                         <a
                             href="/docs"
                             target="_blank"
-                            className="flex items-center p-4 border rounded-lg hover:bg-gray-50 transition-colors group"
+                            className="flex items-center p-4 border dark:border-[#2a3942] rounded-lg hover:bg-gray-50 dark:hover:bg-[#202c33] transition-colors group"
                         >
                             <Code className="w-10 h-10 text-blue-600 mr-4" />
                             <div className="flex-1">
-                                <h3 className="font-medium text-gray-800 group-hover:text-blue-600">Swagger UI</h3>
-                                <p className="text-sm text-gray-600">Teste interativo da API</p>
+                                <h3 className="font-medium text-gray-800 dark:text-foreground group-hover:text-blue-600 dark:group-hover:text-blue-400">Swagger UI</h3>
+                                <p className="text-sm text-gray-600 dark:text-muted-foreground">Teste interativo da API</p>
                             </div>
                             <ExternalLink className="w-5 h-5 text-gray-400" />
                         </a>
                         <a
                             href="/api/docs"
                             target="_blank"
-                            className="flex items-center p-4 border rounded-lg hover:bg-gray-50 transition-colors group"
+                            className="flex items-center p-4 border dark:border-[#2a3942] rounded-lg hover:bg-gray-50 dark:hover:bg-[#202c33] transition-colors group"
                         >
                             <FileText className="w-10 h-10 text-green-600 mr-4" />
                             <div className="flex-1">
-                                <h3 className="font-medium text-gray-800 group-hover:text-green-600">Especificação OpenAPI</h3>
-                                <p className="text-sm text-gray-600">Especificação JSON</p>
+                                <h3 className="font-medium text-gray-800 dark:text-foreground group-hover:text-green-600 dark:group-hover:text-green-400">Especificação OpenAPI</h3>
+                                <p className="text-sm text-gray-600 dark:text-muted-foreground">Especificação JSON</p>
                             </div>
                             <ExternalLink className="w-5 h-5 text-gray-400" />
                         </a>
-                        <div className="flex items-center p-4 border rounded-lg bg-gray-50">
+                        <div className="flex items-center p-4 border dark:border-[#2a3942] rounded-lg bg-gray-50 dark:bg-[#202c33]/50">
                             <div className="flex-1">
-                                <h3 className="font-medium text-gray-800">URL base</h3>
-                                <p className="text-sm text-gray-600 font-mono break-all">{process.env.NEXT_PUBLIC_API_URL || '/api'}</p>
+                                <h3 className="font-medium text-gray-800 dark:text-foreground">URL base</h3>
+                                <p className="text-sm text-gray-600 dark:text-muted-foreground font-mono break-all">{process.env.NEXT_PUBLIC_API_URL || '/api'}</p>
                             </div>
                         </div>
                     </div>
                 </div>
 
                 {/* Filters */}
-                <div className="bg-white rounded-lg shadow p-6 mb-6">
+                <div className="bg-white dark:bg-[#111b21] dark:border dark:border-[#2a3942] rounded-lg shadow p-6 mb-6">
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                         <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-2">Buscar</label>
+                            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Buscar</label>
                             <input
                                 type="text"
                                 value={filter}
                                 onChange={(e) => setFilter(e.target.value)}
                                 placeholder="Buscar endpoints..."
-                                className="w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                                className="w-full px-4 py-2 border dark:border-[#2a3942] bg-white dark:bg-[#202c33] text-gray-900 dark:text-white rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                             />
                         </div>
                         <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-2">Categoria</label>
+                            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Categoria</label>
                             <select
                                 value={selectedCategory}
                                 onChange={(e) => setSelectedCategory(e.target.value)}
-                                className="w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                                className="w-full px-4 py-2 border dark:border-[#2a3942] bg-white dark:bg-[#202c33] text-gray-900 dark:text-white rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                             >
                                 {categories.map(cat => (
                                     <option key={cat} value={cat}>{cat}</option>
@@ -371,10 +371,10 @@ export default function ApiDocsPage() {
                 </div>
 
                 {/* Endpoints List */}
-                <div className="bg-white rounded-lg shadow overflow-hidden">
+                <div className="bg-white dark:bg-[#111b21] dark:border dark:border-[#2a3942] rounded-lg shadow overflow-hidden">
                     <div className="overflow-x-auto">
-                        <table className="min-w-full divide-y divide-gray-200">
-                            <thead className="bg-gray-50">
+                        <table className="min-w-full divide-y divide-gray-200 dark:divide-[#2a3942]">
+                            <thead className="bg-gray-50 dark:bg-[#202c33]">
                                 <tr>
                                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Método</th>
                                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Endpoint</th>
@@ -383,23 +383,23 @@ export default function ApiDocsPage() {
                                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Categoria</th>
                                 </tr>
                             </thead>
-                            <tbody className="bg-white divide-y divide-gray-200">
+                            <tbody className="bg-white dark:bg-[#111b21] divide-y divide-gray-200 dark:divide-[#2a3942]">
                                 {filteredEndpoints.map((endpoint, index) => (
-                                    <tr key={index} className="hover:bg-gray-50">
+                                    <tr key={index} className="hover:bg-gray-50 dark:hover:bg-[#202c33]/60 transition-colors">
                                         <td className="px-6 py-4 whitespace-nowrap">
                                             <span className={`px-3 py-1 text-xs font-semibold rounded-full border ${getMethodColor(endpoint.method)}`}>
                                                 {endpoint.method}
                                             </span>
                                         </td>
                                         <td className="px-6 py-4 whitespace-nowrap">
-                                            <code className="text-sm text-gray-900 font-mono">{endpoint.path}</code>
+                                            <code className="text-sm text-gray-900 dark:text-[#00a884] font-mono">{endpoint.path}</code>
                                         </td>
-                                        <td className="px-6 py-4 text-xs font-mono text-gray-600 max-w-xs break-words">
+                                        <td className="px-6 py-4 text-xs font-mono text-gray-600 dark:text-gray-300 max-w-xs break-words">
                                              {translateParams(endpoint.params || "-")}
                                         </td>
-                                         <td className="px-6 py-4 text-sm text-gray-600">{translateDescription(endpoint.description)}</td>
+                                         <td className="px-6 py-4 text-sm text-gray-600 dark:text-gray-300">{translateDescription(endpoint.description)}</td>
                                         <td className="px-6 py-4 whitespace-nowrap">
-                                            <span className="px-2 py-1 text-xs bg-gray-100 text-gray-700 rounded">
+                                            <span className="px-2 py-1 text-xs bg-gray-100 dark:bg-[#202c33] text-gray-700 dark:text-gray-300 rounded border dark:border-[#2a3942]">
                                                  {categoryNames[endpoint.category] || endpoint.category}
                                             </span>
                                         </td>
@@ -410,7 +410,7 @@ export default function ApiDocsPage() {
                     </div>
 
                     {filteredEndpoints.length === 0 && (
-                        <div className="text-center py-12 text-gray-500">
+                        <div className="text-center py-12 text-gray-500 dark:text-gray-400">
                              Nenhum endpoint corresponde aos critérios da busca.
                         </div>
                     )}
@@ -418,21 +418,21 @@ export default function ApiDocsPage() {
 
                 {/* Stats */}
                 <div className="mt-6 grid grid-cols-2 md:grid-cols-4 gap-4">
-                    <div className="bg-white rounded-lg shadow p-4">
+                    <div className="bg-white dark:bg-[#111b21] dark:border dark:border-[#2a3942] rounded-lg shadow p-4">
                         <div className="text-2xl font-bold text-blue-600">{apiEndpoints.length}</div>
-                        <div className="text-sm text-gray-600">Total de endpoints</div>
+                        <div className="text-sm text-gray-600 dark:text-muted-foreground">Total de endpoints</div>
                     </div>
-                    <div className="bg-white rounded-lg shadow p-4">
+                    <div className="bg-white dark:bg-[#111b21] dark:border dark:border-[#2a3942] rounded-lg shadow p-4">
                         <div className="text-2xl font-bold text-green-600">{categories.length - 1}</div>
-                        <div className="text-sm text-gray-600">Categorias</div>
+                        <div className="text-sm text-gray-600 dark:text-muted-foreground">Categorias</div>
                     </div>
-                    <div className="bg-white rounded-lg shadow p-4">
+                    <div className="bg-white dark:bg-[#111b21] dark:border dark:border-[#2a3942] rounded-lg shadow p-4">
                         <div className="text-2xl font-bold text-yellow-600">{apiEndpoints.filter(e => e.method === "POST").length}</div>
-                        <div className="text-sm text-gray-600">Endpoints POST</div>
+                        <div className="text-sm text-gray-600 dark:text-muted-foreground">Endpoints POST</div>
                     </div>
-                    <div className="bg-white rounded-lg shadow p-4">
+                    <div className="bg-white dark:bg-[#111b21] dark:border dark:border-[#2a3942] rounded-lg shadow p-4">
                         <div className="text-2xl font-bold text-purple-600">{apiEndpoints.filter(e => e.method === "GET").length}</div>
-                        <div className="text-sm text-gray-600">Endpoints GET</div>
+                        <div className="text-sm text-gray-600 dark:text-muted-foreground">Endpoints GET</div>
                     </div>
                 </div>
             </div>

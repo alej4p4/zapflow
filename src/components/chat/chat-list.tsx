@@ -1134,11 +1134,14 @@ export function ChatList({ sessionId, onSelectChat, selectedJid }: ChatListProps
         socket.on("message.update", handler);
         socket.on("message.status", statusHandler);
         socket.on("presence.update", presenceHandler);
+        const onChatsUpdate = () => { fetchChats(); };
+        socket.on("chats.update", onChatsUpdate);
         return () => {
             socket.off("connect", onConnect);
             socket.off("message.update", handler);
             socket.off("message.status", statusHandler);
             socket.off("presence.update", presenceHandler);
+            socket.off("chats.update", onChatsUpdate);
         };
     }, [sessionId, getSocket, joinSession, fetchChats]);
 
@@ -1525,7 +1528,7 @@ export function ChatList({ sessionId, onSelectChat, selectedJid }: ChatListProps
                         {totalUnreadCount > 0 && (
                             <span className={cn(
                                 "px-1.5 py-0.2 rounded-full text-[10px] font-bold tabular-nums",
-                                filterType === "unread" && !selectedLabelId ? "bg-white text-[#00a884]" : "bg-[#25d366] text-white"
+                                filterType === "unread" && !selectedLabelId ? "bg-white dark:bg-[#111b21] text-[#00a884] dark:text-[#25d366]" : "bg-[#25d366] text-white"
                             )}>
                                 {totalUnreadCount}
                             </span>
@@ -1545,7 +1548,7 @@ export function ChatList({ sessionId, onSelectChat, selectedJid }: ChatListProps
                         {unreadContactsCount > 0 ? (
                             <span className={cn(
                                 "px-1.5 py-0.2 rounded-full text-[10px] font-bold tabular-nums",
-                                filterType === "contacts" && !selectedLabelId ? "bg-white text-[#00a884]" : "bg-[#25d366] text-white"
+                                filterType === "contacts" && !selectedLabelId ? "bg-white dark:bg-[#111b21] text-[#00a884] dark:text-[#25d366]" : "bg-[#25d366] text-white"
                             )}>
                                 {unreadContactsCount}
                             </span>
@@ -1567,7 +1570,7 @@ export function ChatList({ sessionId, onSelectChat, selectedJid }: ChatListProps
                         {unreadGroupsCount > 0 ? (
                             <span className={cn(
                                 "px-1.5 py-0.2 rounded-full text-[10px] font-bold tabular-nums",
-                                filterType === "groups" && !selectedLabelId ? "bg-white text-[#00a884]" : "bg-[#25d366] text-white"
+                                filterType === "groups" && !selectedLabelId ? "bg-white dark:bg-[#111b21] text-[#00a884] dark:text-[#25d366]" : "bg-[#25d366] text-white"
                             )}>
                                 {unreadGroupsCount}
                             </span>

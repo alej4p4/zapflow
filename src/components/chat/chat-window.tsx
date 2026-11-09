@@ -690,7 +690,7 @@ function WhatsAppAudioPlayer({
             <audio
                 ref={audioRef}
                 src={audioSrc}
-                preload="auto"
+                preload="metadata"
                 onPlay={() => {
                     setIsPlaying(true);
                     setHasError(false);
@@ -2027,7 +2027,7 @@ function ChatInputBar({
     onSend: (text: string, mentions?: string[]) => void;
     onSendAudio?: (blob: Blob, mimeType: string) => void;
     onUpload: (type: string) => void;
-    onPasteFile?: (file: File) => void;
+    onPasteFile?: (file: File | File[], initialCaption?: string) => void;
     onOpenSendContact?: () => void;
     onOpenSendLocation?: () => void;
     onOpenSendPoll?: () => void;
@@ -3191,23 +3191,26 @@ function ChatInputBar({
                             onPaste={(e) => {
                                 if (!onPasteFile) return;
                                 const items = e.clipboardData?.items;
+                                const pastedFiles: File[] = [];
                                 if (items) {
                                     for (let i = 0; i < items.length; i++) {
                                         const item = items[i];
                                         if (item.kind === "file") {
                                             const file = item.getAsFile();
-                                            if (file) {
-                                                e.preventDefault();
-                                                onPasteFile(file);
-                                                return;
-                                            }
+                                            if (file) pastedFiles.push(file);
                                         }
                                     }
                                 }
-                                const files = e.clipboardData?.files;
-                                if (files && files.length > 0) {
+                                if (pastedFiles.length === 0 && e.clipboardData?.files?.length) {
+                                    for (let i = 0; i < e.clipboardData.files.length; i++) {
+                                        pastedFiles.push(e.clipboardData.files[i]);
+                                    }
+                                }
+                                if (pastedFiles.length > 0) {
                                     e.preventDefault();
-                                    onPasteFile(files[0]);
+                                    const currentCaption = input.trim();
+                                    if (currentCaption) setInput("");
+                                    onPasteFile(pastedFiles.length === 1 ? pastedFiles[0] : pastedFiles, currentCaption || undefined);
                                 }
                             }}
                             placeholder={isGroup ? "Digite uma mensagem, / para respostas rápidas, @ ou Ctrl+V para colar print..." : "Digite uma mensagem, / para respostas rápidas ou Ctrl+V para colar print..."}
@@ -4335,11 +4338,11 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
         }
     };
 
-    const initiateFilesPreview = (fileList: File[] | FileList, explicitType?: string) => {
+    const initiateFilesPreview = (fileList: File[] | FileList, explicitType?: string, initialCaption?: string) => {
         const filesArr = Array.from(fileList);
         if (filesArr.length === 0) return;
 
-        const newItems = filesArr.map(file => {
+        const newItems = filesArr.map((file, idx) => {
             let type = explicitType;
             if (!type || type === '*') {
                 if (file.type.startsWith('image/')) type = 'image';
@@ -4352,7 +4355,7 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
                 file,
                 type: type || 'document',
                 previewUrl,
-                caption: ""
+                caption: idx === 0 && initialCaption ? initialCaption : ""
             };
         });
 
@@ -4363,8 +4366,8 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
         setActivePreviewIdx(prev => (previewFiles.length === 0 ? 0 : prev));
     };
 
-    const initiateFilePreview = (file: File, explicitType?: string) => {
-        initiateFilesPreview([file], explicitType);
+    const initiateFilePreview = (file: File, explicitType?: string, initialCaption?: string) => {
+        initiateFilesPreview([file], explicitType, initialCaption);
     };
 
     // Global paste listener: captures prints (Ctrl+V) anywhere in the chat window
@@ -5033,7 +5036,35 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
         }
     };
 
-    const displayName = name || jid.split('@')[0];
+    const resolvedGroupSubject = useMemo(() => {
+        if (!jid.endsWith("@g.us")) return null;
+        try {
+            const groups = getCachedGroups(sessionId);
+            const found = groups?.find(g => g.jid === jid);
+            if (found?.subject) return found.subject;
+        } catch {}
+        return null;
+    }, [sessionId, jid]);
+
+    const resolvedContactName = useMemo(() => {
+        if (jid.endsWith("@g.us")) return null;
+        try {
+            const contacts = getCachedPhoneContacts(sessionId);
+            const bare = jid.split('@')[0].replace(/\D/g, "");
+            const found = contacts?.find(c => c.jid === jid || c.jid.split('@')[0].replace(/\D/g, "") === bare || (c.remoteJidAlt && c.remoteJidAlt.split('@')[0].replace(/\D/g, "") === bare));
+            if (found?.name || found?.notify || found?.verifiedName) return found.name || found.notify || found.verifiedName;
+        } catch {}
+        return null;
+    }, [sessionId, jid]);
+
+    const rawName = name?.trim();
+    const hasValidName = rawName && rawName !== jid && rawName !== jid.split('@')[0];
+    const bareNum = jid.split('@')[0].replace(/\D/g, "");
+    const formattedPhoneFallback = bareNum.length >= 10 ? `+${bareNum}` : jid.split('@')[0];
+
+    const displayName = hasValidName
+        ? rawName
+        : (resolvedGroupSubject || resolvedContactName || (jid.endsWith("@g.us") ? "Grupo do WhatsApp" : formattedPhoneFallback));
 
     return (
         <div className="flex-1 flex flex-row min-w-0 min-h-0 overflow-hidden relative">
@@ -5925,7 +5956,7 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
                     </Avatar>
                     <div className="flex-1 min-w-0 cursor-pointer" onClick={() => { setChatInfoModalTab("media"); setIsChatInfoModalOpen(true); }}>
                         <div className="flex items-center gap-2 min-w-0">
-                            <h3 className="text-[15px] sm:text-[16px] font-semibold text-foreground dark:text-[#e9edef] leading-snug truncate" title={displayName}>
+                            <h3 className="text-[15px] sm:text-[16px] font-semibold text-foreground dark:text-[#e9edef] leading-snug line-clamp-1 hover:line-clamp-2 break-words" title={displayName}>
                                 {displayName}
                             </h3>
                             {isChatMuted && (
@@ -7306,7 +7337,13 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
                 onSend={handleSend}
                 onSendAudio={handleSendAudio}
                 onUpload={triggerUpload}
-                onPasteFile={(file) => initiateFilePreview(file)}
+                onPasteFile={(fileOrFiles, initialCaption) => {
+                    if (Array.isArray(fileOrFiles)) {
+                        initiateFilesPreview(fileOrFiles, undefined, initialCaption);
+                    } else {
+                        initiateFilePreview(fileOrFiles, undefined, initialCaption);
+                    }
+                }}
                 onOpenSendContact={() => setIsSendContactOpen(true)}
                 onOpenSendLocation={() => setIsSendLocationOpen(true)}
                 onOpenSendPoll={() => setIsSendPollOpen(true)}
