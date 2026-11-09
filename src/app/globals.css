@@ -52,6 +52,7 @@
 }
 
 :root {
+  color-scheme: light;
   --radius: 0.75rem;
   /* Light Mode - Authentic WhatsApp Web Light Theme */
   --background: #ffffff;
@@ -101,6 +102,7 @@
 }
 
 .dark {
+  color-scheme: dark;
   /* Dark Mode - Authentic WhatsApp Web Dark Palette */
   --background: #111b21;
   --foreground: #e9edef;
@@ -206,4 +208,135 @@
       transform: scale(1.05);
     }
   }
+}
+
+/* WhatsApp Web Dark & Light Scrollbar Styles */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(0, 0, 0, 0.2) transparent;
+}
+
+.dark * {
+  scrollbar-color: rgba(255, 255, 255, 0.16) transparent;
+}
+
+/* Chrome, Edge, Safari, Opera WebKit Scrollbars */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: 9999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 0, 0, 0.35);
+}
+
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+.dark ::-webkit-scrollbar-track,
+.dark::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.dark ::-webkit-scrollbar-thumb,
+.dark::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.16);
+  border-radius: 9999px;
+}
+
+.dark ::-webkit-scrollbar-thumb:hover,
+.dark::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.28);
+}
+
+.dark ::-webkit-scrollbar-corner,
+.dark::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+/* Styled scrollbar utility */
+.styled-scrollbar {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(0, 0, 0, 0.2) transparent;
+}
+
+.dark .styled-scrollbar,
+.styled-scrollbar.dark {
+  scrollbar-color: rgba(255, 255, 255, 0.16) transparent;
+}
+
+.styled-scrollbar::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+.styled-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.styled-scrollbar::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: 9999px;
+}
+
+.styled-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 0, 0, 0.35);
+}
+
+.dark .styled-scrollbar::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.16);
+}
+
+.dark .styled-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.28);
+}
+
+/* Virtuoso Scroller Dark Scrollbar Support */
+[data-virtuoso-scroller="true"] {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(0, 0, 0, 0.2) transparent;
+}
+
+.dark [data-virtuoso-scroller="true"] {
+  scrollbar-color: rgba(255, 255, 255, 0.16) transparent;
+}
+
+[data-virtuoso-scroller="true"]::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+[data-virtuoso-scroller="true"]::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+[data-virtuoso-scroller="true"]::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: 9999px;
+}
+
+.dark [data-virtuoso-scroller="true"]::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.16);
+}
+
+.dark [data-virtuoso-scroller="true"]::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.28);
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
 }

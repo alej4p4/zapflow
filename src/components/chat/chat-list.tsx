@@ -1676,6 +1676,7 @@ export function ChatList({ sessionId, onSelectChat, selectedJid }: ChatListProps
                 ) : (
                     <Virtuoso
                         style={{ height: "100%" }}
+                        className="styled-scrollbar"
                         data={filteredAndSortedChats}
                         computeItemKey={(_: number, chat: ChatContact) => chat.jid}
                         itemContent={itemContent}
