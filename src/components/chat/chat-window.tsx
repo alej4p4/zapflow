@@ -437,10 +437,38 @@ function WhatsAppAudioPlayer({
     const [hasError, setHasError] = useState(false);
     const [currentTime, setCurrentTime] = useState(0);
     const [duration, setDuration] = useState(0);
-    const [playbackRate, setPlaybackRate] = useState<number>(1);
+    const [playbackRate, setPlaybackRate] = useState<number>(() => {
+        if (typeof window === "undefined") return 1;
+        const saved = localStorage.getItem("zapflow_audio_playback_rate");
+        return saved === "1.5" ? 1.5 : saved === "2" ? 2 : 1;
+    });
     const [transcription, setTranscription] = useState<string | null>(null);
     const [isTranscribing, setIsTranscribing] = useState(false);
     const [hasRetriedFallback, setHasRetriedFallback] = useState(false);
+
+    // Sync playback rate across all voice notes
+    useEffect(() => {
+        const onRateChange = (e: any) => {
+            if (e.detail?.rate) {
+                setPlaybackRate(e.detail.rate);
+                if (audioRef.current) audioRef.current.playbackRate = e.detail.rate;
+            }
+        };
+        window.addEventListener("zapflow:audio-rate-change", onRateChange);
+        return () => window.removeEventListener("zapflow:audio-rate-change", onRateChange);
+    }, []);
+
+    // WhatsApp-style single audio playback: pause others when this audio plays
+    useEffect(() => {
+        const onOtherAudioPlay = (e: any) => {
+            if (e.detail?.src !== audioSrc && audioRef.current && !audioRef.current.paused) {
+                audioRef.current.pause();
+                setIsPlaying(false);
+            }
+        };
+        window.addEventListener("zapflow:audio-play", onOtherAudioPlay);
+        return () => window.removeEventListener("zapflow:audio-play", onOtherAudioPlay);
+    }, [audioSrc]);
 
     useEffect(() => {
         setAudioSrc(src);
@@ -549,9 +577,11 @@ function WhatsAppAudioPlayer({
         e.stopPropagation();
         const nextRate = playbackRate === 1 ? 1.5 : playbackRate === 1.5 ? 2 : 1;
         setPlaybackRate(nextRate);
+        try { localStorage.setItem("zapflow_audio_playback_rate", String(nextRate)); } catch {}
         if (audioRef.current) {
             audioRef.current.playbackRate = nextRate;
         }
+        window.dispatchEvent(new CustomEvent("zapflow:audio-rate-change", { detail: { rate: nextRate } }));
     };
 
     const formatTime = (seconds: number) => {
@@ -615,8 +645,12 @@ function WhatsAppAudioPlayer({
         if (!audioRef.current || !duration) return;
         const rect = e.currentTarget.getBoundingClientRect();
         const ratio = Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width));
-        audioRef.current.currentTime = ratio * duration;
-        setCurrentTime(ratio * duration);
+        const targetTime = ratio * duration;
+        audioRef.current.currentTime = targetTime;
+        setCurrentTime(targetTime);
+        if (audioRef.current.paused) {
+            audioRef.current.play().then(() => setIsPlaying(true)).catch(() => {});
+        }
     };
 
     const avatarNode = (
@@ -657,7 +691,14 @@ function WhatsAppAudioPlayer({
                 ref={audioRef}
                 src={audioSrc}
                 preload="auto"
-                onPlay={() => { setIsPlaying(true); setHasError(false); }}
+                onPlay={() => {
+                    setIsPlaying(true);
+                    setHasError(false);
+                    if (playbackRate !== 1 && audioRef.current) {
+                        audioRef.current.playbackRate = playbackRate;
+                    }
+                    window.dispatchEvent(new CustomEvent("zapflow:audio-play", { detail: { src: audioSrc } }));
+                }}
                 onPause={() => setIsPlaying(false)}
                 onEnded={() => { setIsPlaying(false); setCurrentTime(0); }}
                 onTimeUpdate={() => audioRef.current && setCurrentTime(audioRef.current.currentTime)}
@@ -4244,7 +4285,12 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
 
         try {
             const res = await sendMediaMessage(formData);
-            setMessages(prev => prev.map(m => m.keyId === tempKeyId ? { ...m, keyId: res?.keyId || m.keyId, status: "SENT" } : m));
+            setMessages(prev => prev.map(m => m.keyId === tempKeyId ? {
+                ...m,
+                keyId: res?.keyId || m.keyId,
+                ...(res?.mediaUrl ? { mediaUrl: res.mediaUrl } : {}),
+                status: "SENT"
+            } : m));
         } catch (error: any) {
             toast.error(error.message || "Falha ao enviar a mídia");
             setMessages(prev => prev.map(m => m.keyId === tempKeyId ? { ...m, status: "FAILED" } : m));
@@ -4282,6 +4328,41 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
     const initiateFilePreview = (file: File, explicitType?: string) => {
         initiateFilesPreview([file], explicitType);
     };
+
+    // Global paste listener: captures prints (Ctrl+V) anywhere in the chat window
+    useEffect(() => {
+        const handleGlobalPaste = (e: ClipboardEvent) => {
+            const activeEl = document.activeElement as HTMLElement | null;
+            const activeTag = activeEl?.tagName?.toLowerCase();
+            if (activeTag === "input" && activeEl?.getAttribute("type") !== "file") {
+                return;
+            }
+
+            const items = e.clipboardData?.items;
+            if (!items || items.length === 0) return;
+
+            const filesToProcess: File[] = [];
+            for (let i = 0; i < items.length; i++) {
+                const item = items[i];
+                if (item.kind === "file") {
+                    const file = item.getAsFile();
+                    if (file) {
+                        filesToProcess.push(file);
+                    }
+                }
+            }
+
+            if (filesToProcess.length > 0) {
+                e.preventDefault();
+                e.stopPropagation();
+                initiateFilesPreview(filesToProcess);
+            }
+        };
+
+        window.addEventListener("paste", handleGlobalPaste, true);
+        return () => window.removeEventListener("paste", handleGlobalPaste, true);
+    }, [sessionId, jid]);
+
 
     // Send Sticker from image file or saved sticker URL (#C35)
     const handleSendStickerFile = async (file: File) => {
