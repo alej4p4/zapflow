@@ -5806,7 +5806,7 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
                     </Avatar>
                     <div className="flex-1 min-w-0 cursor-pointer" onClick={() => { setChatInfoModalTab("media"); setIsChatInfoModalOpen(true); }}>
                         <div className="flex items-center gap-2 min-w-0">
-                            <h3 className="text-[14px] sm:text-[15.5px] font-bold text-foreground leading-snug break-words line-clamp-2 hover:line-clamp-none transition-all" title={displayName}>
+                            <h3 className="text-[15px] sm:text-[16px] font-semibold text-foreground dark:text-[#e9edef] leading-snug truncate" title={displayName}>
                                 {displayName}
                             </h3>
                             {isChatMuted && (
@@ -5814,43 +5814,23 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
                                     <VolumeX className="h-3.5 w-3.5" />
                                 </span>
                             )}
-                            {/* Contact Labels in Header */}
+                            {/* Contact Labels in Header - Subtle Colored Dots */}
                             {chatLabels.length > 0 && (
-                                <div className="hidden sm:flex items-center gap-1 shrink-0 overflow-hidden" onClick={e => e.stopPropagation()}>
+                                <div className="hidden sm:flex items-center gap-1 shrink-0" onClick={e => e.stopPropagation()}>
                                     {chatLabels.slice(0, 3).map(l => (
                                         <span
                                             key={l.id}
-                                            className="inline-flex items-center gap-1 text-[10px] font-medium px-2 py-0.5 rounded-full border shadow-xs"
-                                            style={{
-                                                backgroundColor: `${l.colorHex}15`,
-                                                borderColor: `${l.colorHex}45`,
-                                                color: l.colorHex
-                                            }}
-                                            title={l.name}
-                                        >
-                                            <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: l.colorHex }} />
-                                            <span className="truncate max-w-[80px]">{l.name}</span>
-                                        </span>
+                                            className="w-2.5 h-2.5 rounded-full border border-black/10 dark:border-white/20 shadow-xs shrink-0 cursor-pointer"
+                                            style={{ backgroundColor: l.colorHex }}
+                                            title={`Etiqueta: ${l.name}`}
+                                        />
                                     ))}
                                     {chatLabels.length > 3 && (
-                                        <span className="text-[10px] text-muted-foreground font-semibold px-1 py-0.2 rounded-full bg-muted">
+                                        <span className="text-[9.5px] text-muted-foreground font-semibold px-1 rounded-full bg-muted">
                                             +{chatLabels.length - 3}
                                         </span>
                                     )}
                                 </div>
-                            )}
-                            {chatLabels.length > 0 && (
-                                <LabelAssignPopover sessionId={sessionId} jid={jid}>
-                                    <button
-                                        type="button"
-                                        onClick={e => e.stopPropagation()}
-                                        className="inline-flex items-center gap-1 text-[10px] text-muted-foreground hover:text-[#00a884] px-1.5 py-0.5 rounded-full bg-black/5 dark:bg-white/10 hover:bg-[#00a884]/15 transition-colors shrink-0 cursor-pointer"
-                                        title="Atribuir etiquetas para este contato"
-                                    >
-                                        <Tag className="h-2.5 w-2.5" />
-                                        <span>+</span>
-                                    </button>
-                                </LabelAssignPopover>
                             )}
                         </div>
                         <p className="text-[11.5px] text-muted-foreground truncate flex items-center gap-1.5 mt-0.5">
@@ -5870,7 +5850,7 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
                                 </span>
                             ) : isGroup ? (
                                 <span className="truncate">
-                                    {participantNames.length > 0 ? participantNames.join(", ") : `Grupo • ${jid}`}
+                                    {participantNames.length > 0 ? participantNames.join(", ") : "Grupo"}
                                 </span>
                             ) : (
                                 <span className="flex items-center gap-1 text-[#00a884] font-medium">
