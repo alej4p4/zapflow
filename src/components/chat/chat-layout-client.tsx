@@ -92,8 +92,8 @@ export function ChatLayoutClient({ sessionId, initialJid }: ChatLayoutClientProp
         // Outer: flex row, full height, overflow hidden — containment chain root
         <div className="flex h-full bg-background overflow-hidden min-h-0 border-t border-border/20">
             {/* Chat List Panel - Standard WhatsApp Web Width */}
-            <div className={`w-full md:w-[380px] lg:w-[410px] xl:w-[420px] border-r border-border/30 overflow-hidden shrink-0 flex flex-col
-                ${selectedChat ? "hidden md:flex" : "flex"}`}
+            <div className={`w-full lg:w-[380px] xl:w-[420px] border-r border-border/30 overflow-hidden shrink-0 flex flex-col
+                ${selectedChat ? "hidden lg:flex" : "flex"}`}
             >
                 {/* Inner flex-col: header fixed + virtuoso fills rest */}
                 <ChatList
@@ -105,7 +105,7 @@ export function ChatLayoutClient({ sessionId, initialJid }: ChatLayoutClientProp
 
             {/* Chat Window Panel */}
             <div className={`flex-1 overflow-hidden flex flex-col min-w-0
-                ${!selectedChat ? "hidden md:flex" : "flex"}`}
+                ${!selectedChat ? "hidden lg:flex" : "flex"}`}
             >
                 {selectedChat ? (
                     <ChatWindow

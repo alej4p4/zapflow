@@ -3060,7 +3060,7 @@ function ChatInputBar({
                                 variant="ghost"
                                 size="icon"
                                 disabled={isRewritingDraft}
-                                className="h-10 w-10 rounded-full shrink-0 text-purple-600 dark:text-purple-400 hover:bg-purple-500/15 transition-colors cursor-pointer"
+                                className="h-10 w-10 rounded-full shrink-0 text-purple-600 dark:text-purple-400 hover:bg-purple-500/15 transition-colors cursor-pointer hidden sm:inline-flex"
                                 title="✨ Assistente de IA Gratuita (Sugerir Resposta, Melhorar Texto, Resumir Conversa)"
                             >
                                 {isRewritingDraft ? (
@@ -3191,7 +3191,7 @@ function ChatInputBar({
                         variant="ghost"
                         size="icon"
                         onClick={() => onOpenScheduleMessage?.(input)}
-                        className="h-10 w-10 rounded-full shrink-0 text-[#54656f] dark:text-[#8696a0] hover:text-[#00a884] hover:bg-[#00a884]/10 transition-colors cursor-pointer"
+                        className="h-10 w-10 rounded-full shrink-0 text-[#54656f] dark:text-[#8696a0] hover:text-[#00a884] hover:bg-[#00a884]/10 transition-colors cursor-pointer hidden md:inline-flex"
                         title="Agendar mensagem para este contato/grupo"
                     >
                         <CalendarClock className="h-5 w-5" />
@@ -3212,7 +3212,7 @@ function ChatInputBar({
                             type="button"
                             variant="ghost"
                             size="icon"
-                            className="h-10 w-10 rounded-full shrink-0 text-[#54656f] dark:text-[#8696a0] hover:text-[#00a884] hover:bg-[#00a884]/10 transition-colors cursor-pointer"
+                            className="h-10 w-10 rounded-full shrink-0 text-[#54656f] dark:text-[#8696a0] hover:text-[#00a884] hover:bg-[#00a884]/10 transition-colors cursor-pointer hidden md:inline-flex"
                             onClick={startRecording}
                             title="Gravar mensagem de voz"
                         >
@@ -5870,7 +5870,7 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
             <div className="shrink-0 px-3 sm:px-4 py-2 sm:py-2.5 border-b border-border/15 bg-[#f0f2f5] dark:bg-[#202c33] flex items-center justify-between z-10 select-none gap-2">
                 <div className="flex items-center gap-2.5 sm:gap-3 min-w-0 flex-1 mr-1 sm:mr-2">
                     {onBack && (
-                        <Button variant="ghost" size="icon" className="h-8 w-8 md:hidden shrink-0 text-muted-foreground hover:text-foreground" onClick={onBack}>
+                        <Button variant="ghost" size="icon" className="h-8 w-8 lg:hidden shrink-0 text-muted-foreground hover:text-foreground" onClick={onBack}>
                             <ArrowLeft className="h-5 w-5" />
                         </Button>
                     )}
