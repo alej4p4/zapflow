@@ -1960,19 +1960,44 @@ const EMOJI_CATEGORIES = [
     }
 ];
 
+let draftDebounceTimer: any = null;
+const draftMemoryCache = new Map<string, Record<string, string>>();
+
 function persistChatDraft(sessionId: string | undefined, jid: string, text: string) {
     if (typeof window === "undefined" || !sessionId || !jid) return;
     try {
         const key = `zapflow_drafts_${sessionId}`;
-        const raw = localStorage.getItem(key);
-        const map: Record<string, string> = raw ? JSON.parse(raw) : {};
+        let map: Record<string, string> | undefined = draftMemoryCache.get(sessionId);
+        if (!map) {
+            const raw = localStorage.getItem(key);
+            const parsed: Record<string, string> = raw ? JSON.parse(raw) : {};
+            map = parsed;
+            draftMemoryCache.set(sessionId, parsed);
+        }
         if (text.trim()) {
             map[jid] = text;
         } else {
             delete map[jid];
         }
-        localStorage.setItem(key, JSON.stringify(map));
-        window.dispatchEvent(new CustomEvent("zapflow:draft-changed", { detail: { jid, text } }));
+
+        // When clearing draft (e.g. immediately upon send), save and dispatch immediately
+        if (!text.trim()) {
+            if (draftDebounceTimer) clearTimeout(draftDebounceTimer);
+            try {
+                localStorage.setItem(key, JSON.stringify(map));
+                window.dispatchEvent(new CustomEvent("zapflow:draft-changed", { detail: { jid, text: "" } }));
+            } catch {}
+            return;
+        }
+
+        // Debounce typing persist to guarantee 120 FPS buttery typing without disk/re-render thrashing
+        if (draftDebounceTimer) clearTimeout(draftDebounceTimer);
+        draftDebounceTimer = setTimeout(() => {
+            try {
+                localStorage.setItem(key, JSON.stringify(map));
+                window.dispatchEvent(new CustomEvent("zapflow:draft-changed", { detail: { jid, text } }));
+            } catch {}
+        }, 300);
     } catch {}
 }
 
@@ -2437,9 +2462,9 @@ function ChatInputBar({
         const text = input.trim();
         if (!text) return;
 
-        // Extract mentions if in group
+        // Extract mentions if in group (only scan if '@' is in text to eliminate UI freeze)
         let mentions: string[] | undefined = undefined;
-        if (isGroup && participants.length > 0) {
+        if (isGroup && text.includes('@') && participants.length > 0) {
             const foundMentions = new Set<string>();
             for (const p of participants) {
                 if (p.name && text.includes(`@${p.name}`)) {
@@ -2454,13 +2479,20 @@ function ChatInputBar({
             }
         }
 
+        // 1. Instantly clear input in 0ms (synchronous)
         setInput("");
-        persistChatDraft(sessionId, jid, "");
         setMentionQuery(null);
         setQuickReplyQuery(null);
         if (inputRef.current) {
             inputRef.current.style.height = "auto";
         }
+
+        // 2. Clear draft non-blockingly
+        setTimeout(() => {
+            persistChatDraft(sessionId, jid, "");
+        }, 0);
+
+        // 3. Immediately trigger send
         onSend(text, mentions);
     };
 
@@ -3780,7 +3812,11 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
     const getDateLabel = useDateLabel();
     const isGroup = jid.endsWith("@g.us");
 
-    const scrollToBottom = useCallback((smooth = true) => {
+    const scrollToBottom = useCallback((smooth = false) => {
+        if (!smooth && scrollRef.current) {
+            scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+            return;
+        }
         bottomRef.current?.scrollIntoView({ behavior: smooth ? "smooth" : "auto", block: "end" });
     }, []);
 
@@ -4115,9 +4151,9 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
             quoteId: replyKeyId || null,
         };
 
-        // 2. Immediately render on screen & scroll (0ms)
+        // 2. Immediately render on screen & snap scroll (0ms instant WhatsApp-like snap)
         setMessages(prev => [...prev, optimisticMsg]);
-        requestAnimationFrame(() => scrollToBottom(true));
+        scrollToBottom(false);
 
         // 3. Update memory cache immediately
         const cacheKey = `${sessionId}:${jid}`;
@@ -4130,12 +4166,14 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
             });
         }
 
-        // 4. Instantly notify sidebar to update lastMessage and move to top (0ms)
-        if (typeof window !== "undefined") {
-            window.dispatchEvent(new CustomEvent("zapflow:local-message-sent", {
-                detail: { jid, content: text, timestamp: nowIso }
-            }));
-        }
+        // 4. Notify sidebar to update lastMessage and move to top in next slice (non-blocking)
+        setTimeout(() => {
+            if (typeof window !== "undefined") {
+                window.dispatchEvent(new CustomEvent("zapflow:local-message-sent", {
+                    detail: { jid, content: text, timestamp: nowIso }
+                }));
+            }
+        }, 0);
 
         // 5. Send in background — non-blocking, zero perceived delay
         sendChatMessage(sessionId, jid, text, replyKeyId, mentions)
@@ -4275,7 +4313,7 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
 
         setReplyingTo(null);
         setMessages(prev => [...prev, optimisticMsg]);
-        requestAnimationFrame(() => scrollToBottom(true));
+        scrollToBottom(false);
 
         if (typeof window !== "undefined") {
             window.dispatchEvent(new CustomEvent("zapflow:local-message-sent", {
@@ -4384,7 +4422,7 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
         };
         setReplyingTo(null);
         setMessages(prev => [...prev, optimisticMsg]);
-        requestAnimationFrame(() => scrollToBottom(true));
+        scrollToBottom(false);
 
         const formData = new FormData();
         formData.append("file", file);
@@ -4562,7 +4600,7 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
 
         setReplyingTo(null);
         setMessages(prev => [...prev, optimisticMsg]);
-        requestAnimationFrame(() => scrollToBottom(true));
+        scrollToBottom(false);
 
         const formData = new FormData();
         formData.append("file", file);
@@ -4908,7 +4946,7 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
         };
         setMessages(prev => [...prev, optimisticMsg]);
         setIsSendLocationOpen(false);
-        requestAnimationFrame(() => scrollToBottom(true));
+        scrollToBottom(false);
 
         try {
             const res = await sendLocationPinMessage(sessionId, jid, latNum, lngNum, locName, locAddress);
@@ -4951,7 +4989,7 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
         };
         setMessages(prev => [...prev, optimisticMsg]);
         setIsSendPollOpen(false);
-        requestAnimationFrame(() => scrollToBottom(true));
+        scrollToBottom(false);
 
         try {
             const res = await sendPollMessage(

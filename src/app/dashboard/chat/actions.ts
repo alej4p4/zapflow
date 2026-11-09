@@ -370,7 +370,7 @@ export async function reactToChatMessage(sessionId: string, jid: string, message
                     ...(isGroup && participant ? { participant } : {})
                 }
             }
-        });
+        }, { skipAntiSpam: true } as any);
         return { success: true };
     } catch (e: any) {
         throw new Error(`Failed to send reaction: ${e.message}`);

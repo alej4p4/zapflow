@@ -8,6 +8,10 @@ import { writeFile, mkdir } from "fs/promises";
 import { mediaDir } from "@/lib/paths";
 import { logger } from "@/lib/logger";
 
+// High-speed memory caches to eliminate repeated database roundtrips on sending
+const sessionDbIdCache = new Map<string, string>();
+const recentQuotedCache = new Map<string, any>();
+
 export class ChatService {
     /**
      * Get active chats list for a session with last message preview.
@@ -488,40 +492,61 @@ export class ChatService {
             throw new Error("WhatsApp desconectado ou reconectando. Tente novamente em alguns segundos.");
         }
 
-        // Handle quoted/reply message
+        // Handle quoted/reply message with in-memory caching for zero SQL latency
         let quotedOption: any = undefined;
         if (quotedMessageId) {
             try {
-                const dbSession = await prisma.session.findFirst({ where: { OR: [{ sessionId }, { id: sessionId }] }, select: { id: true } });
-                if (dbSession) {
-                    const quotedMsg = await prisma.message.findFirst({
-                        where: { sessionId: dbSession.id, keyId: quotedMessageId },
-                        select: { keyId: true, remoteJid: true, fromMe: true, content: true, senderJid: true }
-                    });
-                    if (quotedMsg) {
-                        const rawParticipant = quotedMsg.fromMe 
-                            ? instance.socket.user?.id 
-                            : (quotedMsg.senderJid || quotedMsg.remoteJid);
-                        
-                        let cleanParticipant: string | undefined = undefined;
-                        if (rawParticipant) {
-                            const [userPart, domain] = rawParticipant.split('@');
-                            const cleanUser = userPart.split(':')[0];
-                            cleanParticipant = domain ? `${cleanUser}@${domain}` : cleanUser;
-                        }
+                const quotedCacheKey = `${sessionId}:${quotedMessageId}`;
+                let quotedMsg = recentQuotedCache.get(quotedCacheKey);
 
-                        quotedOption = {
-                            key: {
-                                remoteJid: quotedMsg.remoteJid,
-                                fromMe: quotedMsg.fromMe,
-                                id: quotedMsg.keyId,
-                                participant: cleanParticipant
-                            },
-                            message: {
-                                conversation: quotedMsg.content || ""
-                            }
-                        };
+                if (!quotedMsg) {
+                    let dbSessionId = sessionDbIdCache.get(sessionId);
+                    if (!dbSessionId) {
+                        const dbSession = await prisma.session.findFirst({ where: { OR: [{ sessionId }, { id: sessionId }] }, select: { id: true } });
+                        if (dbSession) {
+                            dbSessionId = dbSession.id;
+                            sessionDbIdCache.set(sessionId, dbSessionId);
+                        }
                     }
+
+                    if (dbSessionId) {
+                        quotedMsg = await prisma.message.findFirst({
+                            where: { sessionId: dbSessionId, keyId: quotedMessageId },
+                            select: { keyId: true, remoteJid: true, fromMe: true, content: true, senderJid: true }
+                        });
+                        if (quotedMsg) {
+                            recentQuotedCache.set(quotedCacheKey, quotedMsg);
+                            if (recentQuotedCache.size > 200) {
+                                const firstKey = recentQuotedCache.keys().next().value;
+                                if (firstKey) recentQuotedCache.delete(firstKey);
+                            }
+                        }
+                    }
+                }
+
+                if (quotedMsg) {
+                    const rawParticipant = quotedMsg.fromMe 
+                        ? instance.socket.user?.id 
+                        : (quotedMsg.senderJid || quotedMsg.remoteJid);
+                    
+                    let cleanParticipant: string | undefined = undefined;
+                    if (rawParticipant) {
+                        const [userPart, domain] = rawParticipant.split('@');
+                        const cleanUser = userPart.split(':')[0];
+                        cleanParticipant = domain ? `${cleanUser}@${domain}` : cleanUser;
+                    }
+
+                    quotedOption = {
+                        key: {
+                            remoteJid: quotedMsg.remoteJid,
+                            fromMe: quotedMsg.fromMe,
+                            id: quotedMsg.keyId,
+                            participant: cleanParticipant
+                        },
+                        message: {
+                            conversation: quotedMsg.content || ""
+                        }
+                    };
                 }
             } catch (e) {
                 console.error("Error fetching quoted message (non-fatal):", e);
@@ -600,17 +625,19 @@ export class ChatService {
             }
         }
 
-        // Automatically resolve mentions from text if not explicitly provided
+        // Automatically resolve mentions from text only if '@' is present
         if ((!mentions || mentions.length === 0) && (msgPayload.text || msgPayload.caption)) {
             const textContent = msgPayload.text || msgPayload.caption || "";
-            const extractedMentions: string[] = [];
-            const mentionDigitsRegex = /@(\d{8,25})/g;
-            let m;
-            while ((m = mentionDigitsRegex.exec(textContent)) !== null) {
-                extractedMentions.push(`${m[1]}@s.whatsapp.net`);
-            }
-            if (extractedMentions.length > 0) {
-                mentions = extractedMentions;
+            if (textContent.includes("@")) {
+                const extractedMentions: string[] = [];
+                const mentionDigitsRegex = /@(\d{8,25})/g;
+                let m;
+                while ((m = mentionDigitsRegex.exec(textContent)) !== null) {
+                    extractedMentions.push(`${m[1]}@s.whatsapp.net`);
+                }
+                if (extractedMentions.length > 0) {
+                    mentions = extractedMentions;
+                }
             }
         }
 
@@ -618,12 +645,23 @@ export class ChatService {
             msgPayload.mentions = mentions;
         }
 
-        const options: any = { mentions: mentions || [] };
+        // Direct user chat skips anti-spam queue to guarantee 0ms latency identical to WhatsApp Web
+        const options: any = { mentions: mentions || [], skipAntiSpam: true };
         if (quotedOption) {
             options.quoted = quotedOption;
         }
 
         const sendResult = await instance.socket.sendMessage(jid, msgPayload, options);
+
+        // Instant Real-time emit: notify frontend that message is SENT immediately (< 10ms)
+        const keyId = sendResult?.key?.id;
+        if (keyId && instance.io) {
+            instance.io.to(sessionId).emit("message.status", {
+                keyId,
+                remoteJid: jid,
+                status: "SENT"
+            });
+        }
 
         // Fire webhook for sent message (non-blocking)
         try {
@@ -721,59 +759,79 @@ export class ChatService {
             content = { document: buffer, mimetype, fileName, ...messageOptions };
         }
 
-        const sendResult = await instance.socket.sendMessage(jid, content);
+        const sendResult = await instance.socket.sendMessage(jid, content, { skipAntiSpam: true } as any);
 
-        // Immediately persist sent media to disk and database so it is guaranteed to play, transcribe, and download
-        try {
-            const keyId = sendResult?.key?.id;
-            if (keyId) {
-                const ext = type === 'voice' ? 'ogg' : type === 'audio' ? 'mp3' : type === 'image' ? 'jpg' : type === 'video' ? 'mp4' : 'bin';
-                const savedFilename = `${sessionId}-${keyId}.${ext}`;
-                const savedFilePath = path.join(mediaDir, savedFilename);
-                await mkdir(path.dirname(savedFilePath), { recursive: true });
-                await writeFile(savedFilePath, buffer);
-                let fileUrl = `/api/media/${savedFilename}`;
-                if (buffer.length <= 1024 * 1024 && (type === 'voice' || type === 'audio' || type === 'image' || type === 'sticker')) {
-                    const mimeClean = (mimetype || (type === 'voice' ? 'audio/ogg' : type === 'audio' ? 'audio/mpeg' : type === 'sticker' ? 'image/webp' : 'image/jpeg')).split(';')[0].trim();
-                    fileUrl = `data:${mimeClean};base64,${buffer.toString('base64')}`;
-                }
-
-                const sessionRecord = await prisma.session.findFirst({
-                    where: { OR: [{ sessionId }, { id: sessionId }] },
-                    select: { id: true }
-                });
-
-                if (sessionRecord) {
-                    await prisma.message.upsert({
-                        where: {
-                            sessionId_keyId: {
-                                sessionId: sessionRecord.id,
-                                keyId
-                            }
-                        },
-                        update: {
-                            mediaUrl: fileUrl,
-                            status: "SENT"
-                        },
-                        create: {
-                            sessionId: sessionRecord.id,
-                            remoteJid: jid,
-                            fromMe: true,
-                            keyId,
-                            type: (type === 'voice' || type === 'audio') ? 'AUDIO' : type === 'image' ? 'IMAGE' : type === 'video' ? 'VIDEO' : 'DOCUMENT',
-                            content: caption || "",
-                            mediaUrl: fileUrl,
-                            status: "SENT",
-                            timestamp: new Date()
-                        }
-                    });
-                }
-
-                (sendResult as any).mediaUrl = fileUrl;
-            }
-        } catch (saveErr) {
-            logger.error("ChatService", "Failed to immediately save sent media", saveErr);
+        const keyId = sendResult?.key?.id;
+        const ext = type === 'voice' ? 'ogg' : type === 'audio' ? 'mp3' : type === 'image' ? 'jpg' : type === 'video' ? 'mp4' : 'bin';
+        const savedFilename = `${sessionId}-${keyId || Date.now()}.${ext}`;
+        let fileUrl = `/api/media/${savedFilename}`;
+        if (buffer.length <= 1024 * 1024 && (type === 'voice' || type === 'audio' || type === 'image' || type === 'sticker')) {
+            const mimeClean = (mimetype || (type === 'voice' ? 'audio/ogg' : type === 'audio' ? 'audio/mpeg' : type === 'sticker' ? 'image/webp' : 'image/jpeg')).split(';')[0].trim();
+            fileUrl = `data:${mimeClean};base64,${buffer.toString('base64')}`;
         }
+        if (sendResult) {
+            (sendResult as any).mediaUrl = fileUrl;
+        }
+
+        // Instant Real-time emit: notify frontend that media message is SENT immediately (< 10ms)
+        if (keyId && instance.io) {
+            instance.io.to(sessionId).emit("message.status", {
+                keyId,
+                remoteJid: jid,
+                status: "SENT"
+            });
+        }
+
+        // Persist sent media to disk and database in background (non-blocking)
+        void (async () => {
+            try {
+                if (keyId) {
+                    const savedFilePath = path.join(mediaDir, savedFilename);
+                    await mkdir(path.dirname(savedFilePath), { recursive: true });
+                    await writeFile(savedFilePath, buffer);
+
+                    let dbSessionId = sessionDbIdCache.get(sessionId);
+                    if (!dbSessionId) {
+                        const sessionRecord = await prisma.session.findFirst({
+                            where: { OR: [{ sessionId }, { id: sessionId }] },
+                            select: { id: true }
+                        });
+                        if (sessionRecord) {
+                            dbSessionId = sessionRecord.id;
+                            sessionDbIdCache.set(sessionId, dbSessionId);
+                        }
+                    }
+
+                    if (dbSessionId) {
+                        await prisma.message.upsert({
+                            where: {
+                                sessionId_keyId: {
+                                    sessionId: dbSessionId,
+                                    keyId
+                                }
+                            },
+                            update: {
+                                mediaUrl: fileUrl,
+                                status: "SENT"
+                            },
+                            create: {
+                                sessionId: dbSessionId,
+                                remoteJid: jid,
+                                fromMe: true,
+                                keyId,
+                                type: (type === 'voice' || type === 'audio') ? 'AUDIO' : type === 'image' ? 'IMAGE' : type === 'video' ? 'VIDEO' : 'DOCUMENT',
+                                content: caption || "",
+                                mediaUrl: fileUrl,
+                                status: "SENT",
+                                timestamp: new Date()
+                            }
+                        });
+                    }
+                }
+            } catch (saveErr) {
+                logger.error("ChatService", "Failed to persist sent media in background", saveErr);
+            }
+        })();
 
         // Fire webhook for sent media message (non-blocking)
         try {

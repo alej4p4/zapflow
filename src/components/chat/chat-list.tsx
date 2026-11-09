@@ -536,13 +536,18 @@ function loadPersistedChatList(sessionId: string): ChatContact[] {
     return [];
 }
 
+let persistChatListTimer: any = null;
+
 function savePersistedChatList(sessionId: string, list: ChatContact[]) {
     if (!sessionId) return;
     globalChatListCache.set(sessionId, list);
     if (typeof window === "undefined") return;
-    try {
-        localStorage.setItem(`zapflow_chatlist_v2_${sessionId}`, JSON.stringify(list.slice(0, 450)));
-    } catch {}
+    if (persistChatListTimer) clearTimeout(persistChatListTimer);
+    persistChatListTimer = setTimeout(() => {
+        try {
+            localStorage.setItem(`zapflow_chatlist_v2_${sessionId}`, JSON.stringify(list.slice(0, 450)));
+        } catch {}
+    }, 400);
 }
 
 // ─── Main ChatList Component ─────────
