@@ -126,9 +126,9 @@ export default function RootLayout({
                 const s = localStorage.getItem('zapflow_theme');
                 const p = window.matchMedia('(prefers-color-scheme: dark)').matches;
                 if (s === 'dark' || (!s && p) || (s === 'system' && p)) {
-                  document.documentElement.classList.add('dark');
+                  document.documentElement.classList.add('dark'); document.documentElement.style.colorScheme = 'dark';
                 } else if (s === 'light') {
-                  document.documentElement.classList.remove('dark');
+                  document.documentElement.classList.remove('dark'); document.documentElement.style.colorScheme = 'light';
                 }
               } catch (_) {}
             `,

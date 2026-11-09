@@ -5799,17 +5799,19 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
                                     )}
                                 </div>
                             )}
-                            <LabelAssignPopover sessionId={sessionId} jid={jid}>
-                                <button
-                                    type="button"
-                                    onClick={e => e.stopPropagation()}
-                                    className="inline-flex items-center gap-1 text-[10px] text-muted-foreground hover:text-[#00a884] px-1.5 py-0.5 rounded-full bg-black/5 dark:bg-white/10 hover:bg-[#00a884]/15 transition-colors shrink-0 cursor-pointer"
-                                    title="Atribuir etiquetas para este contato"
-                                >
-                                    <Tag className="h-2.5 w-2.5" />
-                                    <span>{chatLabels.length === 0 ? "Etiquetar" : "+"}</span>
-                                </button>
-                            </LabelAssignPopover>
+                            {chatLabels.length > 0 && (
+                                <LabelAssignPopover sessionId={sessionId} jid={jid}>
+                                    <button
+                                        type="button"
+                                        onClick={e => e.stopPropagation()}
+                                        className="inline-flex items-center gap-1 text-[10px] text-muted-foreground hover:text-[#00a884] px-1.5 py-0.5 rounded-full bg-black/5 dark:bg-white/10 hover:bg-[#00a884]/15 transition-colors shrink-0 cursor-pointer"
+                                        title="Atribuir etiquetas para este contato"
+                                    >
+                                        <Tag className="h-2.5 w-2.5" />
+                                        <span>+</span>
+                                    </button>
+                                </LabelAssignPopover>
+                            )}
                         </div>
                         <p className="text-[11.5px] text-muted-foreground truncate flex items-center gap-1.5 mt-0.5">
                             {presenceInfo ? (

@@ -47,9 +47,9 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
             setResolvedTheme(targetTheme);
 
             if (targetTheme === "dark") {
-                root.classList.add("dark");
+                root.classList.add("dark"); root.style.colorScheme = "dark"; if (typeof document !== "undefined" && document.body) document.body.style.colorScheme = "dark";
             } else {
-                root.classList.remove("dark");
+                root.classList.remove("dark"); root.style.colorScheme = "light"; if (typeof document !== "undefined" && document.body) document.body.style.colorScheme = "light";
             }
 
             try {
