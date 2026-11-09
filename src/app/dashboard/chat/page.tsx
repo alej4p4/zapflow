@@ -28,7 +28,7 @@ export default function ChatPage() {
     }
 
     return (
-        <div className="-m-3 sm:-m-4 lg:-m-6 h-[calc(100vh-3.5rem)] sm:h-[calc(100vh-4rem)]">
+        <div className="chat-full-screen w-full h-full overflow-hidden">
             <ChatLayoutClient key={sessionId} sessionId={sessionId} />
         </div>
     );

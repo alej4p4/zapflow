@@ -353,7 +353,7 @@ function LazyMedia({ src, alt, onClick }: { src: string; alt: string; onClick?: 
     return (
         <div
             ref={ref}
-            className="mb-1.5 overflow-hidden rounded-lg relative min-h-[120px] max-w-[380px] bg-black/5 dark:bg-black/30 flex items-center justify-center cursor-pointer group/img select-none"
+            className="mb-1.5 overflow-hidden rounded-lg relative min-h-[100px] w-full max-w-[480px] bg-black/5 dark:bg-black/30 flex items-center justify-center cursor-pointer group/img select-none"
             onClick={onClick}
         >
             {visible ? (
@@ -362,7 +362,7 @@ function LazyMedia({ src, alt, onClick }: { src: string; alt: string; onClick?: 
                     <img
                         src={src}
                         alt={alt}
-                        className={`max-w-full max-h-[420px] object-contain rounded-lg transition-all duration-200 group-hover/img:brightness-95 ${loaded ? 'opacity-100' : 'opacity-0'}`}
+                        className={`w-full max-w-full max-h-[500px] object-contain rounded-lg transition-all duration-200 group-hover/img:brightness-95 ${loaded ? 'opacity-100' : 'opacity-0'}`}
                         onLoad={() => setLoaded(true)}
                         onError={() => setHasError(true)}
                         loading="lazy"

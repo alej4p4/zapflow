@@ -214,43 +214,66 @@ body.dark {
 
 /* WhatsApp Web Dark & Light Scrollbar Styles */
 
-/* Firefox only (Gecko does not support ::-webkit-scrollbar, uses scrollbar-color/width) */
-@supports not selector(::-webkit-scrollbar) {
-  * {
-    scrollbar-width: thin;
-    scrollbar-color: rgba(0, 0, 0, 0.25) transparent;
-  }
-  .dark,
-  .dark *,
-  html.dark,
-  html.dark * {
-    scrollbar-color: rgba(255, 255, 255, 0.2) #111b21;
-  }
+/* Modern Standard CSS Scrollbars (Supported natively by Chrome 121+, Edge 121+, Firefox, Safari 17.2+) */
+:root {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(0, 0, 0, 0.22) transparent;
+}
+
+html.dark,
+:root.dark,
+.dark,
+body.dark {
+  color-scheme: dark !important;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.2) transparent !important;
+}
+
+* {
+  scrollbar-width: thin;
+}
+
+html.dark *,
+:root.dark *,
+.dark * {
+  scrollbar-color: rgba(255, 255, 255, 0.2) transparent !important;
+}
+
+/* Chat Page: ensure main dashboard container never shows outer scrollbar */
+main:has(.chat-full-screen) {
+  padding: 0 !important;
+  overflow: hidden !important;
 }
 
 /* Chromium, Edge, Opera, Safari (WebKit & Blink) Custom WhatsApp Web Scrollbars */
+*::-webkit-scrollbar,
 ::-webkit-scrollbar {
   width: 6px !important;
   height: 6px !important;
 }
 
+*::-webkit-scrollbar-track,
 ::-webkit-scrollbar-track {
   background: transparent !important;
 }
 
+*::-webkit-scrollbar-thumb,
 ::-webkit-scrollbar-thumb {
   background: rgba(0, 0, 0, 0.22) !important;
   border-radius: 9999px !important;
 }
 
+*::-webkit-scrollbar-thumb:hover,
 ::-webkit-scrollbar-thumb:hover {
   background: rgba(0, 0, 0, 0.38) !important;
 }
 
+*::-webkit-scrollbar-corner,
 ::-webkit-scrollbar-corner {
   background: transparent !important;
 }
 
+*::-webkit-scrollbar-button,
 ::-webkit-scrollbar-button {
   display: none !important;
   width: 0 !important;
@@ -258,6 +281,9 @@ body.dark {
 }
 
 /* Dark Theme WebKit Scrollbars - 100% WhatsApp Web Dark Palette */
+.dark *::-webkit-scrollbar,
+html.dark *::-webkit-scrollbar,
+body.dark *::-webkit-scrollbar,
 .dark ::-webkit-scrollbar,
 html.dark ::-webkit-scrollbar,
 body.dark ::-webkit-scrollbar,
@@ -267,49 +293,59 @@ html.dark::-webkit-scrollbar {
   height: 6px !important;
 }
 
+.dark *::-webkit-scrollbar-track,
+html.dark *::-webkit-scrollbar-track,
+body.dark *::-webkit-scrollbar-track,
 .dark ::-webkit-scrollbar-track,
 html.dark ::-webkit-scrollbar-track,
 body.dark ::-webkit-scrollbar-track,
 .dark::-webkit-scrollbar-track,
-html.dark::-webkit-scrollbar-track,
-.dark *::-webkit-scrollbar-track {
+html.dark::-webkit-scrollbar-track {
   background: transparent !important;
 }
 
+.dark *::-webkit-scrollbar-thumb,
+html.dark *::-webkit-scrollbar-thumb,
+body.dark *::-webkit-scrollbar-thumb,
 .dark ::-webkit-scrollbar-thumb,
 html.dark ::-webkit-scrollbar-thumb,
 body.dark ::-webkit-scrollbar-thumb,
 .dark::-webkit-scrollbar-thumb,
-html.dark::-webkit-scrollbar-thumb,
-.dark *::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.18) !important;
+html.dark::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.2) !important;
   border-radius: 9999px !important;
 }
 
+.dark *::-webkit-scrollbar-thumb:hover,
+html.dark *::-webkit-scrollbar-thumb:hover,
+body.dark *::-webkit-scrollbar-thumb:hover,
 .dark ::-webkit-scrollbar-thumb:hover,
 html.dark ::-webkit-scrollbar-thumb:hover,
 body.dark ::-webkit-scrollbar-thumb:hover,
 .dark::-webkit-scrollbar-thumb:hover,
-html.dark::-webkit-scrollbar-thumb:hover,
-.dark *::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.3) !important;
+html.dark::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.32) !important;
 }
 
+.dark *::-webkit-scrollbar-corner,
+html.dark *::-webkit-scrollbar-corner,
+body.dark *::-webkit-scrollbar-corner,
 .dark ::-webkit-scrollbar-corner,
 html.dark ::-webkit-scrollbar-corner,
 body.dark ::-webkit-scrollbar-corner,
 .dark::-webkit-scrollbar-corner,
-html.dark::-webkit-scrollbar-corner,
-.dark *::-webkit-scrollbar-corner {
+html.dark::-webkit-scrollbar-corner {
   background: transparent !important;
 }
 
+.dark *::-webkit-scrollbar-button,
+html.dark *::-webkit-scrollbar-button,
+body.dark *::-webkit-scrollbar-button,
 .dark ::-webkit-scrollbar-button,
 html.dark ::-webkit-scrollbar-button,
 body.dark ::-webkit-scrollbar-button,
 .dark::-webkit-scrollbar-button,
-html.dark::-webkit-scrollbar-button,
-.dark *::-webkit-scrollbar-button {
+html.dark::-webkit-scrollbar-button {
   display: none !important;
   width: 0 !important;
   height: 0 !important;
