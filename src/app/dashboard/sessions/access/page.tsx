@@ -72,7 +72,7 @@ function SessionAccessContent() {
 
     const fetchSessions = async () => {
         try {
-            const res = await fetch("/api/sessions");
+            const res = await fetch("/api/sessions?all=true");
             if (res.ok) {
                 const data = await res.json();
                 const allSessions: SessionInfo[] = data?.data || [];

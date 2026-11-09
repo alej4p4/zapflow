@@ -13,6 +13,7 @@ import { Smartphone, Plus, Trash2, Settings, RefreshCw, Power, UserPlus, Message
 import { setCookie } from '@/lib/client-cookie';
 import { useSession } from './session-provider';
 import { Badge } from '@/components/ui/badge';
+import { cn } from "@/lib/utils";
 import {
     Table,
     TableBody,
@@ -41,6 +42,7 @@ export function SessionManager({ user }: { user: any }) {
     const [newSessionName, setNewSessionName] = useState("");
     const [newSessionId, setNewSessionId] = useState("");
     const [loading, setLoading] = useState(false);
+    const [viewAll, setViewAll] = useState(false);
     const [socket, setSocket] = useState<Socket | null>(null);
     const router = useRouter();
 
@@ -86,8 +88,8 @@ export function SessionManager({ user }: { user: any }) {
         };
     }, []);
 
-    const fetchSessions = () => {
-        fetch('/api/sessions').then(res => res.json()).then(responseData => {
+    const fetchSessions = (all = viewAll) => {
+        fetch(`/api/sessions${all ? '?all=true' : ''}`).then(res => res.json()).then(responseData => {
             const data = responseData?.data || [];
             if (Array.isArray(data)) {
                 globalSessionListCache = data;
@@ -190,12 +192,40 @@ export function SessionManager({ user }: { user: any }) {
                 ) : (
                     <Card className="glass-panel border-border/50 shadow-sm overflow-hidden">
                         <CardHeader className="pb-3 pt-5 px-5">
-                            <CardTitle className="text-base font-bold text-slate-800 dark:text-slate-100 flex items-center gap-2">
-                                Sessões cadastradas ({sessions.length})
-                            </CardTitle>
-                            <CardDescription>
-                                Lista de sessões do WhatsApp e o status atual da conexão.
-                            </CardDescription>
+                            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+                                <div>
+                                    <CardTitle className="text-base font-bold text-slate-800 dark:text-slate-100 flex items-center gap-2">
+                                        Sessões cadastradas ({sessions.length})
+                                    </CardTitle>
+                                    <CardDescription>
+                                        Lista de sessões do WhatsApp e o status atual da conexão.
+                                    </CardDescription>
+                                </div>
+                                {user?.role === "SUPERADMIN" && (
+                                    <div className="flex items-center gap-1 bg-muted/60 p-1 rounded-xl text-xs">
+                                        <button
+                                            type="button"
+                                            onClick={() => { setViewAll(false); fetchSessions(false); }}
+                                            className={cn(
+                                                "px-3 py-1 rounded-lg font-medium transition-colors cursor-pointer",
+                                                !viewAll ? "bg-white dark:bg-[#111b21] text-foreground shadow-xs" : "text-muted-foreground hover:text-foreground"
+                                            )}
+                                        >
+                                            Minhas sessões
+                                        </button>
+                                        <button
+                                            type="button"
+                                            onClick={() => { setViewAll(true); fetchSessions(true); }}
+                                            className={cn(
+                                                "px-3 py-1 rounded-lg font-medium transition-colors cursor-pointer",
+                                                viewAll ? "bg-white dark:bg-[#111b21] text-foreground shadow-xs" : "text-muted-foreground hover:text-foreground"
+                                            )}
+                                        >
+                                            Todas (Admin)
+                                        </button>
+                                    </div>
+                                )}
+                            </div>
                         </CardHeader>
                         <CardContent className="p-0 overflow-x-auto">
                             <Table>

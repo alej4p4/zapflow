@@ -14,7 +14,9 @@ export async function GET(request: NextRequest) {
         }
 
         // Get sessions based on user role
-        const sessions = await getAccessibleSessions(user.id, user.role);
+        const { searchParams } = new URL(request.url);
+        const all = searchParams.get("all") === "true";
+        const sessions = await getAccessibleSessions(user.id, user.role, false, all);
         return NextResponse.json({ status: true, message: "Sessions retrieved successfully", data: sessions });
     } catch (error) {
         console.error("Get sessions error:", error);

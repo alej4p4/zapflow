@@ -172,7 +172,7 @@ export async function isSessionOwner(userId: string, userRole: string, sessionId
  * - SUPERADMIN sees all
  * - Others see only their own
  */
-export async function getAccessibleSessions(userId: string, userRole: string, includeCounts = false) {
+export async function getAccessibleSessions(userId: string, userRole: string, includeCounts = false, all = false) {
     const countsInclude = includeCounts ? {
         _count: {
             select: {
@@ -185,7 +185,8 @@ export async function getAccessibleSessions(userId: string, userRole: string, in
         }
     } : {};
 
-    if (isAdmin(userRole)) {
+
+    if (all && isAdmin(userRole)) {
         return prisma.session.findMany({
             orderBy: { createdAt: 'desc' },
             include: {
