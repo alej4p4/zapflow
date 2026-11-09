@@ -121,16 +121,18 @@ const EXCLUDED_KEY = (sid: string) => `zapflow_broadcast_excluded_${sid}`;
 const NAME_MAP_KEY = (sid: string) => `zapflow_broadcast_namemap_${sid}`;
 
 /** Número canônico do contato (o JID já vem com 55 + DDD). */
-function contactNumber(contact: PhoneContact): string {
-    const jid = contact.jid.endsWith("@s.whatsapp.net")
-        ? contact.jid
-        : contact.remoteJidAlt || "";
-    return jid.endsWith("@s.whatsapp.net") ? jid.split("@")[0] : "";
+function contactNumber(contact: PhoneContact | null | undefined): string {
+    if (!contact) return "";
+    const rawJid = String(contact.jid || "").trim();
+    const altJid = String(contact.remoteJidAlt || "").trim();
+    const jid = rawJid.endsWith("@s.whatsapp.net") ? rawJid : altJid;
+    return jid.endsWith("@s.whatsapp.net") ? (jid.split("@")[0] || "") : "";
 }
 
 /** Nome exibido do contato. */
-function contactLabel(contact: PhoneContact): string {
-    return contact.name || contact.verifiedName || contact.notify || "";
+function contactLabel(contact: PhoneContact | null | undefined): string {
+    if (!contact) return "";
+    return String(contact.name || contact.verifiedName || contact.notify || "").trim();
 }
 
 /** Interpreta horários como "12h00, 15h00, 18h00" ou "12:00, 15:00, 18:00" */
@@ -486,9 +488,10 @@ export default function BroadcastPage() {
     // Conjunto rápido de JIDs e números excluídos dos próximos disparos
     const excludedSet = useMemo(() => {
         const set = new Set<string>();
-        excludedRecipients.forEach(item => {
-            if (!item || !item.jid) return;
-            const jid = String(item.jid || "").trim().toLowerCase();
+        (excludedRecipients || []).forEach(item => {
+            if (!item) return;
+            const rawJid = typeof item === "string" ? item : item.jid;
+            const jid = String(rawJid || "").trim().toLowerCase();
             if (!jid) return;
             set.add(jid);
             const bare = (jid.split("@")[0] || "").replace(/\D/g, "");
@@ -502,9 +505,10 @@ export default function BroadcastPage() {
         return set;
     }, [excludedRecipients]);
 
-    const isJidExcluded = useCallback((jidOrNum: string): boolean => {
+    const isJidExcluded = useCallback((jidOrNum: string | null | undefined): boolean => {
         if (!jidOrNum) return false;
         const clean = String(jidOrNum || "").trim().toLowerCase();
+        if (!clean) return false;
         if (excludedSet.has(clean)) return true;
         if (!clean.endsWith("@g.us")) {
             const digits = (clean.split("@")[0] || "").replace(/\D/g, "");
@@ -588,14 +592,14 @@ export default function BroadcastPage() {
     }, [groups, pickerContacts, customNameMap]);
 
     // Interpreta linhas do campo Destinatários (suporta nomes com vírgula sem quebrar!)
-    const parseRecipientLines = useCallback((text: string): string[] => {
-        if (!text) return [];
+    const parseRecipientLines = useCallback((text: string | null | undefined): string[] => {
+        if (!text || typeof text !== "string") return [];
         // Primeiro une linhas que quebraram apenas com "(120363...@g.us)" na linha de baixo
-        const mergedText = text.replace(/\n\s*(\([0-9\-_]+@g\.us\))/gi, " $1");
+        const mergedText = String(text || "").replace(/\n\s*(\([0-9\-_]+@g\.us\))/gi, " $1");
         const rawLines = mergedText.split(/\n+/);
         const result: string[] = [];
         for (const line of rawLines) {
-            const trimmed = line.trim();
+            const trimmed = String(line || "").trim();
             if (!trimmed) continue;
             // Se a linha contém apenas números/vírgulas (sem letras), separa por vírgula
             if (!/[a-zA-Z]/.test(trimmed) && trimmed.includes(",")) {
@@ -608,8 +612,8 @@ export default function BroadcastPage() {
     }, []);
 
     // Converte uma linha (nome do grupo, nome do contato ou número/JID) para o JID real do WhatsApp
-    const resolveLineToJid = useCallback((line: string): string => {
-        const trimmed = line.trim();
+    const resolveLineToJid = useCallback((line: string | null | undefined): string => {
+        const trimmed = String(line || "").trim();
         if (!trimmed) return "";
 
         const explicit = toWhatsAppJid(trimmed);
@@ -1163,9 +1167,10 @@ export default function BroadcastPage() {
     };
 
     const recipientCount = parseRecipientLines(contacts).length;
-    const formatJid = (jid: string) => {
+    const formatJid = (jid: string | null | undefined) => {
         if (!jid) return "-";
-        const strJid = String(jid);
+        const strJid = String(jid || "").trim();
+        if (!strJid) return "-";
         const bare = strJid.split("@")[0] || "";
         const knownName = jidToNameMap.get(strJid) || jidToNameMap.get(strJid.toLowerCase()) || jidToNameMap.get(bare);
         const cleanJid = strJid.replace("@s.whatsapp.net", "").replace("@g.us", " (Grupo)");
@@ -1956,9 +1961,9 @@ export default function BroadcastPage() {
                                                         <XCircle className="h-4 w-4" /> Erros de envio ({broadcastProgress.errors.length})
                                                     </h4>
                                                     {(() => {
-                                                        const selectableJids = broadcastProgress.errors
-                                                            .map(e => e.jid)
-                                                            .filter(jid => !isJidExcluded(jid));
+                                                        const selectableJids = (broadcastProgress.errors || [])
+                                                            .map(e => (typeof e === "string" ? e : e?.jid))
+                                                            .filter((jid): jid is string => Boolean(jid) && !isJidExcluded(jid));
                                                         if (selectableJids.length === 0) return null;
                                                         const allSelected = selectableJids.every(jid => selectedErrorJids.includes(jid));
                                                         return (
@@ -1998,9 +2003,9 @@ export default function BroadcastPage() {
                                                                 variant="outline"
                                                                 size="sm"
                                                                 onClick={() => {
-                                                                    const allErrJids = broadcastProgress.errors!
-                                                                        .map(e => e.jid)
-                                                                        .filter(jid => !isJidExcluded(jid));
+                                                                    const allErrJids = (broadcastProgress.errors || [])
+                                                                        .map(e => (typeof e === "string" ? e : e?.jid))
+                                                                        .filter((jid): jid is string => Boolean(jid) && !isJidExcluded(jid));
                                                                     handleExcludeRecipients(allErrJids);
                                                                 }}
                                                                 className="h-7 text-xs px-2.5 gap-1.5 text-red-600 border-red-300 hover:bg-red-50 dark:hover:bg-red-950/30 cursor-pointer"
@@ -2379,13 +2384,13 @@ export default function BroadcastPage() {
                                 <p className="p-4 text-sm text-center text-muted-foreground">Nenhum destinatário excluído.</p>
                             ) : (
                                 excludedRecipients
-                                    .filter(item => item && item.jid)
-                                    .map(item => {
-                                        const cleanJid = String(item.jid || "");
-                                        const cleanName = String(item.name || cleanJid || "Contato");
+                                    .filter(item => Boolean(item && (typeof item === "string" || item.jid)))
+                                    .map((item, idx) => {
+                                        const cleanJid = String((typeof item === "string" ? item : item.jid) || "").trim();
+                                        const cleanName = String((typeof item === "object" ? item?.name : "") || cleanJid || "Contato").trim();
                                         const displayJid = cleanJid.replace("@s.whatsapp.net", "").replace("@g.us", " (Grupo)");
                                         return (
-                                            <div key={cleanJid} className="flex items-center justify-between gap-3 p-2.5 text-xs hover:bg-muted/30">
+                                            <div key={cleanJid || idx} className="flex items-center justify-between gap-3 p-2.5 text-xs hover:bg-muted/30">
                                                 <div className="min-w-0">
                                                     <p className="font-semibold text-sm truncate">{cleanName}</p>
                                                     <p className="font-mono text-muted-foreground truncate">{displayJid}</p>

@@ -234,14 +234,43 @@ export default function ContactListPage() {
                     try {
                         const storageKey = `zapflow_broadcast_excluded_${sessionId}`;
                         const raw = localStorage.getItem(storageKey);
-                        const existing: string[] = raw ? JSON.parse(raw) : [];
-                        const merged = new Set(existing);
-                        for (const jid of diagnostic.allFailedBroadcastJids) {
-                            merged.add(jid);
-                            const digits = jid.split("@")[0].replace(/\D/g, "");
-                            if (digits) merged.add(`${digits}@s.whatsapp.net`);
+                        let existing: any[] = [];
+                        try {
+                            const parsed = raw ? JSON.parse(raw) : [];
+                            existing = Array.isArray(parsed) ? parsed : [];
+                        } catch {
+                            existing = [];
                         }
-                        localStorage.setItem(storageKey, JSON.stringify(Array.from(merged)));
+
+                        const now = new Date().toISOString();
+                        const existingMap = new Map<string, { jid: string; name: string; excludedAt: string }>();
+
+                        existing.forEach(item => {
+                            if (!item) return;
+                            const jid = typeof item === "string" ? item.trim() : String(item.jid || "").trim();
+                            if (jid) {
+                                const name = typeof item === "object" && item.name ? String(item.name).trim() : jid;
+                                const excludedAt = typeof item === "object" && item.excludedAt ? String(item.excludedAt) : now;
+                                existingMap.set(jid.toLowerCase(), { jid, name, excludedAt });
+                            }
+                        });
+
+                        for (const rawJid of diagnostic.allFailedBroadcastJids) {
+                            const jid = String(rawJid || "").trim();
+                            if (!jid) continue;
+                            if (!existingMap.has(jid.toLowerCase())) {
+                                existingMap.set(jid.toLowerCase(), { jid, name: jid, excludedAt: now });
+                            }
+                            const digits = (jid.split("@")[0] || "").replace(/\D/g, "");
+                            if (digits && digits.length >= 8) {
+                                const waJid = `${digits}@s.whatsapp.net`.toLowerCase();
+                                if (!existingMap.has(waJid)) {
+                                    existingMap.set(waJid, { jid: `${digits}@s.whatsapp.net`, name: digits, excludedAt: now });
+                                }
+                            }
+                        }
+
+                        localStorage.setItem(storageKey, JSON.stringify(Array.from(existingMap.values())));
                         blockedCount = diagnostic.allFailedBroadcastJids.length;
                     } catch { /* ignore */ }
                 }

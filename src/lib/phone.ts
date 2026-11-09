@@ -3,22 +3,22 @@
  * Se a linha contiver apenas o nome do grupo ou contato (sem JID/número explícito), retorna o próprio nome
  * para que seja resolvido pelo catálogo de grupos/contatos da sessão.
  */
-export function extractRecipientTarget(raw: string): string {
-    const trimmed = (raw || "").trim();
+export function extractRecipientTarget(raw: string | null | undefined): string {
+    const trimmed = String(raw || "").trim();
     if (!trimmed) return "";
 
     // 1. Group JID inside line (ends with @g.us)
     const gMatch = trimmed.match(/([0-9\-_]+@g\.us)/i);
-    if (gMatch) return gMatch[1];
+    if (gMatch && gMatch[1]) return gMatch[1];
 
     // 2. User JID inside line (ends with @s.whatsapp.net)
     const uMatch = trimmed.match(/(\d+@s\.whatsapp\.net)/i);
-    if (uMatch) return uMatch[1];
+    if (uMatch && uMatch[1]) return uMatch[1];
 
     // 3. Number in parentheses or brackets at the end: (55...), <55...>, [55...]
     const bracketMatch = trimmed.match(/[<(\[]\s*([0-9+\-\s]{8,20})\s*[>)\]]\s*$/);
-    if (bracketMatch) {
-        const d = bracketMatch[1].replace(/\D/g, "");
+    if (bracketMatch && bracketMatch[1]) {
+        const d = String(bracketMatch[1]).replace(/\D/g, "");
         if (d.length >= 8) return d;
     }
 
@@ -36,7 +36,7 @@ export function extractRecipientTarget(raw: string): string {
  * Número digitado só com DDD (10-11 dígitos) recebe o código do Brasil (55) —
  * sem isso o WhatsApp aceita o envio e a mensagem nunca chega ao cliente.
  */
-export function toWhatsAppJid(raw: string): string {
+export function toWhatsAppJid(raw: string | null | undefined): string {
     const target = extractRecipientTarget(raw).trim();
     if (!target) return "";
 
@@ -64,7 +64,7 @@ export function toWhatsAppJid(raw: string): string {
 
 /** Remove acentos e caixa para busca ("João" casa com "joao"). */
 export function normalizeSearch(text: string | null | undefined): string {
-    return (text || "")
+    return String(text || "")
         .normalize("NFD")
         .replace(/[\u0300-\u036f]/g, "")
         .toLowerCase()
