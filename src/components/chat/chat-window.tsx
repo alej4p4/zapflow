@@ -353,7 +353,7 @@ function LazyMedia({ src, alt, onClick }: { src: string; alt: string; onClick?: 
     return (
         <div
             ref={ref}
-            className="mb-1.5 overflow-hidden rounded-lg relative min-h-[140px] max-w-[340px] bg-black/5 dark:bg-black/30 flex items-center justify-center cursor-pointer group/img select-none"
+            className="mb-1.5 overflow-hidden rounded-lg relative min-h-[120px] max-w-[380px] bg-black/5 dark:bg-black/30 flex items-center justify-center cursor-pointer group/img select-none"
             onClick={onClick}
         >
             {visible ? (
@@ -362,7 +362,7 @@ function LazyMedia({ src, alt, onClick }: { src: string; alt: string; onClick?: 
                     <img
                         src={src}
                         alt={alt}
-                        className={`max-w-full max-h-80 object-cover rounded-lg transition-all duration-200 group-hover/img:brightness-95 ${loaded ? 'opacity-100' : 'opacity-0'}`}
+                        className={`max-w-full max-h-[420px] object-contain rounded-lg transition-all duration-200 group-hover/img:brightness-95 ${loaded ? 'opacity-100' : 'opacity-0'}`}
                         onLoad={() => setLoaded(true)}
                         onError={() => setHasError(true)}
                         loading="lazy"
@@ -656,7 +656,7 @@ function WhatsAppAudioPlayer({
             <audio
                 ref={audioRef}
                 src={audioSrc}
-                preload="metadata"
+                preload="auto"
                 onPlay={() => { setIsPlaying(true); setHasError(false); }}
                 onPause={() => setIsPlaying(false)}
                 onEnded={() => { setIsPlaying(false); setCurrentTime(0); }}
@@ -3817,7 +3817,9 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
         const normalizedJid = jid.endsWith("@c.us") ? jid.replace("@c.us", "@s.whatsapp.net") : jid;
         const handler = (newMessages: Message[]) => {
             setMessages(prev => {
-                const relevant = newMessages.filter(m => m.remoteJid === normalizedJid || prev.some(p => p.remoteJid === m.remoteJid));
+                const norm = (j?: string | null) => (j || "").replace("@c.us", "@s.whatsapp.net");
+                const currentTargetJid = norm(normalizedJid);
+                const relevant = newMessages.filter(m => norm(m.remoteJid) === currentTargetJid || prev.some(p => norm(p.remoteJid) === norm(m.remoteJid)));
                 if (relevant.length === 0) return prev;
 
                 // Play chime and desktop notification if there are incoming messages from someone else (unless muted #C26)

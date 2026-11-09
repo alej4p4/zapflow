@@ -468,7 +468,9 @@ export default function BroadcastPage() {
     const excludedSet = useMemo(() => {
         const set = new Set<string>();
         excludedRecipients.forEach(item => {
-            const jid = item.jid.trim().toLowerCase();
+            if (!item || !item.jid) return;
+            const jid = String(item.jid || "").trim().toLowerCase();
+            if (!jid) return;
             set.add(jid);
             const bare = jid.split("@")[0].replace(/\D/g, "");
             if (bare) {
@@ -483,7 +485,7 @@ export default function BroadcastPage() {
 
     const isJidExcluded = useCallback((jidOrNum: string): boolean => {
         if (!jidOrNum) return false;
-        const clean = jidOrNum.trim().toLowerCase();
+        const clean = String(jidOrNum || "").trim().toLowerCase();
         if (excludedSet.has(clean)) return true;
         if (!clean.endsWith("@g.us")) {
             const digits = clean.split("@")[0].replace(/\D/g, "");
@@ -518,7 +520,7 @@ export default function BroadcastPage() {
             const num = contactNumber(c);
             if (!num) return;
             const jid = toWhatsAppJid(num);
-            const rawLabel = contactLabel(c).trim();
+            const rawLabel = String(contactLabel(c) || "").trim();
             if (!rawLabel) {
                 cNames.set(c.id, num);
                 return;
@@ -546,7 +548,7 @@ export default function BroadcastPage() {
         const usedGroupNames = new Map<string, number>();
         groups.forEach(g => {
             if (!g.jid) return;
-            const rawSubject = (g.subject || "Grupo").trim();
+            const rawSubject = String(g.subject || "Grupo").trim();
             const key = rawSubject.toLowerCase();
             const count = (usedGroupNames.get(key) || 0) + 1;
             usedGroupNames.set(key, count);
@@ -654,7 +656,7 @@ export default function BroadcastPage() {
                 if (!number || !selectedSet.has(contact.id) || isJidExcluded(number)) continue;
                 const jid = toWhatsAppJid(number);
                 if (!existingJids.has(jid)) {
-                    const displayName = contactDisplayNames.get(contact.id) || contactLabel(contact).trim() || number;
+                    const displayName = contactDisplayNames.get(contact.id) || String(contactLabel(contact) || "").trim() || number;
                     toAdd.push(displayName);
                     existingJids.add(jid);
                     newMapEntries[displayName] = jid;
@@ -868,7 +870,7 @@ export default function BroadcastPage() {
             const existing = new Set(prev.map(e => e.jid.toLowerCase()));
             const added: ExcludedRecipient[] = [];
             for (const rawJid of jidsToExclude) {
-                const clean = rawJid.trim();
+                const clean = String(rawJid || "").trim();
                 if (!clean || existing.has(clean.toLowerCase())) continue;
                 existing.add(clean.toLowerCase());
                 const bare = clean.split("@")[0];

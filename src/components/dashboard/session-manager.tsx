@@ -146,34 +146,32 @@ export function SessionManager({ user }: { user: any }) {
     return (
         <div className="space-y-8">
             {/* Create New Session Card */}
-            <Card className="bg-slate-50 border-dashed border-2">
+            <Card className="bg-slate-50 dark:bg-[#202c33] border-dashed border-2 border-border/40 dark:border-[#2a3942] rounded-2xl">
                 <CardHeader>
-                    <CardTitle className="text-lg flex items-center gap-2">
+                    <CardTitle className="text-lg flex items-center gap-2 text-foreground dark:text-[#e9edef]">
                         <Plus className="h-5 w-5" /> Criar nova sessão
                     </CardTitle>
-                    <CardDescription>
+                    <CardDescription className="text-muted-foreground dark:text-[#8696a0]">
                         Adicione uma conta do WhatsApp para gerenciá-la.
                     </CardDescription>
                 </CardHeader>
                 <CardContent>
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-end">
                         <div className="space-y-2">
-                            <Label htmlFor="session-name">Nome da sessão</Label>
+                            <Label htmlFor="session-name" className="text-foreground dark:text-[#e9edef] font-medium">Nome da sessão</Label>
                             <Input
                                 id="session-name"
                                 value={newSessionName}
                                 onChange={e => setNewSessionName(e.target.value)}
-                                placeholder="WhatsApp da empresa"
-                            />
+                                placeholder="WhatsApp da empresa" className="dark:bg-[#111b21] dark:border-[#2a3942] dark:text-[#e9edef] rounded-xl" />
                         </div>
                         <div className="space-y-2">
-                            <Label htmlFor="session-id">ID personalizado (opcional)</Label>
+                            <Label htmlFor="session-id" className="text-foreground dark:text-[#e9edef] font-medium">ID personalizado (opcional)</Label>
                             <Input
                                 id="session-id"
                                 value={newSessionId}
                                 onChange={e => setNewSessionId(e.target.value.replace(/[^a-zA-Z0-9-_]/g, ''))}
-                                placeholder="unique-id-123"
-                            />
+                                placeholder="unique-id-123" className="dark:bg-[#111b21] dark:border-[#2a3942] dark:text-[#e9edef] rounded-xl" />
                             <p className="text-[10px] text-muted-foreground">Use apenas letras, números e hífens.</p>
                         </div>
                         <Button onClick={createSession} disabled={loading}>

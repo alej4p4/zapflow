@@ -174,6 +174,7 @@ function ChatContextMenu({
     state: CtxMenuState;
     onClose: () => void;
     onSelect: (jid: string, name?: string, profilePic?: string | null) => void;
+    onMouseEnter?: () => void;
     onTogglePin: (jid: string) => void;
     onToggleArchive: (jid: string) => void;
     onToggleMute: (jid: string) => void;
@@ -700,7 +701,7 @@ export function ChatList({ sessionId, onSelectChat, selectedJid }: ChatListProps
     useEffect(() => {
         if (!sessionId || chats.length === 0) return;
         const timer = setTimeout(() => {
-            const topChats = chats.filter(c => !!c.lastMessage).slice(0, 15);
+            const topChats = chats.filter(c => !!c.lastMessage).slice(0, 30);
             topChats.forEach(c => prefetchChatMessages(sessionId, c.jid));
         }, 150);
         return () => clearTimeout(timer);
