@@ -126,7 +126,7 @@ export default function RootLayout({
               try {
                 const s = localStorage.getItem('zapflow_theme');
                 const p = window.matchMedia('(prefers-color-scheme: dark)').matches;
-                if (s === 'dark' || (!s && p) || (s === 'system' && p)) {
+                if (s === 'dark' || !s || (s === 'system')) {
                   document.documentElement.classList.add('dark'); document.documentElement.style.colorScheme = 'dark';
                 } else if (s === 'light') {
                   document.documentElement.classList.remove('dark'); document.documentElement.style.colorScheme = 'light';

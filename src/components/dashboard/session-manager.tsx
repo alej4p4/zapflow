@@ -146,10 +146,10 @@ export function SessionManager({ user }: { user: any }) {
     return (
         <div className="space-y-8">
             {/* Create New Session Card */}
-            <Card className="bg-slate-50 dark:bg-[#202c33] border-dashed border-2 border-border/40 dark:border-[#2a3942] rounded-2xl">
+            <Card className="bg-[#f0f2f5] dark:bg-[#202c33] border-dashed border-2 border-border/60 dark:border-[#2a3942] rounded-2xl shadow-xs">
                 <CardHeader>
                     <CardTitle className="text-lg flex items-center gap-2 text-foreground dark:text-[#e9edef]">
-                        <Plus className="h-5 w-5" /> Criar nova sessão
+                        <Plus className="h-5 w-5 text-[#00a884]" /> Criar nova sessão
                     </CardTitle>
                     <CardDescription className="text-muted-foreground dark:text-[#8696a0]">
                         Adicione uma conta do WhatsApp para gerenciá-la.
@@ -163,7 +163,7 @@ export function SessionManager({ user }: { user: any }) {
                                 id="session-name"
                                 value={newSessionName}
                                 onChange={e => setNewSessionName(e.target.value)}
-                                placeholder="WhatsApp da empresa" className="dark:bg-[#111b21] dark:border-[#2a3942] dark:text-[#e9edef] rounded-xl" />
+                                placeholder="WhatsApp da empresa" className="bg-white dark:bg-[#111b21] border-border/80 dark:border-[#2a3942] text-foreground dark:text-[#e9edef] rounded-xl focus:border-[#00a884]" />
                         </div>
                         <div className="space-y-2">
                             <Label htmlFor="session-id" className="text-foreground dark:text-[#e9edef] font-medium">ID personalizado (opcional)</Label>
@@ -171,10 +171,10 @@ export function SessionManager({ user }: { user: any }) {
                                 id="session-id"
                                 value={newSessionId}
                                 onChange={e => setNewSessionId(e.target.value.replace(/[^a-zA-Z0-9-_]/g, ''))}
-                                placeholder="unique-id-123" className="dark:bg-[#111b21] dark:border-[#2a3942] dark:text-[#e9edef] rounded-xl" />
+                                placeholder="unique-id-123" className="bg-white dark:bg-[#111b21] border-border/80 dark:border-[#2a3942] text-foreground dark:text-[#e9edef] rounded-xl focus:border-[#00a884]" />
                             <p className="text-[10px] text-muted-foreground">Use apenas letras, números e hífens.</p>
                         </div>
-                        <Button onClick={createSession} disabled={loading}>
+                        <Button onClick={createSession} disabled={loading} className="bg-[#00a884] hover:bg-[#00a884]/90 text-white font-medium rounded-xl h-10 shadow-xs cursor-pointer">
                             {loading ? 'Criando...' : 'Criar sessão'}
                         </Button>
                     </div>

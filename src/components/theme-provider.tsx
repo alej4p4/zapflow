@@ -39,7 +39,7 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
 
             if (theme === "system") {
                 const systemPrefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
-                targetTheme = systemPrefersDark ? "dark" : "light";
+                targetTheme = "dark";
             } else {
                 targetTheme = theme;
             }

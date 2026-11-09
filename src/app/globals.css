@@ -213,6 +213,12 @@ body.dark {
 }
 
 /* WhatsApp Web Dark & Light Scrollbar Styles */
+/* Ensure WebKit track pieces are transparent so no white edges show */
+::-webkit-scrollbar-track-piece,
+*::-webkit-scrollbar-track-piece {
+  background: transparent !important;
+}
+
 
 /* Modern Standard CSS Scrollbars (Supported natively by Chrome 121+, Edge 121+, Firefox, Safari 17.2+) */
 :root {
@@ -226,7 +232,7 @@ html.dark,
 body.dark {
   color-scheme: dark !important;
   scrollbar-width: thin;
-  scrollbar-color: rgba(255, 255, 255, 0.2) transparent !important;
+  scrollbar-color: #374045 transparent !important;
 }
 
 * {
@@ -236,7 +242,7 @@ body.dark {
 html.dark *,
 :root.dark *,
 .dark * {
-  scrollbar-color: rgba(255, 255, 255, 0.2) transparent !important;
+  scrollbar-color: #374045 transparent !important;
 }
 
 /* Chat Page: ensure main dashboard container never shows outer scrollbar */
@@ -312,7 +318,7 @@ html.dark ::-webkit-scrollbar-thumb,
 body.dark ::-webkit-scrollbar-thumb,
 .dark::-webkit-scrollbar-thumb,
 html.dark::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.2) !important;
+  background: #374045 !important;
   border-radius: 9999px !important;
 }
 
@@ -324,7 +330,7 @@ html.dark ::-webkit-scrollbar-thumb:hover,
 body.dark ::-webkit-scrollbar-thumb:hover,
 .dark::-webkit-scrollbar-thumb:hover,
 html.dark::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.32) !important;
+  background: #4a575e !important;
 }
 
 .dark *::-webkit-scrollbar-corner,
@@ -379,7 +385,7 @@ html.dark::-webkit-scrollbar-button {
 html.dark .styled-scrollbar::-webkit-scrollbar-thumb,
 html.dark [data-virtuoso-scroller="true"]::-webkit-scrollbar-thumb,
 .dark *.styled-scrollbar::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.18) !important;
+  background: #374045 !important;
   border-radius: 9999px !important;
 }
 
@@ -388,7 +394,7 @@ html.dark [data-virtuoso-scroller="true"]::-webkit-scrollbar-thumb,
 html.dark .styled-scrollbar::-webkit-scrollbar-thumb:hover,
 html.dark [data-virtuoso-scroller="true"]::-webkit-scrollbar-thumb:hover,
 .dark *.styled-scrollbar::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.3) !important;
+  background: #4a575e !important;
 }
 
 .dark .styled-scrollbar::-webkit-scrollbar-track,

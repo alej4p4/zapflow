@@ -16,7 +16,7 @@ export function ChatInterface({ sessionId }: ChatInterfaceProps) {
     }
 
     return (
-        <div className="flex flex-col h-full -m-3 sm:-m-4 lg:-m-6">
+        <div className="flex flex-col h-full w-full overflow-hidden bg-background">
             <div className="flex-1 overflow-hidden bg-background">
                 <ChatLayoutClient key={sessionId} sessionId={sessionId} />
             </div>
