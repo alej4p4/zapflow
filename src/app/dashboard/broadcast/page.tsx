@@ -277,7 +277,26 @@ export default function BroadcastPage() {
             const rawExcluded = localStorage.getItem(EXCLUDED_KEY(sessionId));
             if (rawExcluded) {
                 const parsedEx = JSON.parse(rawExcluded);
-                if (Array.isArray(parsedEx)) setExcludedRecipients(parsedEx);
+                if (Array.isArray(parsedEx)) {
+                    const normalized: ExcludedRecipient[] = parsedEx
+                        .filter(Boolean)
+                        .map(item => {
+                            if (typeof item === "string") {
+                                const clean = String(item).trim();
+                                return { jid: clean, name: clean, excludedAt: new Date().toISOString() };
+                            }
+                            const cleanJid = String(item?.jid || "").trim();
+                            return {
+                                jid: cleanJid,
+                                name: String(item?.name || cleanJid || "Contato"),
+                                excludedAt: item?.excludedAt || new Date().toISOString()
+                            };
+                        })
+                        .filter(item => item.jid.length > 0);
+                    setExcludedRecipients(normalized);
+                } else {
+                    setExcludedRecipients([]);
+                }
             } else {
                 setExcludedRecipients([]);
             }
@@ -472,7 +491,7 @@ export default function BroadcastPage() {
             const jid = String(item.jid || "").trim().toLowerCase();
             if (!jid) return;
             set.add(jid);
-            const bare = jid.split("@")[0].replace(/\D/g, "");
+            const bare = (jid.split("@")[0] || "").replace(/\D/g, "");
             if (bare) {
                 set.add(bare);
                 if (bare.startsWith("55") && bare.length >= 12) {
@@ -488,7 +507,7 @@ export default function BroadcastPage() {
         const clean = String(jidOrNum || "").trim().toLowerCase();
         if (excludedSet.has(clean)) return true;
         if (!clean.endsWith("@g.us")) {
-            const digits = clean.split("@")[0].replace(/\D/g, "");
+            const digits = (clean.split("@")[0] || "").replace(/\D/g, "");
             if (digits && excludedSet.has(digits)) return true;
             if (digits.startsWith("55") && digits.length >= 12 && excludedSet.has(digits.slice(2))) return true;
         }
@@ -867,13 +886,13 @@ export default function BroadcastPage() {
         const now = new Date().toISOString();
 
         setExcludedRecipients(prev => {
-            const existing = new Set(prev.map(e => e.jid.toLowerCase()));
+            const existing = new Set(prev.filter(e => e?.jid).map(e => String(e.jid).toLowerCase()));
             const added: ExcludedRecipient[] = [];
             for (const rawJid of jidsToExclude) {
                 const clean = String(rawJid || "").trim();
                 if (!clean || existing.has(clean.toLowerCase())) continue;
                 existing.add(clean.toLowerCase());
-                const bare = clean.split("@")[0];
+                const bare = clean.split("@")[0] || "";
                 const readableName = jidToNameMap.get(clean) || jidToNameMap.get(clean.toLowerCase()) || jidToNameMap.get(bare) || bare;
                 added.push({
                     jid: clean,
@@ -908,7 +927,7 @@ export default function BroadcastPage() {
     const handleRestoreExcluded = useCallback((jidToRestore: string) => {
         if (!sessionId) return;
         setExcludedRecipients(prev => {
-            const updated = prev.filter(e => e.jid !== jidToRestore);
+            const updated = prev.filter(e => e?.jid && e.jid !== jidToRestore);
             try { localStorage.setItem(EXCLUDED_KEY(sessionId), JSON.stringify(updated)); } catch {}
             return updated;
         });
@@ -1146,10 +1165,11 @@ export default function BroadcastPage() {
     const recipientCount = parseRecipientLines(contacts).length;
     const formatJid = (jid: string) => {
         if (!jid) return "-";
-        const bare = jid.split("@")[0];
-        const knownName = jidToNameMap.get(jid) || jidToNameMap.get(jid.toLowerCase()) || jidToNameMap.get(bare);
-        const cleanJid = jid.replace("@s.whatsapp.net", "").replace("@g.us", " (Grupo)");
-        if (knownName && knownName !== bare && knownName !== jid) {
+        const strJid = String(jid);
+        const bare = strJid.split("@")[0] || "";
+        const knownName = jidToNameMap.get(strJid) || jidToNameMap.get(strJid.toLowerCase()) || jidToNameMap.get(bare);
+        const cleanJid = strJid.replace("@s.whatsapp.net", "").replace("@g.us", " (Grupo)");
+        if (knownName && knownName !== bare && knownName !== strJid) {
             return `${knownName} (${cleanJid})`;
         }
         return cleanJid;
@@ -2358,24 +2378,31 @@ export default function BroadcastPage() {
                             {excludedRecipients.length === 0 ? (
                                 <p className="p-4 text-sm text-center text-muted-foreground">Nenhum destinatário excluído.</p>
                             ) : (
-                                excludedRecipients.map(item => (
-                                    <div key={item.jid} className="flex items-center justify-between gap-3 p-2.5 text-xs hover:bg-muted/30">
-                                        <div className="min-w-0">
-                                            <p className="font-semibold text-sm truncate">{item.name}</p>
-                                            <p className="font-mono text-muted-foreground truncate">{item.jid.replace("@s.whatsapp.net", "").replace("@g.us", " (Grupo)")}</p>
-                                        </div>
-                                        <Button
-                                            type="button"
-                                            variant="outline"
-                                            size="sm"
-                                            onClick={() => handleRestoreExcluded(item.jid)}
-                                            className="h-7 text-xs shrink-0 cursor-pointer"
-                                        >
-                                            <RotateCcw className="h-3 w-3 mr-1" />
-                                            Restaurar
-                                        </Button>
-                                    </div>
-                                ))
+                                excludedRecipients
+                                    .filter(item => item && item.jid)
+                                    .map(item => {
+                                        const cleanJid = String(item.jid || "");
+                                        const cleanName = String(item.name || cleanJid || "Contato");
+                                        const displayJid = cleanJid.replace("@s.whatsapp.net", "").replace("@g.us", " (Grupo)");
+                                        return (
+                                            <div key={cleanJid} className="flex items-center justify-between gap-3 p-2.5 text-xs hover:bg-muted/30">
+                                                <div className="min-w-0">
+                                                    <p className="font-semibold text-sm truncate">{cleanName}</p>
+                                                    <p className="font-mono text-muted-foreground truncate">{displayJid}</p>
+                                                </div>
+                                                <Button
+                                                    type="button"
+                                                    variant="outline"
+                                                    size="sm"
+                                                    onClick={() => handleRestoreExcluded(cleanJid)}
+                                                    className="h-7 text-xs shrink-0 cursor-pointer"
+                                                >
+                                                    <RotateCcw className="h-3 w-3 mr-1" />
+                                                    Restaurar
+                                                </Button>
+                                            </div>
+                                        );
+                                    })
                             )}
                         </div>
                         {excludedRecipients.length > 0 && (
