@@ -3403,10 +3403,15 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
         if (!cleanQ) return [];
         return messages.filter(m => {
             const normContent = normalizeSearchText(m.content || "");
-            const normName = normalizeSearchText(m.pushName || "");
-            return normContent.includes(cleanQ) || normName.includes(cleanQ);
+            const normPush = normalizeSearchText(m.pushName || "");
+            const normSender = normalizeSearchText(
+                (m.senderJid && contactMap[m.senderJid]) ||
+                (m.senderJid && contactMap[m.senderJid.split('@')[0]]) ||
+                ""
+            );
+            return normContent.includes(cleanQ) || normPush.includes(cleanQ) || normSender.includes(cleanQ);
         });
-    }, [messages, searchQuery]);
+    }, [messages, searchQuery, contactMap]);
 
     const scrollToSearchMatch = useCallback((msg: Message) => {
         const target = document.getElementById(`msg-${msg.keyId}`);

@@ -56,26 +56,46 @@ export async function searchWhatsAppContacts(sessionId: string, query: string) {
     const digits = q.replace(/\D/g, "");
 
     try {
-        const rawContacts: any[] = await prisma.$queryRaw`
-            SELECT jid, name, notify, "profilePic"
-            FROM "Contact"
-            WHERE "sessionId" = ${session.id}
-              AND (
-                unaccent(coalesce(name, '')) ILIKE '%' || unaccent(${q}) || '%'
-                OR unaccent(coalesce(notify, '')) ILIKE '%' || unaccent(${q}) || '%'
-                OR unaccent(coalesce("verifiedName", '')) ILIKE '%' || unaccent(${q}) || '%'
-                OR jid ILIKE '%' || ${q} || '%'
-                OR (${digits.length >= 4} AND jid ILIKE '%' || ${digits} || '%')
-              )
-            LIMIT 30
-        `;
-        return rawContacts.map(c => ({
-            jid: c.jid,
-            name: c.name || c.notify || c.jid.split("@")[0],
-            notify: c.notify,
-            profilePic: (c.profilePic && c.profilePic.startsWith("http")) ? c.profilePic : null,
-            isContact: true
-        }));
+        const [rawContacts, rawGroups] = (await Promise.all([
+            prisma.$queryRaw`
+                SELECT jid, name, notify, "profilePic"
+                FROM "Contact"
+                WHERE "sessionId" = ${session.id}
+                  AND (
+                    unaccent(coalesce(name, '')) ILIKE '%' || unaccent(${q}) || '%'
+                    OR unaccent(coalesce(notify, '')) ILIKE '%' || unaccent(${q}) || '%'
+                    OR unaccent(coalesce("verifiedName", '')) ILIKE '%' || unaccent(${q}) || '%'
+                    OR jid ILIKE '%' || ${q} || '%'
+                    OR (${digits.length >= 4} AND jid ILIKE '%' || ${digits} || '%')
+                  )
+                LIMIT 30
+            `,
+            prisma.$queryRaw`
+                SELECT jid, subject as name, subject as notify, null as "profilePic"
+                FROM "Group"
+                WHERE "sessionId" = ${session.id}
+                  AND unaccent(coalesce(subject, '')) ILIKE '%' || unaccent(${q}) || '%'
+                LIMIT 15
+            `
+        ])) as [any[], any[]];
+
+        const combined = [
+            ...rawContacts.map(c => ({
+                jid: c.jid,
+                name: c.name || c.notify || c.jid.split("@")[0],
+                notify: c.notify,
+                profilePic: (c.profilePic && c.profilePic.startsWith("http")) ? c.profilePic : null,
+                isContact: true
+            })),
+            ...rawGroups.map(g => ({
+                jid: g.jid,
+                name: g.name || "Grupo",
+                notify: g.notify || "Grupo",
+                profilePic: null,
+                isContact: false
+            }))
+        ];
+        return combined;
     } catch {
         const contacts = await prisma.contact.findMany({
             where: {
@@ -131,7 +151,12 @@ export async function searchGlobalMessages(sessionId: string, query: string) {
             FROM "Message" m
             LEFT JOIN "Contact" c ON c."sessionId" = m."sessionId" AND (c.jid = m."remoteJid" OR c.lid = m."remoteJid")
             WHERE m."sessionId" = ${session.id}
-              AND unaccent(coalesce(m.content, '')) ILIKE '%' || unaccent(${q}) || '%'
+              AND (
+                unaccent(coalesce(m.content, '')) ILIKE '%' || unaccent(${q}) || '%'
+                OR unaccent(coalesce(m."pushName", '')) ILIKE '%' || unaccent(${q}) || '%'
+                OR unaccent(coalesce(c.name, '')) ILIKE '%' || unaccent(${q}) || '%'
+                OR unaccent(coalesce(c.notify, '')) ILIKE '%' || unaccent(${q}) || '%'
+              )
             ORDER BY m.timestamp DESC
             LIMIT 40
         `;
