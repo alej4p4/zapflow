@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
     MessageSquarePlus,
+    ArrowLeft,
     Loader2,
     Search,
     MessageCircle,
@@ -91,6 +92,48 @@ function playWhatsAppIncomingSound() {
 
 function getDisplayName(chat: ChatContact): string {
     return chat.name || chat.notify || chat.jid.split('@')[0];
+}
+
+function normalizeSearch(text: string): string {
+    return (text || "")
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .toLowerCase()
+        .trim();
+}
+
+function highlightSearch(text: string, query?: string): React.ReactNode {
+    if (!text || !query || !query.trim()) return text;
+    const cleanQ = normalizeSearch(query);
+    if (!cleanQ) return text;
+
+    const normText = text.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+    const idx = normText.indexOf(cleanQ);
+    if (idx === -1) return text;
+
+    const parts: React.ReactNode[] = [];
+    let lastIdx = 0;
+    let currIdx = normText.indexOf(cleanQ, lastIdx);
+
+    while (currIdx !== -1) {
+        if (currIdx > lastIdx) {
+            parts.push(text.slice(lastIdx, currIdx));
+        }
+        const matchEnd = currIdx + cleanQ.length;
+        parts.push(
+            <mark key={currIdx} className="bg-[#00a884]/25 text-[#00a884] dark:bg-[#00a884]/40 dark:text-[#25d366] font-semibold rounded-xs px-0.5">
+                {text.slice(currIdx, matchEnd)}
+            </mark>
+        );
+        lastIdx = matchEnd;
+        currIdx = normText.indexOf(cleanQ, lastIdx);
+    }
+
+    if (lastIdx < text.length) {
+        parts.push(text.slice(lastIdx));
+    }
+
+    return parts;
 }
 
 function getMessagePreview(chat: ChatContact): { text: string; isMedia: boolean; type?: string } {
@@ -257,7 +300,8 @@ function ChatRow({
     onToggleMute,
     onToggleRead,
     sessionId,
-    labelDots
+    labelDots,
+    searchQuery
 }: {
     chat: ChatContact;
     isSelected: boolean;
@@ -273,6 +317,7 @@ function ChatRow({
     onToggleRead: (jid: string, isUnread: boolean) => void;
     sessionId: string;
     labelDots: { colorHex: string; name?: string }[];
+    searchQuery?: string;
 }) {
     const displayName = getDisplayName(chat);
     const [ctxMenu, setCtxMenu] = useState<CtxMenuState | null>(null);
@@ -556,6 +601,7 @@ export function ChatList({ sessionId, onSelectChat, selectedJid }: ChatListProps
     const [chats, setChats] = useState<ChatContact[]>(initialCached);
     const [loading, setLoading] = useState(initialCached.length === 0);
     const [searchInput, setSearchInput] = useState("");
+    const [isSearchFocused, setIsSearchFocused] = useState(false);
     const [filterType, setFilterType] = useState<"all" | "unread" | "contacts" | "groups" | "pinned" | "archived">("all");
     const [isNewChatOpen, setIsNewChatOpen] = useState(false);
     const [newChatNumber, setNewChatNumber] = useState("");
@@ -595,7 +641,7 @@ export function ChatList({ sessionId, onSelectChat, selectedJid }: ChatListProps
         profilePic?: string | null;
     }>>([]);
     const [isSearchingMessages, setIsSearchingMessages] = useState(false);
-    const [searchTab, setSearchTab] = useState<"chats" | "messages">("chats");
+    const [searchTab, setSearchTab] = useState<"all" | "chats" | "messages">("all");
     const msgSearchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
     // Contacts searched from the address book
@@ -751,7 +797,7 @@ export function ChatList({ sessionId, onSelectChat, selectedJid }: ChatListProps
         if (q.length < 2) {
             setMatchingMessages([]);
             setIsSearchingMessages(false);
-            setSearchTab("chats");
+            setSearchTab("all");
             return;
         }
 
@@ -1255,20 +1301,21 @@ export function ChatList({ sessionId, onSelectChat, selectedJid }: ChatListProps
         let list = chats;
 
         // 1. Instant text search (immediate 0ms response on every keystroke)
-        const q = searchInput.trim().toLowerCase();
-        if (q) {
-            const digits = q.replace(/\D/g, "");
+        const cleanQ = normalizeSearch(searchInput);
+        if (cleanQ) {
+            const digits = searchInput.replace(/\D/g, "");
             list = list.filter(chat => {
-                const name = (chat.name || chat.notify || "").toLowerCase();
-                const jid = chat.jid.toLowerCase();
-                const lastContent = (chat.lastMessage?.content || "").toLowerCase();
+                const normName = normalizeSearch(chat.name || "");
+                const normNotify = normalizeSearch(chat.notify || "");
+                const normContent = normalizeSearch(chat.lastMessage?.content || "");
+                const jidDigits = chat.jid.replace(/\D/g, "");
 
-                const matchName = name.includes(q);
-                const matchJid = jid.includes(q);
-                const matchContent = lastContent.includes(q);
-                const matchDigits = digits.length >= 3 && jid.replace(/\D/g, "").includes(digits);
+                const matchName = normName.includes(cleanQ) || normNotify.includes(cleanQ);
+                const matchContent = normContent.includes(cleanQ);
+                const matchDigits = digits.length >= 3 && (jidDigits.includes(digits) || (chat.name && chat.name.replace(/\D/g, "").includes(digits)));
+                const matchJid = chat.jid.toLowerCase().includes(cleanQ);
 
-                return matchName || matchJid || matchContent || matchDigits;
+                return matchName || matchContent || matchDigits || matchJid;
             });
 
             // Append matching contacts from address book
@@ -1382,9 +1429,10 @@ export function ChatList({ sessionId, onSelectChat, selectedJid }: ChatListProps
                 onToggleRead={handleToggleRead}
                 sessionId={sessionId}
                 labelDots={chatLabelMap.get(chat.jid) || []}
+                searchQuery={searchInput.trim()}
             />
         ),
-        [selectedJid, pinnedJids, archivedSet, mutedSet, draftMap, presenceMap, handleSelectAndClearUnread, handleTogglePin, handleToggleArchive, handleToggleMute, handleToggleRead, sessionId, chatLabelMap]
+        [selectedJid, pinnedJids, archivedSet, mutedSet, draftMap, presenceMap, handleSelectAndClearUnread, handleTogglePin, handleToggleArchive, handleToggleMute, handleToggleRead, sessionId, chatLabelMap, searchInput]
     );
 
     const handleStartNewChat = () => {
@@ -1450,20 +1498,47 @@ export function ChatList({ sessionId, onSelectChat, selectedJid }: ChatListProps
                     </div>
                 </div>
 
-                {/* Instant Search Bar with Clear Button */}
+                {/* WhatsApp Web Style Search Bar with Back Arrow */}
                 <div className="relative">
-                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-[#667781] dark:text-[#8696a0]" />
+                    {isSearchFocused || searchInput ? (
+                        <button
+                            type="button"
+                            onClick={() => {
+                                setSearchInput("");
+                                setIsSearchFocused(false);
+                                searchInputRef.current?.blur();
+                            }}
+                            className="absolute left-2.5 top-1/2 -translate-y-1/2 p-1 rounded-full text-[#00a884] hover:bg-black/5 dark:hover:bg-white/10 transition-transform active:scale-95 cursor-pointer z-10"
+                            title="Fechar busca (Esc)"
+                        >
+                            <ArrowLeft className="h-4 w-4" />
+                        </button>
+                    ) : (
+                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-[#667781] dark:text-[#8696a0] pointer-events-none" />
+                    )}
                     <Input
                         ref={searchInputRef}
-                        placeholder="Pesquisar conversa, grupo ou contato..."
+                        placeholder="Pesquisar ou começar uma nova conversa..."
                         value={searchInput}
+                        onFocus={() => setIsSearchFocused(true)}
+                        onBlur={() => !searchInput && setIsSearchFocused(false)}
                         onChange={(e) => setSearchInput(e.target.value)}
+                        onKeyDown={(e) => {
+                            if (e.key === "Escape") {
+                                setSearchInput("");
+                                setIsSearchFocused(false);
+                                searchInputRef.current?.blur();
+                            }
+                        }}
                         className="h-9 pl-9 pr-8 text-[13.5px] bg-white dark:bg-[#111b21] border border-border/20 rounded-lg focus-visible:ring-1 focus-visible:ring-[#00a884] placeholder:text-[#667781] dark:placeholder:text-[#8696a0]"
                     />
                     {searchInput && (
                         <button
-                            onClick={() => setSearchInput("")}
-                            className="absolute right-2.5 top-1/2 -translate-y-1/2 p-0.5 rounded-full hover:bg-muted text-muted-foreground hover:text-foreground"
+                            onClick={() => {
+                                setSearchInput("");
+                                searchInputRef.current?.focus();
+                            }}
+                            className="absolute right-2.5 top-1/2 -translate-y-1/2 p-0.5 rounded-full hover:bg-muted text-muted-foreground hover:text-foreground cursor-pointer"
                             title="Limpar busca"
                         >
                             <X className="h-3.5 w-3.5" />
@@ -1471,14 +1546,26 @@ export function ChatList({ sessionId, onSelectChat, selectedJid }: ChatListProps
                     )}
                 </div>
 
-{/* Search scope tabs: Conversas vs Mensagens */}
-                {searchInput.trim().length >= 2 && (
+{/* WhatsApp Web Search Tabs: Tudo, Conversas, Mensagens */}
+                {searchInput.trim().length >= 2 ? (
                     <div className="flex items-center gap-1.5 pt-1 animate-in fade-in duration-150">
+                        <button
+                            type="button"
+                            onClick={() => setSearchTab("all")}
+                            className={cn(
+                                "px-3 py-1 rounded-full text-xs font-medium transition-colors cursor-pointer",
+                                searchTab === "all"
+                                    ? "bg-[#00a884] text-white shadow-xs"
+                                    : "bg-muted/70 text-muted-foreground hover:text-foreground"
+                            )}
+                        >
+                            Tudo
+                        </button>
                         <button
                             type="button"
                             onClick={() => setSearchTab("chats")}
                             className={cn(
-                                "px-2.5 py-1 text-xs rounded-md font-medium transition-colors cursor-pointer",
+                                "px-3 py-1 rounded-full text-xs font-medium transition-colors cursor-pointer",
                                 searchTab === "chats"
                                     ? "bg-[#00a884] text-white shadow-xs"
                                     : "bg-muted/70 text-muted-foreground hover:text-foreground"
@@ -1490,7 +1577,7 @@ export function ChatList({ sessionId, onSelectChat, selectedJid }: ChatListProps
                             type="button"
                             onClick={() => setSearchTab("messages")}
                             className={cn(
-                                "px-2.5 py-1 text-xs rounded-md font-medium transition-colors cursor-pointer flex items-center gap-1.5",
+                                "px-3 py-1 rounded-full text-xs font-medium transition-colors cursor-pointer flex items-center gap-1.5",
                                 searchTab === "messages"
                                     ? "bg-[#00a884] text-white shadow-xs"
                                     : "bg-muted/70 text-muted-foreground hover:text-foreground"
@@ -1500,9 +1587,10 @@ export function ChatList({ sessionId, onSelectChat, selectedJid }: ChatListProps
                             {isSearchingMessages && <Loader2 className="h-3 w-3 animate-spin text-current" />}
                         </button>
                     </div>
-                )}
+                ) : null}
 
-                                {/* Quick Filters: Tudo, Não lidas, Contatos, Grupos, Fixados, Arquivadas, Etiquetas */}
+                                {/* Quick Filters: visible when NOT searching */}
+                {searchInput.trim().length < 2 && (
                 <div className="flex items-center gap-1.5 pt-0.5 overflow-x-auto no-scrollbar">
                     <button
                         onClick={() => { setFilterType("all"); setSelectedLabelId(null); }}
@@ -1595,7 +1683,8 @@ export function ChatList({ sessionId, onSelectChat, selectedJid }: ChatListProps
                     )}
 
                     
-                </div>
+</div>
+                )}
 
                 {/* New Chat Form Drawer */}
                 {isNewChatOpen && (
@@ -1620,7 +1709,95 @@ export function ChatList({ sessionId, onSelectChat, selectedJid }: ChatListProps
                 )}
             </div>
 
-            {/* Matching Messages List (Global Search) */}
+            {/* Unified Search View (WhatsApp Web style: Conversas + Mensagens) */}
+            {searchTab === "all" && searchInput.trim().length >= 2 ? (
+                <div className="flex-1 overflow-y-auto divide-y divide-border/10 styled-scrollbar bg-background">
+                    {/* Section 1: Conversas */}
+                    <div className="sticky top-0 z-10 px-3.5 py-1.5 text-[11px] font-semibold uppercase tracking-wider text-[#00a884] dark:text-[#25d366] bg-muted/70 dark:bg-[#111b21] backdrop-blur-xs border-b border-border/10 flex items-center justify-between">
+                        <span>Conversas ({filteredAndSortedChats.length})</span>
+                    </div>
+                    {filteredAndSortedChats.length === 0 ? (
+                        <div className="py-4 px-4 text-xs text-muted-foreground text-center">
+                            Nenhuma conversa encontrada
+                        </div>
+                    ) : (
+                        filteredAndSortedChats.map((chat) => (
+                            <ChatRow
+                                key={chat.jid}
+                                chat={chat}
+                                isSelected={selectedJid === chat.jid}
+                                isPinned={pinnedJids.includes(chat.jid)}
+                                isArchived={archivedSet.has(chat.jid)}
+                                isMuted={mutedSet.has(chat.jid)}
+                                draftText={draftMap[chat.jid]}
+                                presence={presenceMap[chat.jid]}
+                                onSelect={handleSelectAndClearUnread}
+                                onTogglePin={handleTogglePin}
+                                onToggleArchive={handleToggleArchive}
+                                onToggleMute={handleToggleMute}
+                                onToggleRead={handleToggleRead}
+                                sessionId={sessionId}
+                                labelDots={chatLabelMap.get(chat.jid) || []}
+                                searchQuery={searchInput.trim()}
+                            />
+                        ))
+                    )}
+
+                    {/* Section 2: Mensagens */}
+                    <div className="sticky top-0 z-10 px-3.5 py-1.5 text-[11px] font-semibold uppercase tracking-wider text-[#00a884] dark:text-[#25d366] bg-muted/70 dark:bg-[#111b21] backdrop-blur-xs border-b border-border/10 flex items-center justify-between">
+                        <span>Mensagens ({matchingMessages.length})</span>
+                        {isSearchingMessages && <Loader2 className="h-3 w-3 animate-spin text-[#00a884]" />}
+                    </div>
+                    {matchingMessages.length === 0 ? (
+                        <div className="py-8 px-4 text-xs text-muted-foreground text-center">
+                            {isSearchingMessages ? (
+                                <div className="flex items-center justify-center gap-2 text-xs text-muted-foreground">
+                                    <Loader2 className="h-4 w-4 animate-spin text-[#00a884]" />
+                                    Buscando em mensagens...
+                                </div>
+                            ) : (
+                                <span>Nenhuma mensagem contendo "{searchInput}" encontrada</span>
+                            )}
+                        </div>
+                    ) : (
+                        matchingMessages.map((msg) => (
+                            <div
+                                key={msg.id}
+                                onClick={() => {
+                                    handleSelectAndClearUnread(msg.jid, msg.contactName, msg.profilePic);
+                                    window.dispatchEvent(new CustomEvent("zapflow:scroll-to-message", {
+                                        detail: { keyId: msg.keyId, jid: msg.jid, query: searchInput.trim() }
+                                    }));
+                                }}
+                                className="p-3 hover:bg-[#f0f2f5] dark:hover:bg-[#202c33] cursor-pointer transition-colors flex items-start gap-3 select-none"
+                            >
+                                <Avatar className="h-10 w-10 shrink-0 mt-0.5">
+                                    <AvatarImage src={msg.profilePic || undefined} />
+                                    <AvatarFallback className="bg-[#00a884]/20 text-[#00a884] font-semibold text-xs">
+                                        {msg.contactName.slice(0, 2).toUpperCase()}
+                                    </AvatarFallback>
+                                </Avatar>
+                                <div className="flex-1 min-w-0">
+                                    <div className="flex items-center justify-between gap-1 mb-1">
+                                        <span className="text-xs font-semibold text-foreground truncate">
+                                            {highlightSearch(msg.contactName, searchInput.trim())}
+                                        </span>
+                                        <span className="text-[10px] text-muted-foreground shrink-0">
+                                            {getTimeLabel(msg.timestamp)}
+                                        </span>
+                                    </div>
+                                    <p className="text-xs text-muted-foreground line-clamp-2 leading-relaxed">
+                                        {msg.fromMe && <span className="font-medium text-[#00a884]">Você: </span>}
+                                        {highlightSearch(msg.content, searchInput.trim())}
+                                    </p>
+                                </div>
+                            </div>
+                        ))
+                    )}
+                </div>
+            ) : null}
+
+            {/* Matching Messages Tab Only */}
             {searchTab === "messages" && searchInput.trim().length >= 2 ? (
                 <div className="flex-1 overflow-y-auto divide-y divide-border/10 styled-scrollbar bg-background">
                     {matchingMessages.length === 0 ? (
@@ -1643,7 +1820,7 @@ export function ChatList({ sessionId, onSelectChat, selectedJid }: ChatListProps
                                 onClick={() => {
                                     handleSelectAndClearUnread(msg.jid, msg.contactName, msg.profilePic);
                                     window.dispatchEvent(new CustomEvent("zapflow:scroll-to-message", {
-                                        detail: { keyId: msg.keyId, jid: msg.jid }
+                                        detail: { keyId: msg.keyId, jid: msg.jid, query: searchInput.trim() }
                                     }));
                                 }}
                                 className="p-3 hover:bg-[#f0f2f5] dark:hover:bg-[#202c33] cursor-pointer transition-colors flex items-start gap-3 select-none"
@@ -1657,7 +1834,7 @@ export function ChatList({ sessionId, onSelectChat, selectedJid }: ChatListProps
                                 <div className="flex-1 min-w-0">
                                     <div className="flex items-center justify-between gap-1 mb-1">
                                         <span className="text-xs font-semibold text-foreground truncate">
-                                            {msg.contactName}
+                                            {highlightSearch(msg.contactName, searchInput.trim())}
                                         </span>
                                         <span className="text-[10px] text-muted-foreground shrink-0">
                                             {getTimeLabel(msg.timestamp)}
@@ -1665,7 +1842,7 @@ export function ChatList({ sessionId, onSelectChat, selectedJid }: ChatListProps
                                     </div>
                                     <p className="text-xs text-muted-foreground line-clamp-2 leading-relaxed">
                                         {msg.fromMe && <span className="font-medium text-[#00a884]">Você: </span>}
-                                        {msg.content}
+                                        {highlightSearch(msg.content, searchInput.trim())}
                                     </p>
                                 </div>
                             </div>
@@ -1675,7 +1852,7 @@ export function ChatList({ sessionId, onSelectChat, selectedJid }: ChatListProps
             ) : null}
 
             {/* Virtualized Chat List */}
-            <div className={cn("flex-1 min-h-0 bg-background", searchTab === "messages" && searchInput.trim().length >= 2 && "hidden")}>
+            <div className={cn("flex-1 min-h-0 bg-background", (searchTab === "messages" || searchTab === "all") && searchInput.trim().length >= 2 && "hidden")}>
                 {filteredAndSortedChats.length === 0 ? (
                     <div className="flex flex-col items-center justify-center py-16 px-4 text-center">
                         <div className="h-12 w-12 rounded-full bg-muted/50 flex items-center justify-center mb-3">

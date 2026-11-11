@@ -55,33 +55,56 @@ export async function searchWhatsAppContacts(sessionId: string, query: string) {
 
     const digits = q.replace(/\D/g, "");
 
-    const contacts = await prisma.contact.findMany({
-        where: {
-            sessionId: session.id,
-            OR: [
-                { name: { contains: q, mode: "insensitive" } },
-                { notify: { contains: q, mode: "insensitive" } },
-                { verifiedName: { contains: q, mode: "insensitive" } },
-                { jid: { contains: q, mode: "insensitive" } },
-                ...(digits.length >= 4 ? [{ jid: { contains: digits } }] : [])
-            ]
-        },
-        take: 30,
-        select: {
-            jid: true,
-            name: true,
-            notify: true,
-            profilePic: true
-        }
-    });
+    try {
+        const rawContacts: any[] = await prisma.$queryRaw`
+            SELECT jid, name, notify, "profilePic"
+            FROM "Contact"
+            WHERE "sessionId" = ${session.id}
+              AND (
+                unaccent(coalesce(name, '')) ILIKE '%' || unaccent(${q}) || '%'
+                OR unaccent(coalesce(notify, '')) ILIKE '%' || unaccent(${q}) || '%'
+                OR unaccent(coalesce("verifiedName", '')) ILIKE '%' || unaccent(${q}) || '%'
+                OR jid ILIKE '%' || ${q} || '%'
+                OR (${digits.length >= 4} AND jid ILIKE '%' || ${digits} || '%')
+              )
+            LIMIT 30
+        `;
+        return rawContacts.map(c => ({
+            jid: c.jid,
+            name: c.name || c.notify || c.jid.split("@")[0],
+            notify: c.notify,
+            profilePic: (c.profilePic && c.profilePic.startsWith("http")) ? c.profilePic : null,
+            isContact: true
+        }));
+    } catch {
+        const contacts = await prisma.contact.findMany({
+            where: {
+                sessionId: session.id,
+                OR: [
+                    { name: { contains: q, mode: "insensitive" } },
+                    { notify: { contains: q, mode: "insensitive" } },
+                    { verifiedName: { contains: q, mode: "insensitive" } },
+                    { jid: { contains: q, mode: "insensitive" } },
+                    ...(digits.length >= 4 ? [{ jid: { contains: digits } }] : [])
+                ]
+            },
+            take: 30,
+            select: {
+                jid: true,
+                name: true,
+                notify: true,
+                profilePic: true
+            }
+        });
 
-    return contacts.map(c => ({
-        jid: c.jid,
-        name: c.name || c.notify || c.jid.split("@")[0],
-        notify: c.notify,
-        profilePic: (c.profilePic && c.profilePic.startsWith("http")) ? c.profilePic : null,
-        isContact: true
-    }));
+        return contacts.map(c => ({
+            jid: c.jid,
+            name: c.name || c.notify || c.jid.split("@")[0],
+            notify: c.notify,
+            profilePic: (c.profilePic && c.profilePic.startsWith("http")) ? c.profilePic : null,
+            isContact: true
+        }));
+    }
 }
 
 // Global Message Search across all chats in database
@@ -101,46 +124,73 @@ export async function searchGlobalMessages(sessionId: string, query: string) {
     const q = query.trim();
     if (!q || q.length < 2) return [];
 
-    const messages = await prisma.message.findMany({
-        where: {
-            sessionId: session.id,
-            content: { contains: q, mode: "insensitive" }
-        },
-        orderBy: { timestamp: "desc" },
-        take: 40,
-        select: {
-            id: true,
-            keyId: true,
-            remoteJid: true,
-            fromMe: true,
-            content: true,
-            timestamp: true,
-            type: true,
-            pushName: true,
-            contract: {
-                select: {
-                    name: true,
-                    notify: true,
-                    profilePic: true
+    try {
+        const rawMessages: any[] = await prisma.$queryRaw`
+            SELECT m.id, m."keyId", m."remoteJid", m."fromMe", m.content, m.timestamp, m.type, m."pushName",
+                   c.name as "contactName", c.notify as "contactNotify", c."profilePic" as "contactPic"
+            FROM "Message" m
+            LEFT JOIN "Contact" c ON c."sessionId" = m."sessionId" AND (c.jid = m."remoteJid" OR c.lid = m."remoteJid")
+            WHERE m."sessionId" = ${session.id}
+              AND unaccent(coalesce(m.content, '')) ILIKE '%' || unaccent(${q}) || '%'
+            ORDER BY m.timestamp DESC
+            LIMIT 40
+        `;
+        return rawMessages.map(m => {
+            const contactName = m.contactName || m.contactNotify || m.pushName || m.remoteJid.replace("@s.whatsapp.net", "").replace("@g.us", "");
+            return {
+                id: m.id,
+                keyId: m.keyId,
+                jid: m.remoteJid,
+                fromMe: m.fromMe,
+                content: m.content || "",
+                timestamp: m.timestamp instanceof Date ? m.timestamp.toISOString() : String(m.timestamp),
+                type: m.type,
+                contactName,
+                profilePic: (m.contactPic && m.contactPic.startsWith("http")) ? m.contactPic : null
+            };
+        });
+    } catch {
+        const messages = await prisma.message.findMany({
+            where: {
+                sessionId: session.id,
+                content: { contains: q, mode: "insensitive" }
+            },
+            orderBy: { timestamp: "desc" },
+            take: 40,
+            select: {
+                id: true,
+                keyId: true,
+                remoteJid: true,
+                fromMe: true,
+                content: true,
+                timestamp: true,
+                type: true,
+                pushName: true,
+                contract: {
+                    select: {
+                        name: true,
+                        notify: true,
+                        profilePic: true
+                    }
                 }
             }
-        }
-    });
+        });
 
-    return messages.map(m => {
-        const contactName = m.contract?.name || m.contract?.notify || m.pushName || m.remoteJid.replace("@s.whatsapp.net", "").replace("@g.us", "");
-        return {
-            id: m.id,
-            keyId: m.keyId,
-            jid: m.remoteJid,
-            fromMe: m.fromMe,
-            content: m.content || "",
-            timestamp: m.timestamp.toISOString(),
-            type: m.type,
-            contactName,
-            profilePic: (m.contract?.profilePic && m.contract.profilePic.startsWith("http")) ? m.contract.profilePic : null
-        };
-    });
+        return messages.map(m => {
+            const contactName = m.contract?.name || m.contract?.notify || m.pushName || m.remoteJid.replace("@s.whatsapp.net", "").replace("@g.us", "");
+            return {
+                id: m.id,
+                keyId: m.keyId,
+                jid: m.remoteJid,
+                fromMe: m.fromMe,
+                content: m.content || "",
+                timestamp: m.timestamp.toISOString(),
+                type: m.type,
+                contactName,
+                profilePic: (m.contract?.profilePic && m.contract.profilePic.startsWith("http")) ? m.contract.profilePic : null
+            };
+        });
+    }
 }
 
 // Fetch messages for a specific chat with cursor pagination
@@ -164,6 +214,37 @@ export async function getChatMessages(
     if (!session) throw new Error("Session not found");
 
     const { messages, hasMore, contactMap, participantNames, participantsList } = await ChatService.getMessages(session.id, jid, limit, before);
+
+    return {
+        messages: messages.map((msg: any) => ({
+            ...msg,
+            timestamp: msg.timestamp instanceof Date
+                ? msg.timestamp.toISOString()
+                : String(msg.timestamp)
+        })),
+        hasMore,
+        contactMap: contactMap || {},
+        participantNames: participantNames || [],
+        participantsList: participantsList || []
+    };
+}
+
+// Fetch messages around a target keyId for instant search jump
+export async function getChatMessagesAround(sessionId: string, jid: string, keyId: string) {
+    const user = await getAuthenticatedUserForAction();
+    if (!user) throw new Error("Unauthorized");
+
+    const canAccess = await canAccessSession(user.id, user.role, sessionId);
+    if (!canAccess) throw new Error("Forbidden");
+
+    const session = await prisma.session.findFirst({
+        where: { OR: [{ sessionId }, { id: sessionId }] },
+        select: { id: true }
+    });
+
+    if (!session) throw new Error("Session not found");
+
+    const { messages, hasMore, contactMap, participantNames, participantsList } = await ChatService.getMessagesAround(session.id, jid, keyId);
 
     return {
         messages: messages.map((msg: any) => ({

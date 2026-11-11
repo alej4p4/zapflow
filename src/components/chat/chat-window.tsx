@@ -110,6 +110,7 @@ import {
     scheduleDirectChatMessage,
     runChatAIAssistant,
     transcribeChatAudioMessage,
+    getChatMessagesAround,
     type ChatAIAssistantMode
 } from "@/app/dashboard/chat/actions";
 import type { CustomFreeLLMKeys } from "@/lib/free-llm";
@@ -160,19 +161,42 @@ function MessageStatusCheck({ status }: { status: string }) {
 }
 
 // ─── Lazy media & WhatsApp Markdown Formatting (#C24) ────────
+function normalizeSearchText(text: string): string {
+    return (text || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim();
+}
+
 function highlightText(text: string, query?: string): React.ReactNode {
-    if (!query || !query.trim()) return text;
-    const q = query.trim();
-    const regex = new RegExp(`(${q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'gi');
-    const segments = text.split(regex);
-    if (segments.length === 1) return text;
-    return segments.map((seg, i) =>
-        seg.toLowerCase() === q.toLowerCase() ? (
-            <mark key={i} className="bg-amber-300 dark:bg-amber-500/80 text-black dark:text-white rounded-xs px-0.5">
-                {seg}
+    if (!text || !query || !query.trim()) return text;
+    const cleanQ = normalizeSearchText(query);
+    if (!cleanQ) return text;
+
+    const normText = text.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+    const idx = normText.indexOf(cleanQ);
+    if (idx === -1) return text;
+
+    const parts: React.ReactNode[] = [];
+    let lastIdx = 0;
+    let currIdx = normText.indexOf(cleanQ, lastIdx);
+
+    while (currIdx !== -1) {
+        if (currIdx > lastIdx) {
+            parts.push(text.slice(lastIdx, currIdx));
+        }
+        const matchEnd = currIdx + cleanQ.length;
+        parts.push(
+            <mark key={currIdx} className="bg-amber-300 dark:bg-amber-500/80 text-black dark:text-white rounded-xs px-0.5 font-medium">
+                {text.slice(currIdx, matchEnd)}
             </mark>
-        ) : seg
-    );
+        );
+        lastIdx = matchEnd;
+        currIdx = normText.indexOf(cleanQ, lastIdx);
+    }
+
+    if (lastIdx < text.length) {
+        parts.push(text.slice(lastIdx));
+    }
+
+    return parts;
 }
 
 function formatWhatsAppInline(text: string, query?: string): React.ReactNode {
@@ -3358,9 +3382,13 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
     const searchInputRef = useRef<HTMLInputElement>(null);
 
     const searchMatches = useMemo(() => {
-        const q = searchQuery.trim().toLowerCase();
-        if (!q) return [];
-        return messages.filter(m => (m.content && m.content.toLowerCase().includes(q)) || (m.pushName && m.pushName.toLowerCase().includes(q)));
+        const cleanQ = normalizeSearchText(searchQuery);
+        if (!cleanQ) return [];
+        return messages.filter(m => {
+            const normContent = normalizeSearchText(m.content || "");
+            const normName = normalizeSearchText(m.pushName || "");
+            return normContent.includes(cleanQ) || normName.includes(cleanQ);
+        });
     }, [messages, searchQuery]);
 
     const scrollToSearchMatch = useCallback((msg: Message) => {
@@ -3575,28 +3603,48 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
 
     // Scroll and highlight message from global search or internal jump
     useEffect(() => {
-        const handleScrollToMessage = (e: Event) => {
-            const { keyId, jid: targetJid } = (e as CustomEvent<{ keyId: string; jid?: string }>).detail || {};
+        const handleScrollToMessage = async (e: Event) => {
+            const { keyId, jid: targetJid, query } = (e as CustomEvent<{ keyId: string; jid?: string; query?: string }>).detail || {};
             if (!keyId) return;
             if (targetJid && targetJid !== jid) return;
+
+            if (query) {
+                setIsSearching(true);
+                setSearchQuery(query);
+            }
+
+            const alreadyLoaded = messages.some(m => m.keyId === keyId);
+            if (!alreadyLoaded) {
+                try {
+                    const ctx = await getChatMessagesAround(sessionId, jid, keyId);
+                    if (ctx?.messages && ctx.messages.length > 0) {
+                        setMessages(ctx.messages);
+                        if (ctx.contactMap) setContactMap(prev => ({ ...prev, ...ctx.contactMap }));
+                    }
+                } catch (err) {
+                    console.error("Error fetching message context around keyId:", err);
+                }
+            }
 
             let attempts = 0;
             const tryScroll = () => {
                 const el = document.getElementById('msg-' + keyId);
                 if (el) {
                     el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                    el.classList.add('bg-[#00a884]/25', 'transition-colors', 'duration-500');
-                    setTimeout(() => el.classList.remove('bg-[#00a884]/25'), 2200);
-                } else if (attempts < 8) {
+                    el.classList.add('bg-amber-300/40', 'dark:bg-amber-500/40', 'ring-2', 'ring-amber-500', 'rounded-xl', 'transition-all', 'duration-500');
+                    setTimeout(() => {
+                        el.classList.remove('bg-amber-300/40', 'dark:bg-amber-500/40', 'ring-2', 'ring-amber-500');
+                    }, 2500);
+                } else if (attempts < 10) {
                     attempts++;
-                    setTimeout(tryScroll, 200);
+                    setTimeout(tryScroll, 150);
                 }
             };
             setTimeout(tryScroll, 120);
         };
         window.addEventListener('zapflow:scroll-to-message', handleScrollToMessage);
         return () => window.removeEventListener('zapflow:scroll-to-message', handleScrollToMessage);
-    }, [jid]);
+    }, [jid, sessionId, messages]);
 
     const handleToggleChatMute = useCallback(() => {
         setIsChatMuted(prev => {

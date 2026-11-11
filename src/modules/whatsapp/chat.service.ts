@@ -476,6 +476,136 @@ export class ChatService {
         };
     }
 
+    static async getMessagesAround(
+        dbSessionId: string,
+        jid: string,
+        targetKeyId: string
+    ) {
+        const target = await prisma.message.findFirst({
+            where: { sessionId: dbSessionId, keyId: targetKeyId }
+        });
+
+        if (!target) {
+            return this.getMessages(dbSessionId, jid, 50);
+        }
+
+        const isGroup = jid.endsWith("@g.us");
+        let queryJids: string[] = [jid];
+
+        if (!isGroup) {
+            const normalizedJid = normalizeJid(jid);
+            const contact = await prisma.contact.findFirst({
+                where: {
+                    sessionId: dbSessionId,
+                    OR: [{ jid }, { lid: jid }, { remoteJidAlt: jid }, { jid: normalizedJid }]
+                },
+                select: { jid: true, lid: true, remoteJidAlt: true }
+            });
+
+            const queryJidsSet = new Set([jid, normalizedJid]);
+            if (contact) {
+                if (contact.jid) queryJidsSet.add(contact.jid);
+                if (contact.lid) queryJidsSet.add(contact.lid);
+                if (contact.remoteJidAlt) queryJidsSet.add(contact.remoteJidAlt);
+            }
+            queryJids = Array.from(queryJidsSet);
+        }
+
+        const [older, newer] = await Promise.all([
+            prisma.message.findMany({
+                where: {
+                    sessionId: dbSessionId,
+                    remoteJid: { in: queryJids },
+                    timestamp: { lt: target.timestamp }
+                },
+                orderBy: { timestamp: 'desc' },
+                take: 25,
+                select: {
+                    id: true,
+                    keyId: true,
+                    content: true,
+                    fromMe: true,
+                    senderJid: true,
+                    timestamp: true,
+                    type: true,
+                    status: true,
+                    pushName: true,
+                    mediaUrl: true,
+                    remoteJid: true,
+                    quoteId: true
+                }
+            }),
+            prisma.message.findMany({
+                where: {
+                    sessionId: dbSessionId,
+                    remoteJid: { in: queryJids },
+                    timestamp: { gt: target.timestamp }
+                },
+                orderBy: { timestamp: 'asc' },
+                take: 25,
+                select: {
+                    id: true,
+                    keyId: true,
+                    content: true,
+                    fromMe: true,
+                    senderJid: true,
+                    timestamp: true,
+                    type: true,
+                    status: true,
+                    pushName: true,
+                    mediaUrl: true,
+                    remoteJid: true,
+                    quoteId: true
+                }
+            })
+        ]);
+
+        const targetMsg = {
+            id: target.id,
+            keyId: target.keyId,
+            content: target.content,
+            fromMe: target.fromMe,
+            senderJid: target.senderJid,
+            timestamp: target.timestamp,
+            type: target.type,
+            status: target.status,
+            pushName: target.pushName,
+            mediaUrl: target.mediaUrl,
+            remoteJid: target.remoteJid,
+            quoteId: target.quoteId
+        };
+
+        const allMessages = [...older.reverse(), targetMsg, ...newer];
+
+        // Fetch quoted messages
+        const quoteIds = allMessages.map(m => m.quoteId).filter((id): id is string => !!id);
+        const quotedMessagesMap = new Map<string, any>();
+        if (quoteIds.length > 0) {
+            try {
+                const quotedMsgs = await prisma.message.findMany({
+                    where: { sessionId: dbSessionId, keyId: { in: quoteIds } },
+                    select: { keyId: true, content: true, fromMe: true, senderJid: true, pushName: true, type: true, mediaUrl: true }
+                });
+                quotedMsgs.forEach(q => quotedMessagesMap.set(q.keyId, q));
+            } catch (e) {
+                console.error("Error batch fetching quoted messages in getMessagesAround:", e);
+            }
+        }
+
+        const messagesWithQuote = allMessages.map(msg => ({
+            ...msg,
+            quoted: msg.quoteId ? quotedMessagesMap.get(msg.quoteId) || null : null
+        }));
+
+        return {
+            messages: messagesWithQuote,
+            hasMore: true,
+            contactMap: {},
+            participantNames: [],
+            participantsList: []
+        };
+    }
+
     static async sendTextMessage(sessionId: string, jid: string, messagePayload: any, mentions?: string[], quotedMessageId?: string) {
         let instance = waManager.getInstance(sessionId);
 
