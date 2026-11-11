@@ -2509,6 +2509,7 @@ function ChatInputBar({
         setQuickReplyQuery(null);
         if (inputRef.current) {
             inputRef.current.style.height = "auto";
+            inputRef.current.focus();
         }
 
         // 2. Clear draft non-blockingly
@@ -2729,32 +2730,48 @@ function ChatInputBar({
                 );
             })()}
 
-            {/* Reply preview bar */}
-            {replyingTo && (
-                <div className="mb-2 p-2 rounded-xl bg-white/80 dark:bg-[#111b21]/80 backdrop-blur-sm border-l-4 border-[#00a884] flex items-center justify-between text-xs animate-in slide-in-from-bottom-2 duration-150">
-                    <div className="flex-1 truncate pr-2">
-                        <span className="font-semibold text-[#00a884] block truncate">
-                            Respondendo a {replyingTo.fromMe ? "Você" : (replyingTo.pushName || jid.split('@')[0])}
-                        </span>
-                        <span className="text-xs text-muted-foreground truncate block">
-                            {replyingTo.type === 'IMAGE' && <Camera className="h-3 w-3 inline mr-1 opacity-70" />}
-                            {replyingTo.type === 'VIDEO' && <Video className="h-3 w-3 inline mr-1 opacity-70" />}
-                            {replyingTo.content || (replyingTo.type === 'IMAGE' ? "Foto" : (replyingTo.type === 'VIDEO' ? "Vídeo" : `[${replyingTo.type}]`))}
-                        </span>
-                    </div>
-                    {(replyingTo.type === 'IMAGE' || replyingTo.type === 'VIDEO') && replyingTo.mediaUrl && (
-                        <div className="h-9 w-9 shrink-0 rounded overflow-hidden mr-2 bg-black/10">
-                            <img src={replyingTo.mediaUrl} alt="Thumbnail" className="h-full w-full object-cover" />
+            {/* WhatsApp Web Authentic Reply Preview Bar */}
+            {replyingTo && (() => {
+                const quotedSender = (() => {
+                    if (replyingTo.fromMe) return "Você";
+                    if (replyingTo.senderJid && participants?.length) {
+                        const cleanBare = replyingTo.senderJid.split('@')[0];
+                        const p = participants.find(part => part.id === replyingTo.senderJid || (part.phoneNumber && cleanBare.includes(part.phoneNumber.replace(/\D/g, ""))));
+                        if (p?.name) return p.name;
+                    }
+                    return replyingTo.pushName || (isGroup ? replyingTo.senderJid?.split('@')[0] || "Contato" : (contactName || jid.split('@')[0]));
+                })();
+
+                return (
+                    <div className="mb-2 p-2.5 rounded-xl bg-white/95 dark:bg-[#111b21] backdrop-blur-sm border-l-[4px] border-[#00a884] flex items-start justify-between gap-3 text-xs shadow-xs animate-in slide-in-from-bottom-2 duration-150">
+                        <div className="flex-1 min-w-0 pr-1">
+                            <span className="font-semibold text-[13px] text-[#00a884] dark:text-[#25d366] block truncate mb-0.5">
+                                {quotedSender}
+                            </span>
+                            <div className="text-[12.5px] text-[#54656f] dark:text-[#8696a0] line-clamp-3 leading-relaxed whitespace-pre-wrap break-words">
+                                {replyingTo.type === 'IMAGE' && <Camera className="h-3.5 w-3.5 inline mr-1 opacity-70 text-[#00a884]" />}
+                                {replyingTo.type === 'VIDEO' && <Video className="h-3.5 w-3.5 inline mr-1 opacity-70 text-[#00a884]" />}
+                                {replyingTo.type === 'AUDIO' && <Mic className="h-3.5 w-3.5 inline mr-1 opacity-70 text-[#00a884]" />}
+                                {replyingTo.type === 'DOCUMENT' && <FileText className="h-3.5 w-3.5 inline mr-1 opacity-70 text-[#00a884]" />}
+                                {replyingTo.content || (replyingTo.type === 'IMAGE' ? "Foto" : replyingTo.type === 'VIDEO' ? "Vídeo" : replyingTo.type === 'AUDIO' ? "Mensagem de voz" : `[${replyingTo.type}]`)}
+                            </div>
                         </div>
-                    )}
-                    <button
-                        onClick={onCancelReply}
-                        className="p-1 text-muted-foreground hover:text-foreground rounded-full cursor-pointer"
-                    >
-                        <X className="h-4 w-4" />
-                    </button>
-                </div>
-            )}
+                        {(replyingTo.type === 'IMAGE' || replyingTo.type === 'VIDEO') && replyingTo.mediaUrl && (
+                            <div className="h-11 w-11 shrink-0 rounded-md overflow-hidden bg-black/10 border border-black/5 dark:border-white/10">
+                                <img src={replyingTo.mediaUrl} alt="Thumbnail" className="h-full w-full object-cover" />
+                            </div>
+                        )}
+                        <button
+                            type="button"
+                            onClick={onCancelReply}
+                            className="p-1 text-muted-foreground hover:text-foreground rounded-full hover:bg-black/5 dark:hover:bg-white/10 transition-colors cursor-pointer shrink-0"
+                            title="Cancelar resposta (Esc)"
+                        >
+                            <X className="h-4 w-4" />
+                        </button>
+                    </div>
+                );
+            })()}
 
             {isRecording ? (
                 /* WhatsApp Web Recording & Audio Preview Bar (#C20) */
@@ -4179,12 +4196,13 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
         }
     }, [hasMore, loadingMore, oldestTimestamp, fetchMessages]);
 
-    // 0ms Optimistic Send: message appears instantly on screen with WhatsApp Clock icon
+    // 0ms Optimistic Send: message appears instantly on screen with WhatsApp Clock icon and Quoted box
     const handleSend = (text: string, mentions?: string[]) => {
         const replyKeyId = replyingTo?.keyId;
+        const currentReplyingTo = replyingTo;
         setReplyingTo(null);
 
-        // 1. Optimistic message creation
+        // 1. Optimistic message creation with authentic WhatsApp quote
         const tempKeyId = `temp-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
         const nowIso = new Date().toISOString();
 
@@ -4200,11 +4218,22 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
             status: "PENDING", // Renders WhatsApp Clock icon immediately
             timestamp: nowIso,
             quoteId: replyKeyId || null,
+            quoted: currentReplyingTo ? {
+                keyId: currentReplyingTo.keyId,
+                content: currentReplyingTo.content || (currentReplyingTo.type === 'IMAGE' ? 'Foto' : currentReplyingTo.type === 'VIDEO' ? 'Vídeo' : `[${currentReplyingTo.type}]`),
+                fromMe: currentReplyingTo.fromMe,
+                senderJid: currentReplyingTo.senderJid || null,
+                pushName: currentReplyingTo.pushName || null,
+                type: currentReplyingTo.type,
+                mediaUrl: currentReplyingTo.mediaUrl || null
+            } : null
         };
 
         // 2. Immediately render on screen & snap scroll (0ms instant WhatsApp-like snap)
         setMessages(prev => [...prev, optimisticMsg]);
-        scrollToBottom(false);
+        requestAnimationFrame(() => scrollToBottom(false));
+        setTimeout(() => scrollToBottom(false), 30);
+        setTimeout(() => scrollToBottom(false), 100);
 
         // 3. Update memory cache immediately
         const cacheKey = `${sessionId}:${jid}`;
@@ -6769,18 +6798,32 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
                                                         ? "border-[#00a884] bg-black/5 dark:bg-black/20 text-[#111b21] dark:text-[#e9edef]"
                                                         : "border-[#00a884] bg-black/5 dark:bg-white/5 text-[#111b21] dark:text-[#e9edef]"
                                                 )}
-                                                onClick={(e) => {
+                                                onClick={async (e) => {
                                                     e.stopPropagation();
-                                                    const target = document.getElementById(`msg-${msg.quoted?.keyId}`);
-                                                    if (target) {
-                                                        target.scrollIntoView({ behavior: "smooth", block: "center" });
-                                                        target.classList.add("bg-[#00a884]/20", "transition-colors", "duration-500");
-                                                        setTimeout(() => {
-                                                            target.classList.remove("bg-[#00a884]/20");
-                                                        }, 1500);
-                                                    } else {
-                                                        toast.info("A mensagem original não está carregada na conversa");
+                                                    if (!msg.quoted?.keyId) return;
+                                                    const qKeyId = msg.quoted.keyId;
+                                                    let target = document.getElementById(`msg-${qKeyId}`);
+                                                    if (!target) {
+                                                        try {
+                                                            const ctx = await getChatMessagesAround(sessionId, jid, qKeyId);
+                                                            if (ctx?.messages && ctx.messages.length > 0) {
+                                                                setMessages(ctx.messages);
+                                                                if (ctx.contactMap) setContactMap(prev => ({ ...prev, ...ctx.contactMap }));
+                                                            }
+                                                        } catch {}
                                                     }
+                                                    setTimeout(() => {
+                                                        const el = document.getElementById(`msg-${qKeyId}`);
+                                                        if (el) {
+                                                            el.scrollIntoView({ behavior: "smooth", block: "center" });
+                                                            el.classList.add("bg-amber-300/40", "dark:bg-amber-500/40", "ring-2", "ring-amber-500", "rounded-xl", "transition-all", "duration-500");
+                                                            setTimeout(() => {
+                                                                el.classList.remove("bg-amber-300/40", "dark:bg-amber-500/40", "ring-2", "ring-amber-500");
+                                                            }, 2500);
+                                                        } else {
+                                                            toast.info("Mensagem original não localizada");
+                                                        }
+                                                    }, 100);
                                                 }}
                                             >
                                                 <div className="flex-1 min-w-0">
