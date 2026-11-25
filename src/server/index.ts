@@ -125,6 +125,10 @@ app.prepare().then(() => {
     logger.info("Server", `Recebido sinal ${signal}. Encerrando com segurança...`);
 
     try {
+      try {
+        const { flushAllAuthStates } = await import("../modules/whatsapp/auth/usePrismaAuthState");
+        await flushAllAuthStates();
+      } catch {}
       await waManager.shutdownAll();
       server.close(() => {
         logger.success("Server", "Servidor HTTP e WebSocket encerrados.");

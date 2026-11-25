@@ -12,7 +12,13 @@ import { getMonotonicChatTimestamp, getSyncedNowUnixSec } from "@/lib/wa-clock";
 
 // High-speed memory caches to eliminate repeated database roundtrips on sending
 const sessionDbIdCache = new Map<string, string>();
+const sessionNameCache = new Map<string, string>();
 const recentQuotedCache = new Map<string, any>();
+const contactJidsCache = new Map<string, { jids: string[]; expires: number }>();
+const groupParticipantsCache = new Map<string, { participants: any[]; expires: number }>();
+const groupSendersCache = new Map<string, { senders: Array<{ senderJid: string | null; pushName: string | null }>; expires: number }>();
+const directoryContactsCache = new Map<string, { contacts: any[]; expires: number }>();
+const groupsCache = new Map<string, { groups: any[]; expires: number }>();
 
 export class ChatService {
     /**
@@ -153,26 +159,36 @@ export class ChatService {
                   })
                 : Promise.resolve([]),
             !before
-                ? prisma.group.findMany({
-                      where: { sessionId: dbSessionId },
-                      select: { jid: true, subject: true, updatedAt: true },
-                      orderBy: { subject: "asc" }
-                  })
+                ? (groupsCache.has(dbSessionId) && groupsCache.get(dbSessionId)!.expires > Date.now()
+                    ? Promise.resolve(groupsCache.get(dbSessionId)!.groups)
+                    : prisma.group.findMany({
+                          where: { sessionId: dbSessionId },
+                          select: { jid: true, subject: true, updatedAt: true },
+                          orderBy: { subject: "asc" }
+                      }).then(grps => {
+                          groupsCache.set(dbSessionId, { groups: grps, expires: Date.now() + 180_000 });
+                          return grps;
+                      }).catch(() => []))
                 : prisma.group.findMany({
                       where: { sessionId: dbSessionId, jid: { in: jids } },
                       select: { jid: true, subject: true, updatedAt: true }
-                  }),
+                  }).catch(() => []),
             !before
-                ? prisma.contact.findMany({
-                      where: {
-                          sessionId: dbSessionId,
-                          jid: { endsWith: "@s.whatsapp.net" },
-                          OR: [{ name: { not: null } }, { notify: { not: null } }]
-                      },
-                      select: { jid: true, lid: true, name: true, notify: true, profilePic: true },
-                      orderBy: { name: "asc" },
-                      take: 5000
-                  })
+                ? (directoryContactsCache.has(dbSessionId) && directoryContactsCache.get(dbSessionId)!.expires > Date.now()
+                    ? Promise.resolve(directoryContactsCache.get(dbSessionId)!.contacts)
+                    : prisma.contact.findMany({
+                          where: {
+                              sessionId: dbSessionId,
+                              jid: { endsWith: "@s.whatsapp.net" },
+                              OR: [{ name: { not: null } }, { notify: { not: null } }]
+                          },
+                          select: { jid: true, lid: true, name: true, notify: true, profilePic: true },
+                          orderBy: { name: "asc" },
+                          take: 500
+                      }).then(contacts => {
+                          directoryContactsCache.set(dbSessionId, { contacts, expires: Date.now() + 180_000 });
+                          return contacts;
+                      }).catch(() => []))
                 : Promise.resolve([])
         ]);
 
@@ -350,24 +366,31 @@ export class ChatService {
         const isGroup = jid.endsWith("@g.us");
         let queryJids: string[] = [jid];
 
-        // Groups only ever have their exact JID - skip Contact lookup completely for groups
+        // 1. Resolve contact alternate JIDs (cached for 5 minutes)
         if (!isGroup) {
-            const normalizedJid = normalizeJid(jid);
-            const contact = await prisma.contact.findFirst({
-                where: {
-                    sessionId: dbSessionId,
-                    OR: [{ jid }, { lid: jid }, { remoteJidAlt: jid }, { jid: normalizedJid }]
-                },
-                select: { jid: true, lid: true, remoteJidAlt: true }
-            });
+            const cacheKey = `${dbSessionId}:${jid}`;
+            const cachedJids = contactJidsCache.get(cacheKey);
+            if (cachedJids && cachedJids.expires > Date.now()) {
+                queryJids = cachedJids.jids;
+            } else {
+                const normalizedJid = normalizeJid(jid);
+                const contact = await prisma.contact.findFirst({
+                    where: {
+                        sessionId: dbSessionId,
+                        OR: [{ jid }, { lid: jid }, { remoteJidAlt: jid }, { jid: normalizedJid }]
+                    },
+                    select: { jid: true, lid: true, remoteJidAlt: true }
+                });
 
-            const queryJidsSet = new Set([jid, normalizedJid]);
-            if (contact) {
-                if (contact.jid) queryJidsSet.add(contact.jid);
-                if (contact.lid) queryJidsSet.add(contact.lid);
-                if (contact.remoteJidAlt) queryJidsSet.add(contact.remoteJidAlt);
+                const queryJidsSet = new Set([jid, normalizedJid]);
+                if (contact) {
+                    if (contact.jid) queryJidsSet.add(contact.jid);
+                    if (contact.lid) queryJidsSet.add(contact.lid);
+                    if (contact.remoteJidAlt) queryJidsSet.add(contact.remoteJidAlt);
+                }
+                queryJids = Array.from(queryJidsSet);
+                contactJidsCache.set(cacheKey, { jids: queryJids, expires: Date.now() + 300_000 });
             }
-            queryJids = Array.from(queryJidsSet);
         }
 
         const where: any = {
@@ -380,25 +403,60 @@ export class ChatService {
             where.timestamp = { lt: new Date(before) };
         }
 
-        const messages = await prisma.message.findMany({
-            where,
-            orderBy: { timestamp: 'desc' },
-            take: limit + 1, // fetch 1 extra to know if there's more
-            select: {
-                id: true,
-                keyId: true,
-                content: true,
-                fromMe: true,
-                senderJid: true,
-                timestamp: true,
-                type: true,
-                status: true,
-                pushName: true,
-                mediaUrl: true,
-                remoteJid: true,
-                quoteId: true
+        // 2. Fetch messages, group participants & session owner concurrently in 1 roundtrip
+        const sessionOwnerName = sessionNameCache.get(dbSessionId);
+        const sessionNamePromise: Promise<string | null> = sessionOwnerName
+            ? Promise.resolve(sessionOwnerName)
+            : prisma.session.findUnique({
+                  where: { id: dbSessionId },
+                  select: { name: true }
+              }).then(s => {
+                  const n = s?.name?.trim() || null;
+                  if (n) sessionNameCache.set(dbSessionId, n);
+                  return n;
+              }).catch(() => null);
+
+        let groupParticipantsPromise: Promise<Array<{ id: string; phoneNumber?: string }>> = Promise.resolve([]);
+        if (isGroup) {
+            const groupKey = `${dbSessionId}:${jid}`;
+            const cachedGroup = groupParticipantsCache.get(groupKey);
+            if (cachedGroup && cachedGroup.expires > Date.now()) {
+                groupParticipantsPromise = Promise.resolve(cachedGroup.participants);
+            } else {
+                groupParticipantsPromise = prisma.group.findFirst({
+                    where: { sessionId: dbSessionId, jid },
+                    select: { participants: true }
+                }).then(group => {
+                    const parts = (group?.participants as Array<{ id: string; phoneNumber?: string }>) || [];
+                    groupParticipantsCache.set(groupKey, { participants: parts, expires: Date.now() + 180_000 });
+                    return parts;
+                }).catch(() => []);
             }
-        });
+        }
+
+        const [messages, groupParticipants, sessionNameResolved] = await Promise.all([
+            prisma.message.findMany({
+                where,
+                orderBy: { timestamp: 'desc' },
+                take: limit + 1, // fetch 1 extra to know if there's more
+                select: {
+                    id: true,
+                    keyId: true,
+                    content: true,
+                    fromMe: true,
+                    senderJid: true,
+                    timestamp: true,
+                    type: true,
+                    status: true,
+                    pushName: true,
+                    mediaUrl: true,
+                    remoteJid: true,
+                    quoteId: true
+                }
+            }),
+            groupParticipantsPromise,
+            sessionNamePromise
+        ]);
 
         const hasMore = messages.length > limit;
         if (hasMore) messages.pop();
@@ -463,31 +521,14 @@ export class ChatService {
         }
 
         // Include current session owner in contactMap
-        try {
-            const currentSession = await prisma.session.findUnique({
-                where: { id: dbSessionId },
-                select: { name: true }
-            });
-            if (currentSession?.name) {
-                const sName = currentSession.name.trim();
-                contactMap["self"] = sName;
-            }
-        } catch {}
+        if (sessionNameResolved) {
+            contactMap["self"] = sessionNameResolved;
+        }
 
-        let groupParticipants: Array<{ id: string; phoneNumber?: string }> = [];
-        if (isGroup) {
-            try {
-                const group = await prisma.group.findFirst({
-                    where: { sessionId: dbSessionId, jid },
-                    select: { participants: true }
-                });
-                groupParticipants = (group?.participants as Array<{ id: string; phoneNumber?: string }>) || [];
-                for (const p of groupParticipants) {
-                    if (p.id) candidateIds.add(p.id);
-                    if (p.phoneNumber) candidateIds.add(p.phoneNumber);
-                }
-            } catch (e) {
-                console.error("Error fetching group participants:", e);
+        if (isGroup && groupParticipants.length > 0) {
+            for (const p of groupParticipants) {
+                if (p.id) candidateIds.add(p.id);
+                if (p.phoneNumber) candidateIds.add(p.phoneNumber);
             }
         }
 
@@ -579,25 +620,39 @@ export class ChatService {
 
         // Load distinct pushNames from previous messages in this group to resolve historical senders
         if (isGroup) {
-            try {
-                const groupSenders = await prisma.message.findMany({
-                    where: {
-                        sessionId: dbSessionId,
-                        remoteJid: jid,
-                        pushName: { not: null }
-                    },
-                    select: { senderJid: true, pushName: true },
-                    distinct: ['senderJid']
-                });
-                for (const s of groupSenders) {
+            const groupSenderKey = `${dbSessionId}:${jid}`;
+            const cachedSenders = groupSendersCache.get(groupSenderKey);
+            if (cachedSenders && cachedSenders.expires > Date.now()) {
+                for (const s of cachedSenders.senders) {
                     if (s.senderJid && s.pushName) {
                         const bare = s.senderJid.split('@')[0];
                         if (!contactMap[s.senderJid]) contactMap[s.senderJid] = s.pushName;
                         if (!contactMap[bare]) contactMap[bare] = s.pushName;
                     }
                 }
-            } catch (e) {
-                console.error("Error loading distinct group sender pushNames:", e);
+            } else {
+                try {
+                    const groupSenders = await prisma.message.findMany({
+                        where: {
+                            sessionId: dbSessionId,
+                            remoteJid: jid,
+                            pushName: { not: null }
+                        },
+                        select: { senderJid: true, pushName: true },
+                        distinct: ['senderJid'],
+                        take: 100
+                    });
+                    groupSendersCache.set(groupSenderKey, { senders: groupSenders, expires: Date.now() + 300_000 });
+                    for (const s of groupSenders) {
+                        if (s.senderJid && s.pushName) {
+                            const bare = s.senderJid.split('@')[0];
+                            if (!contactMap[s.senderJid]) contactMap[s.senderJid] = s.pushName;
+                            if (!contactMap[bare]) contactMap[bare] = s.pushName;
+                        }
+                    }
+                } catch (e) {
+                    console.error("Error loading distinct group sender pushNames:", e);
+                }
             }
         }
 
@@ -671,22 +726,29 @@ export class ChatService {
         let queryJids: string[] = [jid];
 
         if (!isGroup) {
-            const normalizedJid = normalizeJid(jid);
-            const contact = await prisma.contact.findFirst({
-                where: {
-                    sessionId: dbSessionId,
-                    OR: [{ jid }, { lid: jid }, { remoteJidAlt: jid }, { jid: normalizedJid }]
-                },
-                select: { jid: true, lid: true, remoteJidAlt: true }
-            });
+            const cacheKey = `${dbSessionId}:${jid}`;
+            const cachedJids = contactJidsCache.get(cacheKey);
+            if (cachedJids && cachedJids.expires > Date.now()) {
+                queryJids = cachedJids.jids;
+            } else {
+                const normalizedJid = normalizeJid(jid);
+                const contact = await prisma.contact.findFirst({
+                    where: {
+                        sessionId: dbSessionId,
+                        OR: [{ jid }, { lid: jid }, { remoteJidAlt: jid }, { jid: normalizedJid }]
+                    },
+                    select: { jid: true, lid: true, remoteJidAlt: true }
+                });
 
-            const queryJidsSet = new Set([jid, normalizedJid]);
-            if (contact) {
-                if (contact.jid) queryJidsSet.add(contact.jid);
-                if (contact.lid) queryJidsSet.add(contact.lid);
-                if (contact.remoteJidAlt) queryJidsSet.add(contact.remoteJidAlt);
+                const queryJidsSet = new Set([jid, normalizedJid]);
+                if (contact) {
+                    if (contact.jid) queryJidsSet.add(contact.jid);
+                    if (contact.lid) queryJidsSet.add(contact.lid);
+                    if (contact.remoteJidAlt) queryJidsSet.add(contact.remoteJidAlt);
+                }
+                queryJids = Array.from(queryJidsSet);
+                contactJidsCache.set(cacheKey, { jids: queryJids, expires: Date.now() + 300_000 });
             }
-            queryJids = Array.from(queryJidsSet);
         }
 
         const [older, newer] = await Promise.all([

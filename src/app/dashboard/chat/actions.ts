@@ -14,6 +14,26 @@ import { callFreeLLMWithFallback, type CustomFreeLLMKeys } from "@/lib/free-llm"
 
 const CHAT_PAGE_SIZE = parseInt(process.env.NEXT_PUBLIC_CHAT_PAGE_SIZE || "300", 10);
 
+const sessionCuidCache = new Map<string, string>();
+
+async function getCachedDbSessionId(sessionId: string): Promise<string | null> {
+    const cached = sessionCuidCache.get(sessionId);
+    if (cached) return cached;
+
+    const session = await prisma.session.findFirst({
+        where: { OR: [{ sessionId }, { id: sessionId }] },
+        select: { id: true, sessionId: true }
+    });
+
+    if (session?.id) {
+        sessionCuidCache.set(sessionId, session.id);
+        sessionCuidCache.set(session.id, session.id);
+        if (session.sessionId) sessionCuidCache.set(session.sessionId, session.id);
+        return session.id;
+    }
+    return null;
+}
+
 // Fetch chat list with cursor-based pagination & search
 export async function getChatsStatus(
     sessionId: string,
@@ -28,14 +48,10 @@ export async function getChatsStatus(
         const canAccess = await canAccessSession(user.id, user.role, sessionId);
         if (!canAccess) return [];
 
-        const session = await prisma.session.findFirst({
-            where: { OR: [{ sessionId }, { id: sessionId }] },
-            select: { id: true }
-        });
+        const dbSessionId = await getCachedDbSessionId(sessionId);
+        if (!dbSessionId) return [];
 
-        if (!session) return [];
-
-        return await ChatService.getChatsList(session.id, limit, before, search);
+        return await ChatService.getChatsList(dbSessionId, limit, before, search);
     } catch (err) {
         console.error("[actions.getChatsStatus] error:", err);
         return [];
@@ -51,11 +67,8 @@ export async function searchWhatsAppContacts(sessionId: string, query: string) {
         const canAccess = await canAccessSession(user.id, user.role, sessionId);
         if (!canAccess) return [];
 
-        const session = await prisma.session.findFirst({
-            where: { OR: [{ sessionId }, { id: sessionId }] },
-            select: { id: true }
-        });
-        if (!session) return [];
+        const dbSessionId = await getCachedDbSessionId(sessionId);
+        if (!dbSessionId) return [];
 
     const q = query.trim();
     if (!q || q.length < 2) return [];
@@ -68,7 +81,7 @@ export async function searchWhatsAppContacts(sessionId: string, query: string) {
             prisma.$queryRaw`
                 SELECT jid, name, notify, "profilePic", "remoteJidAlt", lid
                 FROM "Contact"
-                WHERE "sessionId" = ${session.id}
+                WHERE "sessionId" = ${dbSessionId}
                   AND (
                     unaccent(coalesce(name, '')) ILIKE '%' || unaccent(${q}) || '%'
                     OR unaccent(coalesce(notify, '')) ILIKE '%' || unaccent(${q}) || '%'
@@ -84,7 +97,7 @@ export async function searchWhatsAppContacts(sessionId: string, query: string) {
             prisma.$queryRaw`
                 SELECT jid, subject as name, subject as notify, null as "profilePic"
                 FROM "Group"
-                WHERE "sessionId" = ${session.id}
+                WHERE "sessionId" = ${dbSessionId}
                   AND unaccent(coalesce(subject, '')) ILIKE '%' || unaccent(${q}) || '%'
                 LIMIT 15
             `
@@ -135,7 +148,7 @@ export async function searchWhatsAppContacts(sessionId: string, query: string) {
     } catch {
         const contacts = await prisma.contact.findMany({
             where: {
-                sessionId: session.id,
+                sessionId: dbSessionId,
                 OR: [
                     { name: { contains: q, mode: "insensitive" } },
                     { notify: { contains: q, mode: "insensitive" } },
@@ -200,11 +213,8 @@ export async function searchGlobalMessages(sessionId: string, query: string) {
         const canAccess = await canAccessSession(user.id, user.role, sessionId);
         if (!canAccess) return [];
 
-        const session = await prisma.session.findFirst({
-            where: { OR: [{ sessionId }, { id: sessionId }] },
-            select: { id: true }
-        });
-        if (!session) return [];
+        const dbSessionId = await getCachedDbSessionId(sessionId);
+        if (!dbSessionId) return [];
 
         const q = query.trim();
         if (!q || q.length < 2) return [];
@@ -217,7 +227,7 @@ export async function searchGlobalMessages(sessionId: string, query: string) {
                 FROM "Message" m
                 LEFT JOIN "Contact" c ON c."sessionId" = m."sessionId" AND (c.jid = m."remoteJid" OR c.lid = m."remoteJid")
                 LEFT JOIN "Group" g ON g."sessionId" = m."sessionId" AND g.jid = m."remoteJid"
-                WHERE m."sessionId" = ${session.id}
+                WHERE m."sessionId" = ${dbSessionId}
                   AND unaccent(coalesce(m.content, '')) ILIKE '%' || unaccent(${q}) || '%'
                 ORDER BY m.timestamp DESC
                 LIMIT 40
@@ -243,7 +253,7 @@ export async function searchGlobalMessages(sessionId: string, query: string) {
         } catch {
             const messages = await prisma.message.findMany({
                 where: {
-                    sessionId: session.id,
+                    sessionId: dbSessionId,
                     content: { contains: q, mode: "insensitive" }
                 },
                 orderBy: { timestamp: "desc" },
@@ -271,7 +281,7 @@ export async function searchGlobalMessages(sessionId: string, query: string) {
             const groupMap = new Map<string, string>();
             if (groupJids.length > 0) {
                 const groups = await prisma.group.findMany({
-                    where: { sessionId: session.id, jid: { in: groupJids } },
+                    where: { sessionId: dbSessionId, jid: { in: groupJids } },
                     select: { jid: true, subject: true }
                 });
                 for (const g of groups) {
@@ -317,14 +327,10 @@ export async function getChatMessages(
         const canAccess = await canAccessSession(user.id, user.role, sessionId);
         if (!canAccess) return { messages: [], hasMore: false, contactMap: {}, participantNames: [], participantsList: [] };
 
-        const session = await prisma.session.findFirst({
-            where: { OR: [{ sessionId }, { id: sessionId }] },
-            select: { id: true }
-        });
+        const dbSessionId = await getCachedDbSessionId(sessionId);
+        if (!dbSessionId) return { messages: [], hasMore: false, contactMap: {}, participantNames: [], participantsList: [] };
 
-        if (!session) return { messages: [], hasMore: false, contactMap: {}, participantNames: [], participantsList: [] };
-
-        const { messages, hasMore, contactMap, participantNames, participantsList } = await ChatService.getMessages(session.id, jid, limit, before);
+        const { messages, hasMore, contactMap, participantNames, participantsList } = await ChatService.getMessages(dbSessionId, jid, limit, before);
 
         return {
             messages: messages.map((msg: any) => ({
@@ -353,14 +359,10 @@ export async function getChatMessagesAround(sessionId: string, jid: string, keyI
         const canAccess = await canAccessSession(user.id, user.role, sessionId);
         if (!canAccess) return { messages: [], hasMore: false, contactMap: {}, participantNames: [], participantsList: [] };
 
-        const session = await prisma.session.findFirst({
-            where: { OR: [{ sessionId }, { id: sessionId }] },
-            select: { id: true }
-        });
+        const dbSessionId = await getCachedDbSessionId(sessionId);
+        if (!dbSessionId) return { messages: [], hasMore: false, contactMap: {}, participantNames: [], participantsList: [] };
 
-        if (!session) return { messages: [], hasMore: false, contactMap: {}, participantNames: [], participantsList: [] };
-
-        const { messages, hasMore, contactMap, participantNames, participantsList } = await ChatService.getMessagesAround(session.id, jid, keyId);
+        const { messages, hasMore, contactMap, participantNames, participantsList } = await ChatService.getMessagesAround(dbSessionId, jid, keyId);
 
         return {
             messages: messages.map((msg: any) => ({
@@ -727,11 +729,8 @@ export async function scheduleDirectChatMessage(
         const canAccess = await canAccessSession(user.id, user.role, sessionId);
         if (!canAccess) return { success: false, error: "Acesso negado a esta sessão." };
 
-        const session = await prisma.session.findFirst({
-            where: { OR: [{ sessionId }, { id: sessionId }] },
-            select: { id: true }
-        });
-        if (!session) return { success: false, error: "Sessão não encontrada" };
+        const dbSessionId = await getCachedDbSessionId(sessionId);
+        if (!dbSessionId) return { success: false, error: "Sessão não encontrada" };
 
         const sendAtDate = new Date(sendAtIso);
         if (isNaN(sendAtDate.getTime()) || sendAtDate.getTime() <= Date.now()) {
@@ -740,7 +739,7 @@ export async function scheduleDirectChatMessage(
 
         const scheduled = await prisma.scheduledMessage.create({
             data: {
-                sessionId: session.id,
+                sessionId: dbSessionId,
                 jid,
                 content: content.trim(),
                 sendAt: sendAtDate,
