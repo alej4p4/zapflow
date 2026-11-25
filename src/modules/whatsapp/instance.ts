@@ -57,71 +57,91 @@ export class WhatsAppInstance {
             this.socket = null;
         }
 
-        const sessionData = await prisma.session.findUnique({
-            where: { sessionId: this.sessionId },
-            include: { botConfig: true }
-        });
-        if (!sessionData) {
-            logger.warn("Instance", `Session ${this.sessionId} not found in DB, aborting init`);
-            return;
-        }
-        this.config = sessionData?.config || {};
-        const botConfig = (sessionData as any)?.botConfig;
-
-        const { state, saveCreds } = await usePrismaAuthState(this.sessionId);
-        const { version } = await fetchLatestBaileysVersion();
-
-        this.socket = makeWASocket({
-            version,
-            logger: pino({ level: process.env.BAILEYS_LOG_LEVEL || "error" }) as any,
-            printQRInTerminal: false,
-            auth: {
-                creds: state.creds,
-                keys: makeCacheableSignalKeyStore(state.keys, pino({ level: process.env.BAILEYS_LOG_LEVEL || "error" }) as any),
-            },
-            browser: ["Ubuntu", "Chrome", "20.0.04"],
-            markOnlineOnConnect: botConfig?.alwaysOnline ?? true,
-            syncFullHistory: true, // Enables full history sync (chats, contacts, messages) like WhatsApp Web
-            shouldSyncHistoryMessage: () => true,
-            connectTimeoutMs: 60000,
-            defaultQueryTimeoutMs: 60000,
-            keepAliveIntervalMs: 30000,
-            retryRequestDelayMs: 500,
-            maxMsgRetryCount: 3,
-        });
-
-        // Um init() mais novo já assumiu enquanto aguardávamos o disco/rede.
-        if (gen !== this.generation) {
-            const stale = this.socket;
-            this.socket = null;
-            try { stale?.end(undefined); } catch { /* já fechado */ }
-            return;
-        }
-
-        // Apply Anti-Spam Wrapper to sendMessage
-        const originalSendMessage = this.socket.sendMessage.bind(this.socket);
-        const sessionId = this.sessionId;
-        this.socket.sendMessage = async function (jid: string, content: any, options?: any) {
-            // Disparos em massa gerenciam seu próprio delay e fluxo, ignorando a fila do antispam para não travar
-            if (!options?.skipAntiSpam) {
-                await antispam.enqueue(sessionId, jid, content);
+        try {
+            const sessionData = await prisma.session.findUnique({
+                where: { sessionId: this.sessionId },
+                include: { botConfig: true }
+            });
+            if (!sessionData) {
+                logger.warn("Instance", `Session ${this.sessionId} not found in DB, aborting init`);
+                return;
             }
-            const { skipAntiSpam, ...baileysOptions } = options || {};
-            return originalSendMessage(jid, content, baileysOptions);
-        } as any;
+            this.config = sessionData?.config || {};
+            const botConfig = (sessionData as any)?.botConfig;
 
-        // Bind Store for DB Sync
-        bindSessionStore(this.socket, this.sessionId, this.io);
+            const { state, saveCreds } = await usePrismaAuthState(this.sessionId);
+            let version: [number, number, number] = [2, 3000, 1043857760];
+            try {
+                const latest = await fetchLatestBaileysVersion();
+                if (latest?.version) version = latest.version;
+            } catch {
+                // Fallback version if remote version check fails
+            }
 
-        // Bind Contact Sync
-        bindContactSync(this.socket, this.sessionId);
+            this.socket = makeWASocket({
+                version,
+                logger: pino({ level: process.env.BAILEYS_LOG_LEVEL || "error" }) as any,
+                printQRInTerminal: false,
+                auth: {
+                    creds: state.creds,
+                    keys: makeCacheableSignalKeyStore(state.keys, pino({ level: process.env.BAILEYS_LOG_LEVEL || "error" }) as any),
+                },
+                browser: ["Ubuntu", "Chrome", "20.0.04"],
+                markOnlineOnConnect: botConfig?.alwaysOnline ?? true,
+                syncFullHistory: true, // Enables full history sync (chats, contacts, messages) like WhatsApp Web
+                shouldSyncHistoryMessage: () => true,
+                connectTimeoutMs: 60000,
+                defaultQueryTimeoutMs: 60000,
+                keepAliveIntervalMs: 30000,
+                retryRequestDelayMs: 500,
+                maxMsgRetryCount: 3,
+            });
 
-        this.socket.ev.on("creds.update", saveCreds);
+            // Um init() mais novo já assumiu enquanto aguardávamos o disco/rede.
+            if (gen !== this.generation) {
+                const stale = this.socket;
+                this.socket = null;
+                try { stale?.end(undefined); } catch { /* já fechado */ }
+                return;
+            }
 
-        this.socket.ev.on("connection.update", async (update) => {
-            if (gen !== this.generation) return;
-            await this.handleConnectionUpdate(update);
-        });
+            // Apply Anti-Spam Wrapper to sendMessage
+            const originalSendMessage = this.socket.sendMessage.bind(this.socket);
+            const sessionId = this.sessionId;
+            this.socket.sendMessage = async function (jid: string, content: any, options?: any) {
+                // Disparos em massa gerenciam seu próprio delay e fluxo, ignorando a fila do antispam para não travar
+                if (!options?.skipAntiSpam) {
+                    await antispam.enqueue(sessionId, jid, content);
+                }
+                const { skipAntiSpam, ...baileysOptions } = options || {};
+                return originalSendMessage(jid, content, baileysOptions);
+            } as any;
+
+            // Bind Store for DB Sync
+            bindSessionStore(this.socket, this.sessionId, this.io);
+
+            // Bind Contact Sync
+            bindContactSync(this.socket, this.sessionId);
+
+            this.socket.ev.on("creds.update", saveCreds);
+
+            this.socket.ev.on("connection.update", async (update) => {
+                if (gen !== this.generation) return;
+                await this.handleConnectionUpdate(update);
+            });
+        } catch (err) {
+            logger.error("Instance", `Failed to initialize session ${this.sessionId}:`, err);
+            if (!this.isStopped && !this.isDeleting && gen === this.generation) {
+                this.status = "DISCONNECTED";
+                this.reconnectCount = (this.reconnectCount || 0) + 1;
+                const delay = Math.min(3000 * Math.pow(1.3, Math.min(this.reconnectCount - 1, 6)), 60000);
+                if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
+                this.reconnectTimer = setTimeout(() => {
+                    this.reconnectTimer = null;
+                    if (!this.isStopped && !this.isDeleting && gen === this.generation) this.init();
+                }, delay);
+            }
+        }
     }
 
     async handleConnectionUpdate(update: Partial<ConnectionState>) {
@@ -200,8 +220,13 @@ export class WhatsAppInstance {
                 // Unexpected disconnect: exponential backoff up to 60s maximum (never lock for 5min)
                 this.socket = null;
                 const gen = this.generation;
-                this.reconnectCount++;
-                const retryDelay = this.reconnectCount <= 1 ? 1000 : Math.min(2500 * Math.pow(1.3, Math.min(this.reconnectCount - 2, 6)), 60000);
+                const isRestartRequired = code === DisconnectReason.restartRequired || code === 515;
+                if (isRestartRequired) {
+                    this.reconnectCount = 0; // Stream restart requested by WhatsApp — not a network drop
+                } else {
+                    this.reconnectCount++;
+                }
+                const retryDelay = isRestartRequired ? 500 : (this.reconnectCount <= 1 ? 1000 : Math.min(2500 * Math.pow(1.3, Math.min(this.reconnectCount - 2, 6)), 60000));
 
                 if (this.pingInterval) { clearInterval(this.pingInterval); this.pingInterval = null; }
                 this.lastPingMs = null;

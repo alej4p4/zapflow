@@ -1,8 +1,13 @@
 import { auth } from "@/lib/auth";
 import { SessionManager } from "@/components/dashboard/session-manager";
 
+export const dynamic = "force-dynamic";
+
 export default async function SessionsPage() {
-    const session = await auth();
+    let session = null;
+    try {
+        session = await auth();
+    } catch {}
 
     return (
         <div>

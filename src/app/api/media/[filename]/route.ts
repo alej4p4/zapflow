@@ -5,6 +5,8 @@ import path from "path";
 import { getAuthenticatedUser, canAccessSession } from "@/lib/api-auth";
 import { mediaDir } from "@/lib/paths";
 import { prisma } from "@/lib/prisma";
+import { getRawMediaMessage } from "@/modules/whatsapp/store";
+import { downloadAndSaveMedia } from "@/lib/webhook";
 
 // Media directory — private, NOT in public/
 const MEDIA_DIR = mediaDir;
@@ -26,27 +28,40 @@ export async function GET(
     { params }: { params: Promise<{ filename: string }> }
 ) {
     try {
-        // Authentication check — require session, API key, valid session cookie, or dashboard referer
-        const user = await getAuthenticatedUser(request);
-        const cookieHeader = request.headers.get("cookie") || "";
-        const referer = request.headers.get("referer") || "";
-        const hasAuthCookie = cookieHeader.includes("next-auth.session-token") ||
-                              cookieHeader.includes("__Secure-next-auth.session-token") ||
-                              cookieHeader.includes("authjs.session-token") ||
-                              cookieHeader.includes("__Secure-authjs.session-token") ||
-                              cookieHeader.includes("authjs") ||
-                              cookieHeader.includes("sessionId=");
-        const isFromDashboard = referer.includes("/dashboard");
-        const isSameOrigin = request.headers.get("sec-fetch-site") === "same-origin";
-        if (!user && !hasAuthCookie && !isFromDashboard && !isSameOrigin) {
-            return NextResponse.json({ status: false, message: "Unauthorized", error: "Unauthorized" }, { status: 401 });
-        }
-
         const { filename } = await params;
 
         // Security: Prevent directory traversal
         if (filename.includes('..') || filename.includes('/') || filename.includes('\\')) {
-            return NextResponse.json({ status: false, message: "Invalid filename", error: "Invalid filename" }, { status: 400 });
+            return NextResponse.json({ status: false, message: "Invalid filename" }, { status: 400 });
+        }
+
+        // Allow Meta's servers to fetch uploaded Instagram post media if registered in InstagramScheduledPost
+        let isPublicIgMedia = false;
+        if (filename.startsWith("ig-")) {
+            const igPost = await prisma.instagramScheduledPost.findFirst({
+                where: { mediaUrl: `/api/media/${filename}` },
+                select: { id: true }
+            });
+            isPublicIgMedia = Boolean(igPost);
+        }
+
+        // Authentication check — require session, API key, valid session cookie, or dashboard referer
+        let user: Awaited<ReturnType<typeof getAuthenticatedUser>> = null;
+        if (!isPublicIgMedia) {
+            user = await getAuthenticatedUser(request);
+            const cookieHeader = request.headers.get("cookie") || "";
+            const referer = request.headers.get("referer") || "";
+            const hasAuthCookie = cookieHeader.includes("next-auth.session-token") ||
+                                  cookieHeader.includes("__Secure-next-auth.session-token") ||
+                                  cookieHeader.includes("authjs.session-token") ||
+                                  cookieHeader.includes("__Secure-authjs.session-token") ||
+                                  cookieHeader.includes("authjs") ||
+                                  cookieHeader.includes("sessionId=");
+            const isFromDashboard = referer.includes("/dashboard");
+            const isSameOrigin = request.headers.get("sec-fetch-site") === "same-origin";
+            if (!user && !hasAuthCookie && !isFromDashboard && !isSameOrigin) {
+                return NextResponse.json({ status: false, message: "Unauthorized", error: "Unauthorized" }, { status: 401 });
+            }
         }
 
         // Session ownership check — extract sessionId from filename
@@ -71,46 +86,78 @@ export async function GET(
 
         // Try exact filename first, then alternate extensions
         if (!existsSync(filePath)) {
-            const altExts = ['.ogg', '.opus', '.mp3', '.mp4', '.jpeg', '.jpg', '.png', '.webp', '.bin'];
+            const altExts = ['.pdf', '.ogg', '.opus', '.webm', '.mp3', '.m4a', '.wav', '.mp4', '.jpeg', '.jpg', '.png', '.webp', '.bin'];
             let found = false;
-            for (const ext of altExts) {
-                const altPath = path.join(MEDIA_DIR, `${cleanBase}${ext}`);
-                if (existsSync(altPath)) {
-                    filePath = altPath;
-                    found = true;
-                    break;
-                }
-            }
-
-            // Also check without sessionId- prefix
-            if (!found && cleanBase.includes('-')) {
+            const checkForExistingFile = () => {
                 for (const ext of altExts) {
-                    const altPath = path.join(MEDIA_DIR, `${rawKeyId}${ext}`);
+                    const altPath = path.join(MEDIA_DIR, `${cleanBase}${ext}`);
                     if (existsSync(altPath)) {
                         filePath = altPath;
                         found = true;
-                        break;
+                        return true;
                     }
+                }
+                if (cleanBase.includes('-')) {
+                    for (const ext of altExts) {
+                        const altPath = path.join(MEDIA_DIR, `${rawKeyId}${ext}`);
+                        if (existsSync(altPath)) {
+                            filePath = altPath;
+                            found = true;
+                            return true;
+                        }
+                    }
+                }
+                return false;
+            };
+
+            checkForExistingFile();
+
+            // If not found on disk, try on-demand download from rawMediaMessagesCache or wait briefly for active incoming downloads
+            if (!found) {
+                const cachedRaw = getRawMediaMessage(rawKeyId);
+                if (cachedRaw) {
+                    try {
+                        const dlUrl = await downloadAndSaveMedia(cachedRaw.msg, cachedRaw.sessionId);
+                        if (dlUrl) {
+                            const dlFile = path.join(MEDIA_DIR, path.basename(dlUrl));
+                            if (existsSync(dlFile)) {
+                                filePath = dlFile;
+                                found = true;
+                            }
+                            await prisma.message.updateMany({
+                                where: { keyId: rawKeyId, mediaUrl: null },
+                                data: { mediaUrl: dlUrl }
+                            }).catch(() => {});
+                        }
+                    } catch {}
                 }
             }
 
-            // If not found on disk, query database (with short grace period for active incoming downloads)
-            if (!existsSync(filePath)) {
+            if (!found && !existsSync(filePath)) {
                 let dbMsg = await prisma.message.findFirst({
                     where: { OR: [{ keyId: rawKeyId }, { id: rawKeyId }, { keyId: cleanBase }] },
                     select: { mediaUrl: true, type: true, timestamp: true }
                 });
 
-                // If message was created in the last 60 seconds and has no mediaUrl yet, wait briefly for download to complete
-                if (!dbMsg?.mediaUrl && dbMsg?.timestamp && (Date.now() - new Date(dbMsg.timestamp).getTime() < 60000)) {
-                    for (let attempt = 0; attempt < 5; attempt++) {
-                        await new Promise(r => setTimeout(r, 500));
-                        if (existsSync(filePath)) break;
+                // If message was just sent/received (or is still being persisted), wait briefly for download/write to complete
+                if (!dbMsg || (!dbMsg.mediaUrl && dbMsg.timestamp && (Date.now() - new Date(dbMsg.timestamp).getTime() < 90000))) {
+                    for (let attempt = 0; attempt < 6; attempt++) {
+                        await new Promise(r => setTimeout(r, 450));
+                        if (existsSync(filePath) || checkForExistingFile()) break;
                         dbMsg = await prisma.message.findFirst({
                             where: { OR: [{ keyId: rawKeyId }, { id: rawKeyId }, { keyId: cleanBase }] },
                             select: { mediaUrl: true, type: true, timestamp: true }
                         });
-                        if (dbMsg?.mediaUrl) break;
+                        if (dbMsg?.mediaUrl && !dbMsg.mediaUrl.startsWith('data:')) {
+                            const dbFile = path.join(MEDIA_DIR, path.basename(dbMsg.mediaUrl));
+                            if (existsSync(dbFile)) {
+                                filePath = dbFile;
+                                found = true;
+                                break;
+                            }
+                        } else if (dbMsg?.mediaUrl) {
+                            break;
+                        }
                     }
                 }
 
@@ -169,7 +216,7 @@ export async function GET(
             }
         }
 
-        // Determine content type based on extension
+        // Determine content type based on extension + magic byte inspection for audio/video
         const ext = path.extname(filePath || filename).toLowerCase();
         const contentTypeMap: Record<string, string> = {
             '.jpg': 'image/jpeg',
@@ -182,18 +229,56 @@ export async function GET(
             '.wav': 'audio/wav',
             '.ogg': 'audio/ogg; codecs=opus',
             '.opus': 'audio/ogg; codecs=opus',
+            '.webm': 'audio/webm; codecs=opus',
             '.m4a': 'audio/mp4',
             '.pdf': 'application/pdf',
             '.bin': 'application/octet-stream',
         };
 
-        const contentType = contentTypeMap[ext] || 'application/octet-stream';
         const fileBuffer = await readFile(filePath);
+        let contentType = contentTypeMap[ext] || 'application/octet-stream';
+
+        // Sniff actual container from magic bytes (PDF, WebM, Ogg, MP4, MP3, WAV, PNG, JPEG, WebP)
+        if (fileBuffer.length >= 5) {
+            // PDF magic bytes: %PDF- (0x25 0x50 0x44 0x46 0x2d)
+            if (fileBuffer[0] === 0x25 && fileBuffer[1] === 0x50 && fileBuffer[2] === 0x44 && fileBuffer[3] === 0x46 && fileBuffer[4] === 0x2d) {
+                contentType = 'application/pdf';
+            }
+            // PNG magic bytes: 0x89 0x50 0x4e 0x47
+            else if (fileBuffer.length >= 8 && fileBuffer[0] === 0x89 && fileBuffer[1] === 0x50 && fileBuffer[2] === 0x4e && fileBuffer[3] === 0x47) {
+                contentType = 'image/png';
+            }
+            // JPEG magic bytes: 0xff 0xd8 0xff
+            else if (fileBuffer[0] === 0xff && fileBuffer[1] === 0xd8 && fileBuffer[2] === 0xff) {
+                contentType = 'image/jpeg';
+            }
+            // WebP magic bytes: RIFF....WEBP
+            else if (fileBuffer.length >= 12 && fileBuffer[0] === 0x52 && fileBuffer[1] === 0x49 && fileBuffer[2] === 0x46 && fileBuffer[3] === 0x46 && fileBuffer[8] === 0x57 && fileBuffer[9] === 0x45 && fileBuffer[10] === 0x42 && fileBuffer[11] === 0x50) {
+                contentType = 'image/webp';
+            }
+            // Audio containers
+            else if (fileBuffer.length >= 12 && (contentType.startsWith('audio/') || ext === '.bin')) {
+                if (fileBuffer[0] === 0x4f && fileBuffer[1] === 0x67 && fileBuffer[2] === 0x67 && fileBuffer[3] === 0x53) {
+                    contentType = 'audio/ogg; codecs=opus';
+                } else if (fileBuffer[0] === 0x1a && fileBuffer[1] === 0x45 && fileBuffer[2] === 0xdf && fileBuffer[3] === 0xa3) {
+                    contentType = 'audio/webm; codecs=opus';
+                } else if (fileBuffer[0] === 0x52 && fileBuffer[1] === 0x49 && fileBuffer[2] === 0x46 && fileBuffer[3] === 0x46 && fileBuffer[8] === 0x57 && fileBuffer[9] === 0x41 && fileBuffer[10] === 0x56 && fileBuffer[11] === 0x45) {
+                    contentType = 'audio/wav';
+                } else if ((fileBuffer[0] === 0x49 && fileBuffer[1] === 0x44 && fileBuffer[2] === 0x33) || (fileBuffer[0] === 0xff && (fileBuffer[1] & 0xe0) === 0xe0)) {
+                    contentType = 'audio/mpeg';
+                } else if (fileBuffer[4] === 0x66 && fileBuffer[5] === 0x74 && fileBuffer[6] === 0x79 && fileBuffer[7] === 0x70) {
+                    contentType = 'audio/mp4';
+                }
+            }
+        }
         const fileSize = fileBuffer.length;
         const range = request.headers.get("range");
         const isDownload = request.nextUrl.searchParams.get("download") === "1";
         const customFilename = request.nextUrl.searchParams.get("filename");
-        const finalFilename = customFilename ? path.basename(customFilename) : filename;
+        let finalFilename = customFilename ? path.basename(customFilename) : filename;
+        if (contentType === 'application/pdf' && !finalFilename.toLowerCase().endsWith('.pdf')) {
+            finalFilename = finalFilename.replace(/\.[^.]+$/, '') + '.pdf';
+        }
         const disposition = isDownload ? `attachment; filename="${finalFilename}"` : `inline; filename="${finalFilename}"`;
 
         // 🎵 HTTP 206 Partial Content (Range Requests) for audio & video seeking/streaming

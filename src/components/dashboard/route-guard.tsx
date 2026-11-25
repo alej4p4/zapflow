@@ -7,7 +7,7 @@ import Link from "next/link";
 import { ShieldAlert, ArrowLeft, Home, MessageSquare } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { isRouteAllowed, SYSTEM_TABS } from "@/lib/permissions";
+import { findMatchingTab, isRouteAllowed } from "@/lib/permissions";
 
 export function RouteGuard({ children }: { children: React.ReactNode }) {
     const pathname = usePathname();
@@ -29,9 +29,7 @@ export function RouteGuard({ children }: { children: React.ReactNode }) {
     const allowed = isRouteAllowed(pathname, userRole, userPermissions);
 
     if (!allowed) {
-        const tabDef = SYSTEM_TABS.find(
-            t => t.path === pathname || (t.path !== "/dashboard" && pathname.startsWith(t.path))
-        );
+        const tabDef = findMatchingTab(pathname);
         const tabName = tabDef?.label || "este módulo";
 
         // Find first allowed path for the user to navigate to

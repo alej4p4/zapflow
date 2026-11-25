@@ -70,3 +70,83 @@ export function normalizeSearch(text: string | null | undefined): string {
         .toLowerCase()
         .trim();
 }
+
+/**
+ * Formata um JID ou número de telefone para o padrão visual brasileiro do WhatsApp:
+ * Exemplos:
+ * 5566996941055@s.whatsapp.net -> +55 (66) 99694-1055
+ * 556696876005@s.whatsapp.net -> +55 (66) 99687-6005 (auto-completa o nono dígito 9 do celular)
+ * 556634011234 -> +55 (66) 3401-1234 (telefone fixo)
+ * 66996941055 -> (66) 99694-1055
+ * 6696876005 -> (66) 99687-6005
+ * 266867927216313@lid -> Contato WhatsApp (identificador de privacidade do WhatsApp)
+ */
+export function formatPhoneNumber(raw: string | null | undefined): string {
+    if (!raw) return "";
+    const str = String(raw).trim();
+    if (!str) return "";
+
+    // Grupos
+    if (str.endsWith("@g.us")) {
+        return "Grupo do WhatsApp";
+    }
+
+    // Canais / Newsletters
+    if (str.endsWith("@newsletter")) {
+        return "Canal do WhatsApp";
+    }
+
+    // Se é LID explícito (@lid) ou número de 14-16 dígitos sem DDI conhecido (LID órfão)
+    const isLid = str.endsWith("@lid") || str.includes("@lid");
+    const clean = str.split('@')[0].replace(/\D/g, "");
+    if (!clean) return str;
+
+    if (isLid || (clean.length >= 14 && clean.length <= 16 && !clean.startsWith("55"))) {
+        return "Contato WhatsApp";
+    }
+
+    // Brasil com DDI 55 (12 ou 13 dígitos)
+    if (clean.startsWith("55") && clean.length >= 12 && clean.length <= 13) {
+        const ddd = clean.slice(2, 4);
+        const rest = clean.slice(4);
+
+        // Celular padrão com 9 dígitos
+        if (rest.length === 9) {
+            return `+55 (${ddd}) ${rest.slice(0, 5)}-${rest.slice(5)}`;
+        }
+
+        // 8 dígitos: celular (começa com 6, 7, 8, 9) ou fixo (2, 3, 4, 5)
+        if (rest.length === 8) {
+            const firstDigit = rest[0];
+            if (['6', '7', '8', '9'].includes(firstDigit)) {
+                // Celular com 9º dígito normalizado
+                return `+55 (${ddd}) 9${rest.slice(0, 4)}-${rest.slice(4)}`;
+            } else {
+                // Telefone fixo
+                return `+55 (${ddd}) ${rest.slice(0, 4)}-${rest.slice(4)}`;
+            }
+        }
+
+        return `+55 (${ddd}) ${rest}`;
+    }
+
+    // Brasil sem DDI (10 ou 11 dígitos)
+    if (clean.length === 11) {
+        const ddd = clean.slice(0, 2);
+        const rest = clean.slice(2);
+        return `(${ddd}) ${rest.slice(0, 5)}-${rest.slice(5)}`;
+    }
+    if (clean.length === 10) {
+        const ddd = clean.slice(0, 2);
+        const rest = clean.slice(2);
+        const firstDigit = rest[0];
+        if (['6', '7', '8', '9'].includes(firstDigit)) {
+            return `(${ddd}) 9${rest.slice(0, 4)}-${rest.slice(4)}`;
+        } else {
+            return `(${ddd}) ${rest.slice(0, 4)}-${rest.slice(4)}`;
+        }
+    }
+
+    // Outros países: prefixar com +
+    return clean.length >= 8 ? `+${clean}` : clean;
+}

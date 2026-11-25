@@ -21,21 +21,36 @@ export class WhatsAppManager {
         this.io = io;
     }
 
-    async loadSessions() {
+    async loadSessions(retries = 5, delayMs = 3000) {
         if (!this.io) throw new Error("Socket.IO not initialized in WhatsAppManager");
-        const sessions = await prisma.session.findMany({
-            where: {
-                status: { not: "LOGGED_OUT" }
-            },
-            select: { sessionId: true, userId: true, status: true }
-        });
+
+        let sessions: Array<{ sessionId: string; userId: string; status: string }> = [];
+        for (let attempt = 1; attempt <= retries; attempt++) {
+            try {
+                sessions = await prisma.session.findMany({
+                    where: {
+                        status: { not: "LOGGED_OUT" }
+                    },
+                    select: { sessionId: true, userId: true, status: true }
+                });
+                break;
+            } catch (err: any) {
+                logger.warn("Manager", `Database not ready on attempt ${attempt}/${retries} (${err?.message || err}). Retrying in ${delayMs / 1000}s...`);
+                if (attempt === retries) {
+                    logger.error("Manager", "Failed to connect to database after all retries:", err);
+                    throw err;
+                }
+                await new Promise(r => setTimeout(r, delayMs));
+            }
+        }
 
         let started = 0;
         for (const session of sessions) {
             // Only auto-init sessions that were CONNECTED before (have auth creds)
             const authCount = await prisma.authState.count({
                 where: { sessionId: session.sessionId }
-            });
+            }).catch(() => 0);
+
             if (authCount === 0) {
                 // No credentials — session was created but never connected
                 // Set to STOPPED so it doesn't spam reconnect
@@ -65,7 +80,7 @@ export class WhatsAppManager {
             throw new Error("Socket.IO not initialized");
         }
 
-        const sessionId = customSessionId || Math.random().toString(36).substring(7);
+        const sessionId = customSessionId || require("crypto").randomBytes(4).toString("hex");
 
         const session = await prisma.session.create({
             data: {

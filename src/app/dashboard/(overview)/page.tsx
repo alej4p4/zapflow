@@ -32,8 +32,8 @@ import { redirect } from "next/navigation";
 
 export const dynamic = 'force-dynamic';
 
-// In-memory cache for aggregated overview metrics (30s TTL)
-let metricsCache: {
+// In-memory cache per user for aggregated overview metrics (30s TTL)
+const metricsCache = new Map<string, {
     timestamp: number;
     data: {
         totalMessages: number;
@@ -46,7 +46,7 @@ let metricsCache: {
         hourlyStats: Array<{ hour: number; count: number }>;
         topLabels: Array<{ id: string; name: string; colorHex: string; count: number }>;
     };
-} | null = null;
+}>();
 const METRICS_TTL = 30 * 1000;
 
 export default async function DashboardPage() {
@@ -87,17 +87,32 @@ export default async function DashboardPage() {
     let hourlyStats: Array<{ hour: number; count: number }> = [];
     let topLabels: Array<{ id: string; name: string; colorHex: string; count: number }> = [];
 
+    const userId = session.user.id!;
+    const cacheKey = `${userId}:${dbSessionIds.join(",")}`;
+    const cachedEntry = metricsCache.get(cacheKey);
     const now = Date.now();
-    if (metricsCache && (now - metricsCache.timestamp) < METRICS_TTL) {
-        totalMessages = metricsCache.data.totalMessages;
-        messagesToday = metricsCache.data.messagesToday;
-        messagesSentToday = metricsCache.data.messagesSentToday;
-        messagesRecvToday = metricsCache.data.messagesRecvToday;
-        totalContacts = metricsCache.data.totalContacts;
-        totalGroups = metricsCache.data.totalGroups;
-        autoReplyCount = metricsCache.data.autoReplyCount;
-        hourlyStats = metricsCache.data.hourlyStats;
-        topLabels = metricsCache.data.topLabels;
+
+    if (dbSessionIds.length === 0) {
+        // Brand-new user or user with 0 accessible sessions: everything starts at 0
+        totalMessages = 0;
+        messagesToday = 0;
+        messagesSentToday = 0;
+        messagesRecvToday = 0;
+        totalContacts = 0;
+        totalGroups = 0;
+        autoReplyCount = 0;
+        hourlyStats = [];
+        topLabels = [];
+    } else if (cachedEntry && (now - cachedEntry.timestamp) < METRICS_TTL) {
+        totalMessages = cachedEntry.data.totalMessages;
+        messagesToday = cachedEntry.data.messagesToday;
+        messagesSentToday = cachedEntry.data.messagesSentToday;
+        messagesRecvToday = cachedEntry.data.messagesRecvToday;
+        totalContacts = cachedEntry.data.totalContacts;
+        totalGroups = cachedEntry.data.totalGroups;
+        autoReplyCount = cachedEntry.data.autoReplyCount;
+        hourlyStats = cachedEntry.data.hourlyStats;
+        topLabels = cachedEntry.data.topLabels;
     } else {
         try {
             const [
@@ -110,21 +125,22 @@ export default async function DashboardPage() {
                 hourlyRaw,
                 labelsRaw
             ] = await Promise.all([
-                prisma.message.count(),
-                prisma.message.count({ where: { timestamp: { gte: todayStart } } }),
-                prisma.message.count({ where: { timestamp: { gte: todayStart }, fromMe: true } }),
-                prisma.contact.count(),
-                prisma.group.count(),
-                sessionIds.length > 0 ? prisma.autoReply.count({ where: { sessionId: { in: sessionIds } } }) : 0,
+                prisma.message.count({ where: { sessionId: { in: dbSessionIds } } }),
+                prisma.message.count({ where: { sessionId: { in: dbSessionIds }, timestamp: { gte: todayStart } } }),
+                prisma.message.count({ where: { sessionId: { in: dbSessionIds }, timestamp: { gte: todayStart }, fromMe: true } }),
+                prisma.contact.count({ where: { sessionId: { in: dbSessionIds } } }),
+                prisma.group.count({ where: { sessionId: { in: dbSessionIds } } }),
+                prisma.autoReply.count({ where: { sessionId: { in: dbSessionIds }, keyword: { notIn: ["__AWAY_SCHEDULE__", "__CHATBOT_FLOW__"] } } }),
                 prisma.$queryRaw<Array<{ hour: number; count: number }>>`
                     SELECT EXTRACT(HOUR FROM timestamp)::int as hour, count(*)::int as count
                     FROM "Message"
-                    WHERE timestamp >= NOW() - INTERVAL '7 days'
+                    WHERE "sessionId" = ANY(${dbSessionIds}::text[])
+                      AND timestamp >= NOW() - INTERVAL '7 days'
                     GROUP BY hour
                     ORDER BY hour ASC
                 `,
                 prisma.label.findMany({
-                    where: dbSessionIds.length > 0 ? { sessionId: { in: dbSessionIds } } : undefined,
+                    where: { sessionId: { in: dbSessionIds } },
                     select: {
                         id: true,
                         name: true,
@@ -153,7 +169,7 @@ export default async function DashboardPage() {
                 .sort((a, b) => b.count - a.count)
                 .slice(0, 5);
 
-            metricsCache = {
+            metricsCache.set(cacheKey, {
                 timestamp: now,
                 data: {
                     totalMessages,
@@ -166,7 +182,7 @@ export default async function DashboardPage() {
                     hourlyStats,
                     topLabels
                 }
-            };
+            });
         } catch (err) {
             console.error("Dashboard metrics error:", err);
         }
@@ -283,7 +299,7 @@ export default async function DashboardPage() {
                         </span>
                     </h2>
                     <p className="text-xs sm:text-sm text-muted-foreground mt-1">
-                        Visão executiva em tempo real do seu gateway e atendimento BarraSoftware.
+                        Visão executiva em tempo real do seu gateway e atendimento ZapFlow.
                     </p>
                 </div>
                 <div className="flex items-center gap-2.5">

@@ -1,4 +1,5 @@
 "use client";
+import { formatPhoneNumber } from "@/lib/phone";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Virtuoso } from "react-virtuoso";
@@ -32,7 +33,10 @@ import {
     Volume2,
     VolumeX,
     Archive,
-    ArchiveRestore
+    ArchiveRestore,
+    Star,
+    ChevronLeft,
+    ChevronRight
 } from "lucide-react";
 import { LabelAssignPopover, LabelData, ManageLabelsModal } from "./label-assign-popover";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -47,6 +51,7 @@ export interface ChatContact {
     jid: string;
     name: string | null;
     notify: string | null;
+    phone?: string | null;
     profilePic: string | null;
     lastMessage?: {
         keyId?: string;
@@ -65,10 +70,13 @@ interface ChatListProps {
     selectedJid?: string;
 }
 
-const PAGE_SIZE = 600;
+const PAGE_SIZE = 120;
 
 function playWhatsAppIncomingSound() {
     try {
+        if (typeof window !== "undefined" && localStorage.getItem("zapflow_chat_muted") === "1") {
+            return;
+        }
         const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
         if (!AudioCtx) return;
         const ctx = new AudioCtx();
@@ -90,8 +98,22 @@ function playWhatsAppIncomingSound() {
     }
 }
 
+function isRawLidString(s?: string | null): boolean {
+    if (!s) return false;
+    const clean = s.split('@')[0].replace(/\D/g, "");
+    return s.endsWith("@lid") || (clean.length >= 14 && clean.length <= 16 && !clean.startsWith("55"));
+}
+
 function getDisplayName(chat: ChatContact): string {
-    return chat.name || chat.notify || chat.jid.split('@')[0];
+    if (chat.name && chat.name.trim() && !chat.name.endsWith("@lid") && !chat.name.endsWith("@s.whatsapp.net") && !isRawLidString(chat.name)) {
+        return chat.name;
+    }
+    if (chat.notify && chat.notify.trim() && !chat.notify.endsWith("@lid") && !chat.notify.endsWith("@s.whatsapp.net") && !isRawLidString(chat.notify)) {
+        return chat.notify;
+    }
+    const phoneToFormat = chat.phone || (isRawLidString(chat.jid) ? "" : chat.jid);
+    if (!phoneToFormat) return "Contato WhatsApp";
+    return formatPhoneNumber(phoneToFormat);
 }
 
 function normalizeSearch(text: string): string {
@@ -99,17 +121,43 @@ function normalizeSearch(text: string): string {
         .normalize("NFD")
         .replace(/[\u0300-\u036f]/g, "")
         .toLowerCase()
+        .replace(/\s+/g, " ")
         .trim();
 }
 
+const FLAG_EMOJI_REGEX = /([\u{1F1E6}-\u{1F1FF}]{2})/gu;
+
+function renderFlagsInText(text: string): React.ReactNode {
+    if (!text) return text;
+    const parts = text.split(FLAG_EMOJI_REGEX);
+    if (parts.length === 1) return text;
+    return parts.map((part, idx) => {
+        if (idx % 2 === 1 && part.length >= 2) {
+            const cps = Array.from(part).map(ch => ch.codePointAt(0)?.toString(16)).filter(Boolean);
+            if (cps.length === 2) {
+                return (
+                    <img
+                        key={`flag-${idx}-${cps.join("-")}`}
+                        src={`https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/svg/${cps[0]}-${cps[1]}.svg`}
+                        alt={part}
+                        className="inline-block h-[1.1em] w-[1.1em] align-[-0.18em] mx-[1px] select-none"
+                        draggable={false}
+                    />
+                );
+            }
+        }
+        return part;
+    });
+}
+
 function highlightSearch(text: string, query?: string): React.ReactNode {
-    if (!text || !query || !query.trim()) return text;
+    if (!text || !query || !query.trim()) return renderFlagsInText(text);
     const cleanQ = normalizeSearch(query);
-    if (!cleanQ) return text;
+    if (!cleanQ) return renderFlagsInText(text);
 
     const normText = text.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
     const idx = normText.indexOf(cleanQ);
-    if (idx === -1) return text;
+    if (idx === -1) return renderFlagsInText(text);
 
     const parts: React.ReactNode[] = [];
     let lastIdx = 0;
@@ -117,12 +165,12 @@ function highlightSearch(text: string, query?: string): React.ReactNode {
 
     while (currIdx !== -1) {
         if (currIdx > lastIdx) {
-            parts.push(text.slice(lastIdx, currIdx));
+            parts.push(renderFlagsInText(text.slice(lastIdx, currIdx)));
         }
         const matchEnd = currIdx + cleanQ.length;
         parts.push(
             <mark key={currIdx} className="bg-[#00a884]/25 text-[#00a884] dark:bg-[#00a884]/40 dark:text-[#25d366] font-semibold rounded-xs px-0.5">
-                {text.slice(currIdx, matchEnd)}
+                {renderFlagsInText(text.slice(currIdx, matchEnd))}
             </mark>
         );
         lastIdx = matchEnd;
@@ -130,7 +178,7 @@ function highlightSearch(text: string, query?: string): React.ReactNode {
     }
 
     if (lastIdx < text.length) {
-        parts.push(text.slice(lastIdx));
+        parts.push(renderFlagsInText(text.slice(lastIdx)));
     }
 
     return parts;
@@ -143,29 +191,33 @@ function getMessagePreview(chat: ChatContact): { text: string; isMedia: boolean;
         }
         return { text: "Contato da agenda", isMedia: false };
     }
-    if (!chat.lastMessage.content && chat.lastMessage.type === "TEXT") {
-        return { text: "Mensagem", isMedia: false };
-    }
-    const content = chat.lastMessage.content || "";
-    if (chat.lastMessage.type !== "TEXT") {
+    const rawType = (chat.lastMessage.type || "TEXT").toUpperCase();
+    const rawContent = (chat.lastMessage.content || "").trim();
+    const isBracketPlaceholder = /^\[(image|video|audio|document|sticker|location|contact|poll|viewonce)\]$/i.test(rawContent);
+    const cleanCaption = isBracketPlaceholder ? "" : rawContent;
+
+    if (rawType !== "TEXT") {
         const types: Record<string, string> = {
-            IMAGE: content ? `📷 ${content}` : "Foto",
-            VIDEO: content ? `🎥 ${content}` : "Vídeo",
+            IMAGE: cleanCaption || "Foto",
+            VIDEO: cleanCaption || "Vídeo",
             AUDIO: "Mensagem de voz",
-            DOCUMENT: content || "Documento",
-            STICKER: "Figurinha",
-            LOCATION: "Localização",
-            CONTACT: "Contato",
-            POLL: content ? `📊 ${content.split("|")[0]}` : "📊 Enquete"
+            DOCUMENT: cleanCaption || "Documento",
+            STICKER: "💟 Figurinha",
+            LOCATION: cleanCaption ? `📍 ${cleanCaption.split("|")[1] || "Localização"}` : "📍 Localização",
+            CONTACT: cleanCaption ? `👤 ${cleanCaption.split("|")[0]}` : "👤 Contato",
+            POLL: cleanCaption ? `📊 ${cleanCaption.split("|")[0]}` : "📊 Enquete"
         };
-        const label = types[chat.lastMessage.type] || "Mídia";
+        const label = types[rawType] || cleanCaption || "Mídia";
         return {
             text: label.length > 45 ? label.slice(0, 45) + "…" : label,
             isMedia: true,
-            type: chat.lastMessage.type
+            type: rawType
         };
     }
-    return { text: content.length > 45 ? content.slice(0, 45) + "…" : content, isMedia: false };
+    if (!cleanCaption) {
+        return { text: "Mensagem", isMedia: false };
+    }
+    return { text: cleanCaption.length > 45 ? cleanCaption.slice(0, 45) + "…" : cleanCaption, isMedia: false };
 }
 
 function getTimeLabel(timestamp: string): string {
@@ -200,6 +252,7 @@ interface CtxMenuState {
     name: string;
     profilePic?: string | null;
     isPinned: boolean;
+    isFavorite: boolean;
     isArchived: boolean;
     isMuted: boolean;
     unreadCount?: number;
@@ -210,6 +263,7 @@ function ChatContextMenu({
     onClose,
     onSelect,
     onTogglePin,
+    onToggleFavorite,
     onToggleArchive,
     onToggleMute,
     onToggleRead
@@ -219,6 +273,7 @@ function ChatContextMenu({
     onSelect: (jid: string, name?: string, profilePic?: string | null) => void;
     onMouseEnter?: () => void;
     onTogglePin: (jid: string) => void;
+    onToggleFavorite: (jid: string) => void;
     onToggleArchive: (jid: string) => void;
     onToggleMute: (jid: string) => void;
     onToggleRead: (jid: string, isUnread: boolean) => void;
@@ -236,6 +291,11 @@ function ChatContextMenu({
             label: "Abrir conversa",
             icon: MessageCircle,
             action: () => { onSelect(state.jid, state.name, state.profilePic); onClose(); }
+        },
+        {
+            label: state.isFavorite ? "Remover dos Favoritos" : "Adicionar aos Favoritos",
+            icon: Star,
+            action: () => { onToggleFavorite(state.jid); onClose(); }
         },
         {
             label: state.isPinned ? "Desafixar conversa" : "Fixar conversa no topo",
@@ -290,12 +350,17 @@ function ChatRow({
     chat,
     isSelected,
     isPinned,
+    isFavorite,
     isArchived,
     isMuted,
+    isOnline,
+    hasStory,
+    onOpenStory,
     draftText,
     presence,
     onSelect,
     onTogglePin,
+    onToggleFavorite,
     onToggleArchive,
     onToggleMute,
     onToggleRead,
@@ -306,12 +371,17 @@ function ChatRow({
     chat: ChatContact;
     isSelected: boolean;
     isPinned: boolean;
+    isFavorite: boolean;
     isArchived: boolean;
     isMuted: boolean;
+    isOnline?: boolean;
+    hasStory?: boolean;
+    onOpenStory?: () => void;
     draftText?: string;
     presence?: { status: "composing" | "recording" };
     onSelect: (jid: string, name?: string, profilePic?: string | null) => void;
     onTogglePin: (jid: string, e?: React.MouseEvent) => void;
+    onToggleFavorite: (jid: string, e?: React.MouseEvent) => void;
     onToggleArchive: (jid: string, e?: React.MouseEvent) => void;
     onToggleMute: (jid: string, e?: React.MouseEvent) => void;
     onToggleRead: (jid: string, isUnread: boolean) => void;
@@ -324,6 +394,7 @@ function ChatRow({
     const isGroup = chat.jid.endsWith("@g.us");
     const preview = getMessagePreview(chat);
     const unreadCount = chat.unreadCount || 0;
+    const hasMention = isGroup && unreadCount > 0 && Boolean(chat.lastMessage?.content && /@\d{8,}|@[A-Za-z]+/.test(chat.lastMessage.content));
 
     return (
         <>
@@ -333,6 +404,7 @@ function ChatRow({
                     onClose={() => setCtxMenu(null)}
                     onSelect={onSelect}
                     onTogglePin={onTogglePin}
+                    onToggleFavorite={onToggleFavorite}
                     onToggleArchive={onToggleArchive}
                     onToggleMute={onToggleMute}
                     onToggleRead={onToggleRead}
@@ -356,24 +428,45 @@ function ChatRow({
                         name: displayName,
                         profilePic: chat.profilePic,
                         isPinned,
+                        isFavorite,
                         isArchived,
                         isMuted,
                         unreadCount: chat.unreadCount
                     });
                 }}
             >
-                {/* Avatar with WhatsApp group/user style */}
-                <Avatar className="h-11 w-11 flex-shrink-0">
-                    <AvatarImage src={chat.profilePic && chat.profilePic.startsWith("http") ? chat.profilePic : `/api/avatar/${sessionId}/${encodeURIComponent(chat.jid)}`} referrerPolicy="no-referrer" />
-                    <AvatarFallback className={cn(
-                        "text-xs font-semibold flex items-center justify-center",
-                        isGroup
-                            ? "bg-[#00a884]/15 text-[#00a884] dark:bg-[#00a884]/25"
-                            : "bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-200"
+                {/* Avatar with WhatsApp group/user style, green Status ring & online dot */}
+                <div
+                    className="relative flex-shrink-0"
+                    onClick={(e) => {
+                        if (hasStory && onOpenStory) {
+                            e.stopPropagation();
+                            onOpenStory();
+                        }
+                    }}
+                    title={hasStory ? "Clique para ver o Status (Story) deste contato" : undefined}
+                >
+                    <Avatar className={cn(
+                        "h-11 w-11",
+                        hasStory && "ring-2 ring-[#25d366] ring-offset-2 ring-offset-background cursor-pointer"
                     )}>
-                        {isGroup ? <Users className="h-5 w-5" /> : displayName.slice(0, 2).toUpperCase()}
-                    </AvatarFallback>
-                </Avatar>
+                        <AvatarImage src={chat.profilePic && chat.profilePic.startsWith("http") ? chat.profilePic : `/api/avatar/${sessionId}/${encodeURIComponent(chat.jid)}`} referrerPolicy="no-referrer" />
+                        <AvatarFallback className={cn(
+                            "text-xs font-semibold flex items-center justify-center",
+                            isGroup
+                                ? "bg-[#00a884]/15 text-[#00a884] dark:bg-[#00a884]/25"
+                                : "bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-200"
+                        )}>
+                            {isGroup ? <Users className="h-5 w-5" /> : displayName.slice(0, 2).toUpperCase()}
+                        </AvatarFallback>
+                    </Avatar>
+                    {!isGroup && (isOnline || presence) && (
+                        <span
+                            className="absolute bottom-0 right-0 h-3 w-3 rounded-full bg-[#25d366] ring-2 ring-background shadow-xs"
+                            title="Online agora"
+                        />
+                    )}
+                </div>
 
                 {/* Info & Message preview */}
                 <div className="flex-1 min-w-0 overflow-hidden pr-0.5">
@@ -383,7 +476,12 @@ function ChatRow({
                             "text-[15px] truncate flex items-center gap-1.5 leading-snug flex-1 min-w-0",
                             unreadCount > 0 ? "font-bold text-foreground" : isSelected ? "font-semibold text-foreground" : "font-medium text-foreground"
                         )} title={displayName}>
-                            <span className="online-dot absolute right-2.5 top-1/2 -translate-y-1/2"></span>{displayName}
+                            {displayName}
+                            {isFavorite && (
+                                <span title="Favorito" className="inline-flex shrink-0">
+                                    <Star className="h-3 w-3 fill-amber-400 text-amber-400" />
+                                </span>
+                            )}
                             {/* Label dots */}
                             {labelDots.length > 0 && (
                                 <span className="flex items-center gap-[3px] shrink-0">
@@ -423,7 +521,7 @@ function ChatRow({
                         ) : draftText && !isSelected ? (
                             <p className="text-[13px] truncate flex items-center gap-1 flex-1">
                                 <span className="text-red-500 dark:text-red-400 font-semibold shrink-0">Rascunho:</span>
-                                <span className="text-[#667781] dark:text-[#8696a0] truncate">{draftText}</span>
+                                <span className="text-[#667781] dark:text-[#8696a0] truncate">{renderFlagsInText(draftText)}</span>
                             </p>
                         ) : (
                             <p className={cn(
@@ -443,14 +541,28 @@ function ChatRow({
                                         {preview.type === "DOCUMENT" && <FileText className="h-3.5 w-3.5 inline mr-1" />}
                                     </span>
                                 )}
-                                <span className="truncate">{preview.text}</span>
+                                <span className="truncate">{renderFlagsInText(preview.text)}</span>
                             </p>
                         )}
 
                         <div className="flex items-center gap-1 shrink-0">
+                            {/* WhatsApp @ Mention Badge */}
+                            {hasMention && (
+                                <span
+                                    className="h-5 w-5 rounded-full bg-[#25d366]/20 text-[#00a884] dark:text-[#25d366] text-[11px] font-extrabold flex items-center justify-center shrink-0"
+                                    title="Menção no grupo"
+                                >
+                                    @
+                                </span>
+                            )}
                             {/* WhatsApp Green Unread Counter Badge */}
                             {unreadCount > 0 && (
-                                <span className="min-w-[20px] h-5 px-1.5 rounded-full bg-[#25d366] text-white text-[11px] font-bold flex items-center justify-center tabular-nums shadow-xs">
+                                <span className={cn(
+                                    "min-w-[20px] h-5 px-1.5 rounded-full text-[11px] font-bold flex items-center justify-center tabular-nums shadow-xs",
+                                    isMuted
+                                        ? "bg-[#8696a0] dark:bg-[#374248] text-white dark:text-[#aebac1]"
+                                        : "bg-[#25d366] text-white"
+                                )}>
                                     {unreadCount > 99 ? "99+" : unreadCount}
                                 </span>
                             )}
@@ -565,16 +677,43 @@ export const globalChatListCache = new Map<string, ChatContact[]>();
 
 function loadPersistedChatList(sessionId: string): ChatContact[] {
     if (!sessionId) return [];
+
+    const sanitizeList = (arr: ChatContact[]): ChatContact[] => {
+        // Collect known phone numbers in the list
+        const phoneJids = new Set<string>();
+        for (const c of arr) {
+            if (c?.jid && c.jid.endsWith("@s.whatsapp.net")) {
+                phoneJids.add(c.jid);
+                if (c.phone) phoneJids.add(`${c.phone}@s.whatsapp.net`);
+            }
+        }
+
+        return arr.filter((c: any) => {
+            if (!c?.jid || c.jid === "status@broadcast" || c.jid.endsWith("@broadcast")) return false;
+            if (c.jid.endsWith("@lid")) {
+                // If an @s.whatsapp.net counterpart exists, drop the duplicate @lid
+                if (c.phone && phoneJids.has(`${c.phone}@s.whatsapp.net`)) return false;
+                // If name is raw LID digits matching the JID, drop it if an alternative exists
+                const bare = c.jid.split('@')[0];
+                if ((!c.name || c.name === bare) && phoneJids.has(`${c.phone || bare}@s.whatsapp.net`)) return false;
+                // If it is an orphan LID with no name and no message, drop it
+                if (!c.name && !c.notify && !c.lastMessage?.content) return false;
+            }
+            return true;
+        });
+    };
+
     const inMem = globalChatListCache.get(sessionId);
-    if (inMem && inMem.length > 0) return inMem;
+    if (inMem && inMem.length > 0) return sanitizeList(inMem);
     if (typeof window === "undefined") return [];
     try {
         const raw = localStorage.getItem(`zapflow_chatlist_v2_${sessionId}`);
         if (raw) {
             const parsed = JSON.parse(raw);
             if (Array.isArray(parsed) && parsed.length > 0) {
-                globalChatListCache.set(sessionId, parsed);
-                return parsed;
+                const cleaned = sanitizeList(parsed);
+                globalChatListCache.set(sessionId, cleaned);
+                return cleaned;
             }
         }
     } catch {}
@@ -602,14 +741,57 @@ export function ChatList({ sessionId, onSelectChat, selectedJid }: ChatListProps
     const [loading, setLoading] = useState(initialCached.length === 0);
     const [searchInput, setSearchInput] = useState("");
     const [isSearchFocused, setIsSearchFocused] = useState(false);
-    const [filterType, setFilterType] = useState<"all" | "unread" | "contacts" | "groups" | "pinned" | "archived">("all");
+    const [filterType, setFilterType] = useState<"all" | "unread" | "favorites" | "contacts" | "groups" | "pinned" | "archived">("all");
     const [isNewChatOpen, setIsNewChatOpen] = useState(false);
     const [newChatNumber, setNewChatNumber] = useState("");
     const [hasMore, setHasMore] = useState(true);
     const [soundMuted, setSoundMuted] = useState(false);
 
-    // Live presence map per JID ("composing" | "recording")
+    // Status / Story (24h) & Call Auto-Reject states
+    const [storyText, setStoryText] = useState("");
+    const [storyBg, setStoryBg] = useState("#00a884");
+    const [isPostingStory, setIsPostingStory] = useState(false);
+    const [storiesList, setStoriesList] = useState<Array<{
+        jid: string;
+        name: string;
+        profilePic: string | null;
+        fromMe: boolean;
+        items: Array<{ keyId: string; type: string; content: string | null; mediaUrl: string | null; timestamp: string }>;
+    }>>([]);
+    const [activeStoryGroupIdx, setActiveStoryGroupIdx] = useState<number | null>(null);
+    const [activeStoryItemIdx, setActiveStoryItemIdx] = useState(0);
+    const [rejectCalls, setRejectCalls] = useState(false);
+    const [rejectCallMessage, setRejectCallMessage] = useState("Olá! No momento não atendemos ligações por aqui. Por favor, envie uma mensagem de texto ou áudio que já te respondemos!");
+    const [isSavingCallCfg, setIsSavingCallCfg] = useState(false);
+
+    const fetchStories = useCallback(async () => {
+        if (!sessionId) return;
+        try {
+            const res = await fetch(`/api/profile/${sessionId}/story`);
+            if (!res.ok) return;
+            const json = await res.json();
+            if (json?.status && Array.isArray(json.data)) {
+                setStoriesList(json.data);
+            }
+        } catch {}
+    }, [sessionId]);
+
+    useEffect(() => {
+        if (!sessionId) return;
+        fetch(`/api/sessions/${sessionId}/settings`)
+            .then(r => (r.ok ? r.json() : null))
+            .then(json => {
+                const cfg = json?.data?.config || {};
+                if (typeof cfg.rejectCalls === "boolean") setRejectCalls(cfg.rejectCalls);
+                if (typeof cfg.rejectCallMessage === "string" && cfg.rejectCallMessage) setRejectCallMessage(cfg.rejectCallMessage);
+            })
+            .catch(() => {});
+        fetchStories();
+    }, [sessionId, fetchStories]);
+
+    // Live presence map per JID ("composing" | "recording") and Online map
     const [presenceMap, setPresenceMap] = useState<Record<string, { status: "composing" | "recording" }>>({});
+    const [onlineMap, setOnlineMap] = useState<Record<string, boolean>>({});
     const presenceTimersRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
 
     // Track seen incoming keyIds so two-phase instant + media socket updates only increment unreadCount once
@@ -617,6 +799,8 @@ export function ChatList({ sessionId, onSelectChat, selectedJid }: ChatListProps
 
     // Unlimited pinned chats (persisted per sessionId in localStorage)
     const [pinnedJids, setPinnedJids] = useState<string[]>([]);
+    // Favorite chats
+    const [favoriteJids, setFavoriteJids] = useState<string[]>([]);
     // Archived chats (#C14)
     const [archivedJids, setArchivedJids] = useState<string[]>([]);
     // Muted chats (#C26)
@@ -638,6 +822,7 @@ export function ChatList({ sessionId, onSelectChat, selectedJid }: ChatListProps
         timestamp: string;
         type: string;
         contactName: string;
+        senderName?: string | null;
         profilePic?: string | null;
     }>>([]);
     const [isSearchingMessages, setIsSearchingMessages] = useState(false);
@@ -678,6 +863,11 @@ export function ChatList({ sessionId, onSelectChat, selectedJid }: ChatListProps
             if (storedPinned) {
                 const parsed = JSON.parse(storedPinned);
                 if (Array.isArray(parsed)) setPinnedJids(parsed);
+            }
+            const storedFavs = localStorage.getItem(`zapflow_fav_chats_${sessionId}`);
+            if (storedFavs) {
+                const parsed = JSON.parse(storedFavs);
+                if (Array.isArray(parsed)) setFavoriteJids(parsed);
             }
             const storedArchived = localStorage.getItem(`zapflow_archived_${sessionId}`);
             if (storedArchived) {
@@ -812,7 +1002,7 @@ export function ChatList({ sessionId, onSelectChat, selectedJid }: ChatListProps
             } finally {
                 setIsSearchingMessages(false);
             }
-        }, 250);
+        }, 350);
 
         return () => {
             if (msgSearchTimerRef.current) clearTimeout(msgSearchTimerRef.current);
@@ -892,6 +1082,22 @@ export function ChatList({ sessionId, onSelectChat, selectedJid }: ChatListProps
         });
     }, [sessionId]);
 
+    // Toggle Favorite / Unfavorite
+    const handleToggleFavorite = useCallback((jid: string, e?: React.MouseEvent) => {
+        e?.stopPropagation();
+        setFavoriteJids(prev => {
+            const exists = prev.includes(jid);
+            const next = exists ? prev.filter(id => id !== jid) : [jid, ...prev];
+            if (typeof window !== "undefined") {
+                try {
+                    localStorage.setItem(`zapflow_fav_chats_${sessionId}`, JSON.stringify(next));
+                } catch {}
+            }
+            toast.success(exists ? "Removida dos Favoritos" : "⭐ Conversa adicionada aos Favoritos!");
+            return next;
+        });
+    }, [sessionId]);
+
     // Toggle Archive / Unarchive (#C14)
     const handleToggleArchive = useCallback((jid: string, e?: React.MouseEvent) => {
         e?.stopPropagation();
@@ -953,8 +1159,13 @@ export function ChatList({ sessionId, onSelectChat, selectedJid }: ChatListProps
                         }
                     } catch {}
                 }
-                const merged = new Map(existingChatsList.map(c => [c.jid, c]));
+                const merged = new Map(
+                    existingChatsList
+                        .filter(c => c.jid !== "status@broadcast" && !c.jid?.endsWith("@broadcast"))
+                        .map(c => [c.jid, c])
+                );
                 (newChatsList || []).forEach((c: any) => {
+                    if (!c?.jid || c.jid === "status@broadcast" || c.jid.endsWith("@broadcast")) return;
                     const existing = merged.get(c.jid);
                     const forcedUnread = manualUnreadSet.has(c.jid) ? 1 : 0;
                     if (!existing) {
@@ -973,6 +1184,38 @@ export function ChatList({ sessionId, onSelectChat, selectedJid }: ChatListProps
                         });
                     }
                 });
+
+                // Deduplicate any @lid chat that corresponds to a known phone chat
+                const phoneToJid = new Map<string, string>();
+                merged.forEach((chat, jid) => {
+                    if (jid.endsWith("@s.whatsapp.net")) {
+                        phoneToJid.set(jid.split("@")[0], jid);
+                    }
+                    if (chat.phone) {
+                        phoneToJid.set(chat.phone, jid.endsWith("@s.whatsapp.net") ? jid : (phoneToJid.get(chat.phone) || jid));
+                    }
+                });
+
+                merged.forEach((chat, jid) => {
+                    if (jid.endsWith("@lid")) {
+                        const bare = jid.split("@")[0];
+                        const phoneChatJid = (chat.phone && phoneToJid.get(chat.phone)) || (bare && phoneToJid.get(bare));
+                        if (phoneChatJid && phoneChatJid !== jid) {
+                            const mainChat = merged.get(phoneChatJid);
+                            if (mainChat) {
+                                const lidTs = chat.lastMessage?.timestamp ? new Date(chat.lastMessage.timestamp).getTime() : 0;
+                                const mainTs = mainChat.lastMessage?.timestamp ? new Date(mainChat.lastMessage.timestamp).getTime() : 0;
+                                merged.set(phoneChatJid, {
+                                    ...mainChat,
+                                    unreadCount: Math.max(mainChat.unreadCount || 0, chat.unreadCount || 0),
+                                    lastMessage: lidTs > mainTs ? chat.lastMessage : mainChat.lastMessage
+                                });
+                            }
+                            merged.delete(jid);
+                        }
+                    }
+                });
+
                 return Array.from(merged.values());
             };
 
@@ -1128,15 +1371,18 @@ export function ChatList({ sessionId, onSelectChat, selectedJid }: ChatListProps
             if (needsReload) fetchChats();
         };
 
+        const statusRank: Record<string, number> = { FAILED: 0, PENDING: 1, SENT: 2, DELIVERED: 3, READ: 4 };
         const statusHandler = (data: { keyId: string; remoteJid?: string; status: string }) => {
             if (!data?.status) return;
             setChats(prev => {
                 let changed = false;
                 const next = prev.map(c => {
-                    if (
-                        (data.remoteJid && c.jid === data.remoteJid && c.lastMessage?.fromMe) ||
-                        (data.keyId && c.lastMessage?.keyId === data.keyId)
-                    ) {
+                    const matchesLastMsg =
+                        (data.keyId && c.lastMessage?.keyId === data.keyId) ||
+                        (!data.keyId && data.remoteJid && c.jid === data.remoteJid && c.lastMessage?.fromMe);
+                    const currentRank = statusRank[c.lastMessage?.status || "PENDING"] ?? 0;
+                    const nextRank = statusRank[data.status] ?? 0;
+                    if (matchesLastMsg && nextRank > currentRank) {
                         changed = true;
                         return {
                             ...c,
@@ -1150,27 +1396,61 @@ export function ChatList({ sessionId, onSelectChat, selectedJid }: ChatListProps
             });
         };
 
-        const presenceHandler = (data: { id: string; presences: Record<string, { lastKnownPresence?: string }> }) => {
+        const presenceHandler = (data: { id: string; altJids?: string[]; presences: Record<string, { lastKnownPresence?: string }> }) => {
             if (!data?.id || !data?.presences) return;
             const chatJid = data.id.endsWith("@c.us") ? data.id.replace("@c.us", "@s.whatsapp.net") : data.id;
+            const bareId = chatJid.split("@")[0];
+            const allKeys = [chatJid, ...(bareId ? [bareId] : []), ...(data.altJids || [])];
             for (const [, p] of Object.entries(data.presences)) {
                 const st = p?.lastKnownPresence;
+                if (st === "available" || st === "composing" || st === "recording" || st === "paused") {
+                    setOnlineMap(prev => {
+                        const next = { ...prev };
+                        for (const k of allKeys) {
+                            if (k) {
+                                next[k] = true;
+                                const b = k.split("@")[0];
+                                if (b) next[b] = true;
+                            }
+                        }
+                        return next;
+                    });
+                } else if (st === "unavailable") {
+                    setOnlineMap(prev => {
+                        const next = { ...prev };
+                        for (const k of allKeys) {
+                            if (k) {
+                                delete next[k];
+                                const b = k.split("@")[0];
+                                if (b) delete next[b];
+                            }
+                        }
+                        return next;
+                    });
+                }
+
                 if (st === "composing" || st === "recording") {
-                    setPresenceMap(prev => ({ ...prev, [chatJid]: { status: st } }));
+                    setPresenceMap(prev => ({
+                        ...prev,
+                        [chatJid]: { status: st },
+                        ...(bareId ? { [bareId]: { status: st } } : {})
+                    }));
                     if (presenceTimersRef.current[chatJid]) clearTimeout(presenceTimersRef.current[chatJid]);
                     presenceTimersRef.current[chatJid] = setTimeout(() => {
                         setPresenceMap(prev => {
                             const copy = { ...prev };
                             delete copy[chatJid];
+                            if (bareId) delete copy[bareId];
                             return copy;
                         });
                     }, 4000);
                     return;
                 } else if (st === "paused" || st === "unavailable") {
                     setPresenceMap(prev => {
-                        if (!prev[chatJid]) return prev;
+                        if (!prev[chatJid] && (!bareId || !prev[bareId])) return prev;
                         const copy = { ...prev };
                         delete copy[chatJid];
+                        if (bareId) delete copy[bareId];
                         return copy;
                     });
                 }
@@ -1196,7 +1476,13 @@ export function ChatList({ sessionId, onSelectChat, selectedJid }: ChatListProps
         const handleLocalSent = (e: Event) => {
             const { jid: sentJid, content, timestamp, type = "TEXT", keyId } = (e as CustomEvent).detail;
             setChats(prev => {
-                const idx = prev.findIndex(c => c.jid === sentJid);
+                let idx = prev.findIndex(c => c.jid === sentJid);
+                if (idx === -1 && sentJid.endsWith("@lid")) {
+                    // Try to find matching phone chat if known
+                    const bare = sentJid.split("@")[0];
+                    idx = prev.findIndex(c => c.jid.includes(bare) || (c.phone && sentJid.includes(c.phone)));
+                }
+
                 const updated = [...prev];
                 if (idx !== -1) {
                     updated[idx] = {
@@ -1216,13 +1502,18 @@ export function ChatList({ sessionId, onSelectChat, selectedJid }: ChatListProps
                     savePersistedChatList(sessionId, next);
                     return next;
                 } else {
+                    const isLid = sentJid.endsWith("@lid");
+                    const rawDigits = sentJid.split("@")[0].replace(/\D/g, "");
+                    const isLidDigits = isLid || (rawDigits.length >= 14 && rawDigits.length <= 16 && !rawDigits.startsWith("55"));
+
                     const next: ChatContact[] = [
                         {
                             jid: sentJid,
-                            name: sentJid.split("@")[0],
+                            name: isLidDigits ? null : formatPhoneNumber(sentJid.split("@")[0]),
                             notify: null,
                             profilePic: null,
                             unreadCount: 0,
+                            phone: isLidDigits ? null : sentJid.split("@")[0],
                             lastMessage: {
                                 keyId,
                                 content,
@@ -1289,7 +1580,7 @@ export function ChatList({ sessionId, onSelectChat, selectedJid }: ChatListProps
     // Atualiza o título da aba do navegador dinamicamente com o contador de não lidas
     useEffect(() => {
         if (typeof document === "undefined") return;
-        const baseTitle = "BarraSoftware";
+        const baseTitle = "ZapFlow";
         if (totalUnreadCount > 0) {
             document.title = `(${totalUnreadCount}) ${baseTitle}`;
         } else {
@@ -1304,18 +1595,22 @@ export function ChatList({ sessionId, onSelectChat, selectedJid }: ChatListProps
         const cleanQ = normalizeSearch(searchInput);
         if (cleanQ) {
             const digits = searchInput.replace(/\D/g, "");
+            const isNumericQuery = digits.length >= 3 && !/[a-zA-Z]/.test(searchInput);
             list = list.filter(chat => {
                 const normName = normalizeSearch(chat.name || "");
                 const normNotify = normalizeSearch(chat.notify || "");
-                const normContent = normalizeSearch(chat.lastMessage?.content || "");
                 const jidDigits = chat.jid.replace(/\D/g, "");
+                const phoneDigits = (chat.phone || "").replace(/\D/g, "");
 
                 const matchName = normName.includes(cleanQ) || normNotify.includes(cleanQ);
-                const matchContent = normContent.includes(cleanQ);
-                const matchDigits = digits.length >= 3 && (jidDigits.includes(digits) || (chat.name && chat.name.replace(/\D/g, "").includes(digits)));
+                const matchDigits = isNumericQuery && (
+                    jidDigits.includes(digits) ||
+                    phoneDigits.includes(digits) ||
+                    (chat.name && chat.name.replace(/\D/g, "").includes(digits))
+                );
                 const matchJid = chat.jid.toLowerCase().includes(cleanQ);
 
-                return matchName || matchContent || matchDigits || matchJid;
+                return matchName || matchDigits || matchJid;
             });
 
             // Append matching contacts from address book
@@ -1324,6 +1619,25 @@ export function ChatList({ sessionId, onSelectChat, selectedJid }: ChatListProps
                 const toAdd = extraContacts.filter(c => !existingJids.has(c.jid));
                 list = [...list, ...toAdd];
             }
+
+            // Rank search results by relevance (exact/startsWith name > includes name > phone/JID)
+            const getRelevanceScore = (chat: ChatContact) => {
+                const n1 = normalizeSearch(chat.name || "");
+                const n2 = normalizeSearch(chat.notify || "");
+                if (n1 === cleanQ || n2 === cleanQ) return 0;
+                if (n1.startsWith(cleanQ) || n2.startsWith(cleanQ)) return 1;
+                if (n1.includes(cleanQ) || n2.includes(cleanQ)) return 2;
+                return 3;
+            };
+
+            list = [...list].sort((a, b) => {
+                const scoreDiff = getRelevanceScore(a) - getRelevanceScore(b);
+                if (scoreDiff !== 0) return scoreDiff;
+                const tA = a.lastMessage?.timestamp ? new Date(a.lastMessage.timestamp).getTime() : 0;
+                const tB = b.lastMessage?.timestamp ? new Date(b.lastMessage.timestamp).getTime() : 0;
+                if (tB !== tA) return tB - tA;
+                return (a.name || a.notify || a.jid).localeCompare(b.name || b.notify || b.jid, "pt-BR");
+            });
         } else if (filterType === "archived") {
             list = list.filter(c => archivedSet.has(c.jid));
         } else {
@@ -1347,6 +1661,9 @@ export function ChatList({ sessionId, onSelectChat, selectedJid }: ChatListProps
 
         if (filterType === "unread") {
             list = list.filter(c => (c.unreadCount || 0) > 0);
+        } else if (filterType === "favorites") {
+            const favSet = new Set(favoriteJids);
+            list = list.filter(c => favSet.has(c.jid));
         } else if (filterType === "contacts") {
             list = list.filter(c => !c.jid.endsWith("@g.us"));
         } else if (filterType === "groups") {
@@ -1373,7 +1690,7 @@ export function ChatList({ sessionId, onSelectChat, selectedJid }: ChatListProps
         });
 
         return [...pinnedList, ...unpinnedList];
-    }, [chats, searchInput, extraContacts, filterType, pinnedJids, archivedSet, selectedLabelId, chatLabelMap]);
+    }, [chats, searchInput, extraContacts, filterType, pinnedJids, favoriteJids, archivedSet, selectedLabelId, chatLabelMap]);
 
     // Keyboard shortcuts listeners (Ctrl+Shift+F to search, Alt+Up/Down to navigate chats)
     useEffect(() => {
@@ -1412,27 +1729,43 @@ export function ChatList({ sessionId, onSelectChat, selectedJid }: ChatListProps
     }, [hasMore, loading, searchInput, fetchChats]);
 
     const itemContent = useCallback(
-        (_: number, chat: ChatContact) => (
-            <ChatRow
-                key={chat.jid}
-                chat={chat}
-                isSelected={selectedJid === chat.jid}
-                isPinned={pinnedJids.includes(chat.jid)}
-                isArchived={archivedSet.has(chat.jid)}
-                isMuted={mutedSet.has(chat.jid)}
-                draftText={draftMap[chat.jid]}
-                presence={presenceMap[chat.jid]}
-                onSelect={handleSelectAndClearUnread}
-                onTogglePin={handleTogglePin}
-                onToggleArchive={handleToggleArchive}
-                onToggleMute={handleToggleMute}
-                onToggleRead={handleToggleRead}
-                sessionId={sessionId}
-                labelDots={chatLabelMap.get(chat.jid) || []}
-                searchQuery={searchInput.trim()}
-            />
-        ),
-        [selectedJid, pinnedJids, archivedSet, mutedSet, draftMap, presenceMap, handleSelectAndClearUnread, handleTogglePin, handleToggleArchive, handleToggleMute, handleToggleRead, sessionId, chatLabelMap, searchInput]
+        (_: number, chat: ChatContact) => {
+            const bareJid = chat.jid.split("@")[0];
+            const isOnline = Boolean(
+                onlineMap[chat.jid] ||
+                (bareJid && onlineMap[bareJid]) ||
+                (chat.phone && (onlineMap[chat.phone] || onlineMap[`${chat.phone}@s.whatsapp.net`]))
+            );
+            const storyIdx = storiesList.findIndex(
+                s => !s.fromMe && (s.jid === chat.jid || s.jid.split("@")[0] === bareJid || (chat.phone && s.jid.includes(chat.phone)))
+            );
+            return (
+                <ChatRow
+                    key={chat.jid}
+                    chat={chat}
+                    isSelected={selectedJid === chat.jid}
+                    isPinned={pinnedJids.includes(chat.jid)}
+                    isFavorite={favoriteJids.includes(chat.jid)}
+                    isArchived={archivedSet.has(chat.jid)}
+                    isMuted={mutedSet.has(chat.jid)}
+                    isOnline={isOnline}
+                    hasStory={storyIdx !== -1}
+                    onOpenStory={storyIdx !== -1 ? () => { setActiveStoryGroupIdx(storyIdx); setActiveStoryItemIdx(0); } : undefined}
+                    draftText={draftMap[chat.jid]}
+                    presence={presenceMap[chat.jid] || presenceMap[bareJid] || (chat.phone ? presenceMap[chat.phone] || presenceMap[`${chat.phone}@s.whatsapp.net`] : undefined)}
+                    onSelect={handleSelectAndClearUnread}
+                    onTogglePin={handleTogglePin}
+                    onToggleFavorite={handleToggleFavorite}
+                    onToggleArchive={handleToggleArchive}
+                    onToggleMute={handleToggleMute}
+                    onToggleRead={handleToggleRead}
+                    sessionId={sessionId}
+                    labelDots={chatLabelMap.get(chat.jid) || []}
+                    searchQuery={searchInput.trim()}
+                />
+            );
+        },
+        [selectedJid, pinnedJids, favoriteJids, archivedSet, mutedSet, onlineMap, storiesList, draftMap, presenceMap, handleSelectAndClearUnread, handleTogglePin, handleToggleFavorite, handleToggleArchive, handleToggleMute, handleToggleRead, sessionId, chatLabelMap, searchInput]
     );
 
     const handleStartNewChat = () => {
@@ -1447,9 +1780,24 @@ export function ChatList({ sessionId, onSelectChat, selectedJid }: ChatListProps
     if (loading && chats.length === 0) {
         return (
             <div className="flex flex-col h-full overflow-hidden bg-background">
-                <div className="p-3 space-y-3">
-                    <Skeleton className="h-10 w-full rounded-lg" />
-                    {[1, 2, 3, 4, 5, 6].map(i => <SkeletonRow key={i} />)}
+                {/* WhatsApp Web Style Syncing Banner */}
+                <div className="shrink-0 px-3.5 py-3 border-b border-border/15 bg-[#f0f2f5] dark:bg-[#202c33] flex items-center justify-between">
+                    <h3 className="font-semibold text-lg text-foreground tracking-tight">Conversas</h3>
+                    <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                        <Loader2 className="h-3.5 w-3.5 animate-spin text-[#00a884]" />
+                        <span>Sincronizando...</span>
+                    </div>
+                </div>
+                <div className="px-3.5 py-2.5 bg-emerald-500/10 border-b border-emerald-500/20 text-emerald-700 dark:text-emerald-400 text-xs font-medium flex items-center gap-2.5">
+                    <Loader2 className="h-4 w-4 animate-spin shrink-0 text-emerald-600 dark:text-emerald-400" />
+                    <div className="flex-1 min-w-0">
+                        <p className="font-semibold truncate">Baixando mensagens recentes...</p>
+                        <p className="text-[11px] opacity-80 truncate">Mantenha seu celular conectado à internet</p>
+                    </div>
+                </div>
+                <div className="p-3 space-y-3 flex-1 overflow-hidden">
+                    <Skeleton className="h-10 w-full rounded-xl" />
+                    {[1, 2, 3, 4, 5, 6, 7].map(i => <SkeletonRow key={i} />)}
                 </div>
             </div>
         );
@@ -1477,6 +1825,181 @@ export function ChatList({ sessionId, onSelectChat, selectedJid }: ChatListProps
                         )}
                     </div>
                     <div className="flex items-center gap-1">
+                        {/* Publicar no Status / Stories (24h) */}
+                        <Popover>
+                            <PopoverTrigger asChild>
+                                <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    title="Publicar no Status (Stories 24h)"
+                                    className="h-8 w-8 rounded-full text-muted-foreground hover:text-[#00a884] hover:bg-black/5 dark:hover:bg-white/10"
+                                >
+                                    <span className="h-4 w-4 rounded-full border-2 border-dashed border-[#00a884] flex items-center justify-center">
+                                        <span className="h-1.5 w-1.5 rounded-full bg-[#00a884]" />
+                                    </span>
+                                </Button>
+                            </PopoverTrigger>
+                            <PopoverContent align="end" className="w-72 p-3 rounded-2xl shadow-2xl space-y-2.5">
+                                <div className="text-xs font-semibold text-foreground flex items-center justify-between">
+                                    <span>📸 Publicar no Status (24h)</span>
+                                </div>
+                                <textarea
+                                    rows={3}
+                                    value={storyText}
+                                    onChange={(e) => setStoryText(e.target.value)}
+                                    placeholder="Digite uma frase ou aviso para o seu Status..."
+                                    style={{ backgroundColor: storyBg }}
+                                    className="w-full rounded-xl p-3 text-white placeholder:text-white/70 text-xs font-semibold text-center outline-none resize-none shadow-inner"
+                                />
+                                <div className="flex items-center justify-between gap-2">
+                                    <div className="flex items-center gap-1.5">
+                                        {["#00a884", "#0284c7", "#7c3aed", "#e11d48", "#d97706", "#111b21"].map(c => (
+                                            <button
+                                                key={c}
+                                                type="button"
+                                                onClick={() => setStoryBg(c)}
+                                                className={cn("h-4 w-4 rounded-full border border-white/40 cursor-pointer", storyBg === c && "ring-2 ring-[#00a884] scale-110")}
+                                                style={{ backgroundColor: c }}
+                                            />
+                                        ))}
+                                    </div>
+                                    <Button
+                                        size="sm"
+                                        disabled={!storyText.trim() || isPostingStory}
+                                        className="h-7 px-3 text-[11px] bg-[#00a884] hover:bg-[#00a884]/90 text-white"
+                                        onClick={async () => {
+                                            if (!storyText.trim()) return;
+                                            setIsPostingStory(true);
+                                            try {
+                                                const res = await fetch(`/api/profile/${sessionId}/story`, {
+                                                    method: "POST",
+                                                    headers: { "Content-Type": "application/json" },
+                                                    body: JSON.stringify({ text: storyText.trim(), backgroundColor: storyBg })
+                                                });
+                                                const data = await res.json();
+                                                if (res.ok && data.status) {
+                                                    toast.success("📸 Status publicado no WhatsApp!");
+                                                    setStoryText("");
+                                                } else {
+                                                    toast.error(data.error || "Falha ao publicar Status");
+                                                }
+                                            } catch {
+                                                toast.error("Erro ao publicar Status");
+                                            } finally {
+                                                setIsPostingStory(false);
+                                            }
+                                        }}
+                                    >
+                                        {isPostingStory ? "Publicando..." : "Publicar Texto"}
+                                    </Button>
+                                </div>
+                                <div className="pt-1.5 border-t border-border/20">
+                                    <label className="w-full flex items-center justify-center gap-1.5 py-1.5 px-2 rounded-lg bg-muted/60 hover:bg-muted text-[11px] font-medium text-foreground cursor-pointer transition-colors">
+                                        <ImageIcon className="h-3.5 w-3.5 text-[#00a884]" />
+                                        <span>Enviar Foto ou Vídeo para o Status</span>
+                                        <input
+                                            type="file"
+                                            accept="image/*,video/*"
+                                            className="hidden"
+                                            onChange={async (e) => {
+                                                const file = e.target.files?.[0];
+                                                if (!file) return;
+                                                setIsPostingStory(true);
+                                                try {
+                                                    const fd = new FormData();
+                                                    fd.append("file", file);
+                                                    if (storyText.trim()) fd.append("caption", storyText.trim());
+                                                    const res = await fetch(`/api/profile/${sessionId}/story`, {
+                                                        method: "POST",
+                                                        body: fd
+                                                    });
+                                                    const data = await res.json();
+                                                    if (res.ok && data.status) {
+                                                        toast.success("📸 Mídia publicada no Status do WhatsApp!");
+                                                        setStoryText("");
+                                                        fetchStories();
+                                                    } else {
+                                                        toast.error(data.error || "Falha ao enviar mídia ao Status");
+                                                    }
+                                                } catch {
+                                                    toast.error("Erro ao enviar mídia ao Status");
+                                                } finally {
+                                                    setIsPostingStory(false);
+                                                    e.target.value = "";
+                                                }
+                                            }}
+                                        />
+                                    </label>
+                                </div>
+                            </PopoverContent>
+                        </Popover>
+
+                        {/* Recusa Automática de Ligações */}
+                        <Popover>
+                            <PopoverTrigger asChild>
+                                <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    title="Configurar recusa automática de ligações"
+                                    className="h-8 w-8 rounded-full text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/10"
+                                >
+                                    <Settings className={cn("h-4 w-4", rejectCalls && "text-[#00a884]")} />
+                                </Button>
+                            </PopoverTrigger>
+                            <PopoverContent align="end" className="w-72 p-3 rounded-2xl shadow-2xl space-y-2.5">
+                                <div className="flex items-center justify-between">
+                                    <span className="text-xs font-semibold text-foreground">📞 Recusar Ligações Auto</span>
+                                    <input
+                                        type="checkbox"
+                                        checked={rejectCalls}
+                                        onChange={(e) => setRejectCalls(e.target.checked)}
+                                        className="h-4 w-4 accent-[#00a884] cursor-pointer"
+                                    />
+                                </div>
+                                <p className="text-[11px] text-muted-foreground leading-snug">
+                                    Recusa automaticamente chamadas de voz/vídeo e envia a mensagem abaixo:
+                                </p>
+                                <textarea
+                                    rows={3}
+                                    value={rejectCallMessage}
+                                    onChange={(e) => setRejectCallMessage(e.target.value)}
+                                    className="w-full rounded-xl bg-muted/50 border border-border/30 p-2 text-xs text-foreground outline-none focus:border-[#00a884] resize-none"
+                                    placeholder="Mensagem automática ao recusar ligação..."
+                                />
+                                <Button
+                                    size="sm"
+                                    disabled={isSavingCallCfg}
+                                    className="w-full h-7 text-xs bg-[#00a884] hover:bg-[#00a884]/90 text-white"
+                                    onClick={async () => {
+                                        setIsSavingCallCfg(true);
+                                        try {
+                                            const res = await fetch(`/api/sessions/${sessionId}/settings`, {
+                                                method: "PATCH",
+                                                headers: { "Content-Type": "application/json" },
+                                                body: JSON.stringify({
+                                                    config: {
+                                                        rejectCalls,
+                                                        rejectCallMessage: rejectCallMessage.trim()
+                                                    }
+                                                })
+                                            });
+                                            if (res.ok) {
+                                                toast.success(rejectCalls ? "📞 Recusa automática de ligações ativada!" : "Recusa automática de ligações desativada");
+                                            } else {
+                                                toast.error("Falha ao salvar configuração");
+                                            }
+                                        } catch {
+                                            toast.error("Erro ao salvar configuração");
+                                        } finally {
+                                            setIsSavingCallCfg(false);
+                                        }
+                                    }}
+                                >
+                                    {isSavingCallCfg ? "Salvando..." : "Salvar Configuração"}
+                                </Button>
+                            </PopoverContent>
+                        </Popover>
+
                         <Button
                             variant="ghost"
                             size="icon"
@@ -1623,26 +2146,16 @@ export function ChatList({ sessionId, onSelectChat, selectedJid }: ChatListProps
                         )}
                     </button>
                     <button
-                        onClick={() => { setFilterType("contacts"); setSelectedLabelId(null); }}
+                        onClick={() => { setFilterType("favorites"); setSelectedLabelId(null); }}
                         className={cn(
                             "px-3 py-1 rounded-full text-xs font-medium transition-colors shrink-0 flex items-center gap-1 cursor-pointer",
-                            filterType === "contacts" && !selectedLabelId
+                            filterType === "favorites" && !selectedLabelId
                                 ? "bg-[#00a884] text-white"
                                 : "bg-muted/70 hover:bg-muted text-muted-foreground"
                         )}
                     >
-                        <User className="h-3 w-3" />
-                        <span>Contatos</span>
-                        {unreadContactsCount > 0 ? (
-                            <span className={cn(
-                                "px-1.5 py-0.2 rounded-full text-[10px] font-bold tabular-nums",
-                                filterType === "contacts" && !selectedLabelId ? "bg-white dark:bg-[#111b21] text-[#00a884] dark:text-[#25d366]" : "bg-[#25d366] text-white"
-                            )}>
-                                {unreadContactsCount}
-                            </span>
-                        ) : totalContactsCount > 0 ? (
-                            <span className="text-[10px] opacity-80">({totalContactsCount})</span>
-                        ) : null}
+                        <Star className={cn("h-3 w-3", filterType === "favorites" && !selectedLabelId ? "fill-white text-white" : "fill-amber-400 text-amber-400")} />
+                        <span>Favoritas</span>
                     </button>
                     <button
                         onClick={() => { setFilterType("groups"); setSelectedLabelId(null); }}
@@ -1655,16 +2168,14 @@ export function ChatList({ sessionId, onSelectChat, selectedJid }: ChatListProps
                     >
                         <Users className="h-3 w-3" />
                         <span>Grupos</span>
-                        {unreadGroupsCount > 0 ? (
+                        {unreadGroupsCount > 0 && (
                             <span className={cn(
                                 "px-1.5 py-0.2 rounded-full text-[10px] font-bold tabular-nums",
                                 filterType === "groups" && !selectedLabelId ? "bg-white dark:bg-[#111b21] text-[#00a884] dark:text-[#25d366]" : "bg-[#25d366] text-white"
                             )}>
                                 {unreadGroupsCount}
                             </span>
-                        ) : totalGroupsCount > 0 ? (
-                            <span className="text-[10px] opacity-80">({totalGroupsCount})</span>
-                        ) : null}
+                        )}
                     </button>
                     
                     {archivedJids.length > 0 && (
@@ -1727,12 +2238,15 @@ export function ChatList({ sessionId, onSelectChat, selectedJid }: ChatListProps
                                 chat={chat}
                                 isSelected={selectedJid === chat.jid}
                                 isPinned={pinnedJids.includes(chat.jid)}
+                                isFavorite={favoriteJids.includes(chat.jid)}
                                 isArchived={archivedSet.has(chat.jid)}
                                 isMuted={mutedSet.has(chat.jid)}
+                                isOnline={Boolean(onlineMap[chat.jid] || onlineMap[chat.jid.split("@")[0]])}
                                 draftText={draftMap[chat.jid]}
                                 presence={presenceMap[chat.jid]}
                                 onSelect={handleSelectAndClearUnread}
                                 onTogglePin={handleTogglePin}
+                                onToggleFavorite={handleToggleFavorite}
                                 onToggleArchive={handleToggleArchive}
                                 onToggleMute={handleToggleMute}
                                 onToggleRead={handleToggleRead}
@@ -1787,7 +2301,11 @@ export function ChatList({ sessionId, onSelectChat, selectedJid }: ChatListProps
                                         </span>
                                     </div>
                                     <p className="text-xs text-muted-foreground line-clamp-2 leading-relaxed">
-                                        {msg.fromMe && <span className="font-medium text-[#00a884]">Você: </span>}
+                                        {msg.fromMe ? (
+                                            <span className="font-medium text-[#00a884]">Você: </span>
+                                        ) : msg.senderName ? (
+                                            <span className="font-medium text-foreground/80">{msg.senderName}: </span>
+                                        ) : null}
                                         {highlightSearch(msg.content, searchInput.trim())}
                                     </p>
                                 </div>
@@ -1841,7 +2359,11 @@ export function ChatList({ sessionId, onSelectChat, selectedJid }: ChatListProps
                                         </span>
                                     </div>
                                     <p className="text-xs text-muted-foreground line-clamp-2 leading-relaxed">
-                                        {msg.fromMe && <span className="font-medium text-[#00a884]">Você: </span>}
+                                        {msg.fromMe ? (
+                                            <span className="font-medium text-[#00a884]">Você: </span>
+                                        ) : msg.senderName ? (
+                                            <span className="font-medium text-foreground/80">{msg.senderName}: </span>
+                                        ) : null}
                                         {highlightSearch(msg.content, searchInput.trim())}
                                     </p>
                                 </div>
@@ -1905,6 +2427,128 @@ export function ChatList({ sessionId, onSelectChat, selectedJid }: ChatListProps
                 isOpen={isManageLabelsOpen}
                 onClose={() => setIsManageLabelsOpen(false)}
             />
+
+            {/* Full-Screen WhatsApp Web Status (Stories 24h) Viewer Modal */}
+            {activeStoryGroupIdx !== null && storiesList[activeStoryGroupIdx] && (() => {
+                const group = storiesList[activeStoryGroupIdx];
+                const item = group.items[activeStoryItemIdx] || group.items[0];
+                if (!item) return null;
+                const goPrev = () => {
+                    if (activeStoryItemIdx > 0) {
+                        setActiveStoryItemIdx(activeStoryItemIdx - 1);
+                    } else if (activeStoryGroupIdx > 0) {
+                        const prevGroup = storiesList[activeStoryGroupIdx - 1];
+                        setActiveStoryGroupIdx(activeStoryGroupIdx - 1);
+                        setActiveStoryItemIdx(Math.max(0, prevGroup.items.length - 1));
+                    }
+                };
+                const goNext = () => {
+                    if (activeStoryItemIdx < group.items.length - 1) {
+                        setActiveStoryItemIdx(activeStoryItemIdx + 1);
+                    } else if (activeStoryGroupIdx < storiesList.length - 1) {
+                        setActiveStoryGroupIdx(activeStoryGroupIdx + 1);
+                        setActiveStoryItemIdx(0);
+                    } else {
+                        setActiveStoryGroupIdx(null);
+                    }
+                };
+                return (
+                    <div
+                        className="fixed inset-0 z-[99999] bg-black/95 backdrop-blur-md flex flex-col items-center justify-between p-4 select-none animate-in fade-in duration-150"
+                        onClick={() => setActiveStoryGroupIdx(null)}
+                    >
+                        {/* Top Progress Bars & Author Header */}
+                        <div className="w-full max-w-lg flex flex-col gap-3 z-20" onClick={e => e.stopPropagation()}>
+                            <div className="flex items-center gap-1.5">
+                                {group.items.map((st, idx) => (
+                                    <div key={st.keyId} className="h-1 flex-1 rounded-full bg-white/25 overflow-hidden">
+                                        <div
+                                            className={cn(
+                                                "h-full rounded-full transition-all duration-300",
+                                                idx <= activeStoryItemIdx ? "w-full bg-[#25d366]" : "w-0"
+                                            )}
+                                        />
+                                    </div>
+                                ))}
+                            </div>
+                            <div className="flex items-center justify-between">
+                                <div className="flex items-center gap-2.5 text-white">
+                                    <Avatar className="h-9 w-9 border border-white/30">
+                                        <AvatarImage
+                                            src={
+                                                group.profilePic && group.profilePic.startsWith("http")
+                                                    ? group.profilePic
+                                                    : group.fromMe
+                                                        ? undefined
+                                                        : `/api/avatar/${sessionId}/${encodeURIComponent(group.jid)}`
+                                            }
+                                            referrerPolicy="no-referrer"
+                                        />
+                                        <AvatarFallback className="text-xs font-bold bg-[#00a884] text-white">
+                                            {group.name.slice(0, 2).toUpperCase()}
+                                        </AvatarFallback>
+                                    </Avatar>
+                                    <div>
+                                        <p className="text-sm font-semibold leading-tight">{group.name}</p>
+                                        <p className="text-[11px] text-white/70">
+                                            {new Date(item.timestamp).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}
+                                        </p>
+                                    </div>
+                                </div>
+                                <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    className="h-9 w-9 rounded-full text-white/80 hover:text-white hover:bg-white/10"
+                                    onClick={() => setActiveStoryGroupIdx(null)}
+                                >
+                                    <X className="h-5 w-5" />
+                                </Button>
+                            </div>
+                        </div>
+
+                        {/* Story Content */}
+                        <div className="relative flex-1 w-full max-w-lg flex items-center justify-center my-4" onClick={e => e.stopPropagation()}>
+                            <button
+                                type="button"
+                                onClick={goPrev}
+                                className="absolute left-2 z-20 h-10 w-10 rounded-full bg-black/50 hover:bg-black/80 text-white flex items-center justify-center cursor-pointer"
+                            >
+                                <ChevronLeft className="h-6 w-6" />
+                            </button>
+
+                            {item.type === "IMAGE" && item.mediaUrl ? (
+                                <div className="flex flex-col items-center gap-3 max-h-[72vh]">
+                                    <img src={item.mediaUrl} alt="Status" className="max-h-[65vh] max-w-full object-contain rounded-2xl shadow-2xl" />
+                                    {item.content && <p className="text-white text-sm text-center bg-black/60 px-4 py-1.5 rounded-xl">{item.content}</p>}
+                                </div>
+                            ) : item.type === "VIDEO" && item.mediaUrl ? (
+                                <div className="flex flex-col items-center gap-3 max-h-[72vh]">
+                                    <video src={item.mediaUrl} controls autoPlay className="max-h-[65vh] max-w-full rounded-2xl shadow-2xl" />
+                                    {item.content && <p className="text-white text-sm text-center bg-black/60 px-4 py-1.5 rounded-xl">{item.content}</p>}
+                                </div>
+                            ) : (
+                                <div className="w-full h-[60vh] rounded-3xl bg-gradient-to-br from-[#00a884] to-[#0f172a] p-8 flex items-center justify-center text-center shadow-2xl">
+                                    <p className="text-white text-xl sm:text-2xl font-bold leading-relaxed whitespace-pre-wrap break-words">
+                                        {item.content || "Status"}
+                                    </p>
+                                </div>
+                            )}
+
+                            <button
+                                type="button"
+                                onClick={goNext}
+                                className="absolute right-2 z-20 h-10 w-10 rounded-full bg-black/50 hover:bg-black/80 text-white flex items-center justify-center cursor-pointer"
+                            >
+                                <ChevronRight className="h-6 w-6" />
+                            </button>
+                        </div>
+
+                        <div className="text-xs text-white/60">
+                            {activeStoryItemIdx + 1} de {group.items.length}
+                        </div>
+                    </div>
+                );
+            })()}
         </div>
     );
 }

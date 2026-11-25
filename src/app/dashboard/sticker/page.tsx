@@ -19,7 +19,7 @@ export default function StickerPage() {
     const [loading, setLoading] = useState(false);
 
     // Advanced options
-    const [pack, setPack] = useState("BarraSoftware");
+    const [pack, setPack] = useState("ZapFlow");
     const [author, setAuthor] = useState("User");
     const [quality, setQuality] = useState(50);
     const [type, setType] = useState("full");

@@ -1,14 +1,77 @@
 import { prisma } from "@/lib/prisma";
 import type { WASocket, WAMessage, Contact } from "@whiskeysockets/baileys";
-import { normalizeMessageContent } from "@whiskeysockets/baileys";
+import { normalizeMessageContent, BufferJSON } from "@whiskeysockets/baileys";
 import { onMessageReceived, onMessageSent, dispatchWebhook, downloadAndSaveMedia, extractMediaMessage } from "@/lib/webhook";
 import { handleBotCommand, setSessionStartTime } from "../bot/command-handler";
 import { resolveToPhoneJid, isLidJid, normalizeJid } from "@/lib/jid-utils";
+import { calibrateFromWhatsAppTimestamp, getMonotonicChatTimestamp, getSyncedNow, getSyncedNowUnixSec } from "@/lib/wa-clock";
 
 import { Server } from "socket.io";
 import { logger } from "@/lib/logger";
+import { upsertAndCrossLinkContact } from "./contacts";
+
+export interface ContactPresenceState {
+    status: string;
+    lastSeen?: number;
+    updatedAt: number;
+}
+
+const sessionPresenceCache = new Map<string, Map<string, ContactPresenceState>>();
+const rawMediaMessagesCache = new Map<string, { msg: WAMessage; sessionId: string }>();
+const localSentMediaCache = new Map<string, string>();
+
+export function registerLocalSentMedia(keyId: string, fileUrl: string) {
+    if (!keyId || !fileUrl) return;
+    localSentMediaCache.set(keyId, fileUrl);
+    if (localSentMediaCache.size > 500) {
+        const oldest = localSentMediaCache.keys().next().value;
+        if (oldest) localSentMediaCache.delete(oldest);
+    }
+}
+
+export function getLocalSentMedia(keyId: string): string | undefined {
+    return localSentMediaCache.get(keyId);
+}
+
+export function getRawMediaMessage(keyId: string): { msg: WAMessage; sessionId: string } | undefined {
+    return rawMediaMessagesCache.get(keyId);
+}
+
+export function cacheRawMediaMessage(keyId: string, msg: WAMessage, sessionId: string) {
+    if (!keyId) return;
+    rawMediaMessagesCache.set(keyId, { msg, sessionId });
+    if (rawMediaMessagesCache.size > 1500) {
+        const oldestKey = rawMediaMessagesCache.keys().next().value;
+        if (oldestKey) rawMediaMessagesCache.delete(oldestKey);
+    }
+}
+
+export function getCachedPresence(sessionId: string, jids: string[]): ContactPresenceState | null {
+    const map = sessionPresenceCache.get(sessionId);
+    if (!map) return null;
+    for (const j of jids) {
+        if (!j) continue;
+        const found = map.get(j) || map.get(j.split("@")[0]);
+        if (found) return found;
+    }
+    return null;
+}
+
+export function setCachedPresence(sessionId: string, jid: string, state: ContactPresenceState) {
+    let map = sessionPresenceCache.get(sessionId);
+    if (!map) {
+        map = new Map();
+        sessionPresenceCache.set(sessionId, map);
+    }
+    map.set(jid, state);
+    const bare = jid.split("@")[0];
+    if (bare) map.set(bare, state);
+}
 
 export const bindSessionStore = (sock: WASocket, sessionId: string, io: Server | null) => {
+    if ((sock as any)._storeBound) return;
+    (sock as any)._storeBound = true;
+
     // Set start time for uptime command
     setSessionStartTime(sessionId);
 
@@ -63,9 +126,24 @@ export const bindSessionStore = (sock: WASocket, sessionId: string, io: Server |
                     await sock.readMessages([msg.key]);
                 }
 
-                const savedMessage = await processAndSaveMessage(msg, dbSessionId, sessionId, type === 'notify', sock, config, io);
+                const savedMessage = await processAndSaveMessage(msg, dbSessionId, sessionId, type === 'notify', sock, config, io, true);
                 if (savedMessage) {
                     processedMessages.push(savedMessage);
+                    if (type === 'notify' && !msg.key.fromMe && savedMessage.remoteJid && !savedMessage.remoteJid.endsWith('@g.us')) {
+                        const nowSec = Math.floor(Date.now() / 1000);
+                        const activeState: ContactPresenceState = { status: 'available', lastSeen: nowSec, updatedAt: nowSec };
+                        setCachedPresence(sessionId, savedMessage.remoteJid, activeState);
+                        if (msg.key.remoteJid && msg.key.remoteJid !== savedMessage.remoteJid) {
+                            setCachedPresence(sessionId, msg.key.remoteJid, activeState);
+                        }
+                        const altJid = (msg.key as any)?.remoteJidAlt;
+                        if (altJid) setCachedPresence(sessionId, altJid, activeState);
+                        io?.to(sessionId).emit('presence.update', {
+                            id: savedMessage.remoteJid,
+                            altJids: [savedMessage.remoteJid, msg.key.remoteJid, altJid].filter(Boolean),
+                            presences: { [savedMessage.remoteJid]: { lastKnownPresence: 'available', lastSeen: nowSec } }
+                        });
+                    }
                 }
 
                 // Execute Bot Commands (Only for Notify / New Messages)
@@ -150,23 +228,7 @@ export const bindSessionStore = (sock: WASocket, sessionId: string, io: Server |
             for (let i = 0; i < validContacts.length; i += BATCH_SIZE) {
                 const chunk = validContacts.slice(i, i + BATCH_SIZE);
                 await Promise.all(
-                    chunk.map(c =>
-                        prisma.contact.upsert({
-                            where: { sessionId_jid: { sessionId: dbSessionId!, jid: c.id } },
-                            create: {
-                                sessionId: dbSessionId!,
-                                jid: c.id,
-                                name: c.name || c.notify || (c as any).verifiedName || null,
-                                notify: c.notify || null,
-                                profilePic: (c.imgUrl && typeof c.imgUrl === "string" && c.imgUrl.startsWith("http")) ? c.imgUrl : undefined
-                            },
-                            update: {
-                                name: c.name || c.notify || (c as any).verifiedName || undefined,
-                                notify: c.notify || undefined,
-                                profilePic: (c.imgUrl && typeof c.imgUrl === "string" && c.imgUrl.startsWith("http")) ? c.imgUrl : undefined
-                            }
-                        }).catch(() => {})
-                    )
+                    chunk.map(c => upsertAndCrossLinkContact(dbSessionId!, c))
                 );
                 await new Promise(r => setImmediate(r));
             }
@@ -179,14 +241,19 @@ export const bindSessionStore = (sock: WASocket, sessionId: string, io: Server |
             logger.info("Store", `Syncing ${messagesToProcess.length} historical messages...`);
 
             const BATCH_SIZE = 30;
+            const sevenDaysAgoSec = Math.floor(Date.now() / 1000) - 7 * 24 * 60 * 60;
             for (let i = 0; i < messagesToProcess.length; i += BATCH_SIZE) {
                 const batch = messagesToProcess.slice(i, i + BATCH_SIZE);
                 await Promise.all(
-                    batch.map(msg =>
-                        processAndSaveMessage(msg, dbSessionId!, sessionId, false, sock, undefined, io).catch(e => {
+                    batch.map(msg => {
+                        const msgTs = msg.messageTimestamp
+                            ? (typeof msg.messageTimestamp === 'number' ? msg.messageTimestamp : Number(msg.messageTimestamp))
+                            : 0;
+                        const isRecent = msgTs >= sevenDaysAgoSec;
+                        return processAndSaveMessage(msg, dbSessionId!, sessionId, false, sock, undefined, io, isRecent).catch(e => {
                             logger.error("Store", "Error saving historical message", e?.message || e);
-                        })
-                    )
+                        });
+                    })
                 );
                 // Yield to Node.js event loop
                 await new Promise(resolve => setImmediate(resolve));
@@ -209,44 +276,63 @@ export const bindSessionStore = (sock: WASocket, sessionId: string, io: Server |
             dbSessionId = session.id;
         }
 
-        for (const c of contacts) {
-            try {
-                if (!c.id) continue;
-                await prisma.contact.upsert({
-                    where: { sessionId_jid: { sessionId: dbSessionId, jid: c.id } },
-                    create: {
-                        sessionId: dbSessionId,
-                        jid: c.id,
-                        // @ts-ignore
-                        lid: c.lid || undefined,
-                        name: c.name || c.notify || c.verifiedName,
-                        notify: c.notify,
-                        // @ts-ignore
-                        verifiedName: c.verifiedName,
-                        profilePic: (c.imgUrl && typeof c.imgUrl === "string" && c.imgUrl.startsWith("http")) ? c.imgUrl : undefined,
-                        data: c as any
-                    },
-                    update: {
-                        // @ts-ignore
-                        lid: c.lid || undefined,
-                        name: c.name || undefined,
-                        notify: c.notify || undefined,
-                        // @ts-ignore
-                        verifiedName: c.verifiedName || undefined,
-                        profilePic: (c.imgUrl && typeof c.imgUrl === "string" && c.imgUrl.startsWith("http")) ? c.imgUrl : undefined,
-                        data: c as any
+        const BATCH_SIZE = 25;
+        for (let i = 0; i < contacts.length; i += BATCH_SIZE) {
+            const chunk = contacts.slice(i, i + BATCH_SIZE);
+            await Promise.all(
+                chunk.map(async (c) => {
+                    try {
+                        if (!c.id) return;
+                        await upsertAndCrossLinkContact(dbSessionId!, c);
+                        dispatchWebhook(sessionId, "contact.update", { jid: c.id, name: c.name, notify: c.notify });
+                    } catch (e) {
+                        logger.error("Store", "Error saving contact", e);
                     }
-                });
-
-                // Dispatch webhook for contact update
-                dispatchWebhook(sessionId, "contact.update", { jid: c.id, name: c.name, notify: c.notify });
-            } catch (e) {
-                logger.error("Store", "Error saving contact", e);
-            }
+                })
+            );
+            await new Promise(r => setImmediate(r));
+        }
+        if (contacts.length > 0) {
+            io?.to(sessionId).emit('chats.update');
         }
     });
 
-    // Handle Message Status Updates
+    const applyMessageStatusUpgrade = async (keyId: string, remoteJid: string | null | undefined, status: string) => {
+        const allowedPrevMap: Record<string, string[]> = {
+            SENT: ['PENDING'],
+            DELIVERED: ['PENDING', 'SENT'],
+            READ: ['PENDING', 'SENT', 'DELIVERED'],
+        };
+        const allowedPrev = allowedPrevMap[status];
+        if (!allowedPrev) return;
+
+        const updated = await prisma.message.updateMany({
+            where: {
+                sessionId: dbSessionId!,
+                keyId,
+                status: { in: allowedPrev as any }
+            },
+            data: { status: status as any }
+        });
+
+        if (updated.count === 0) return;
+
+        // Emit real-time status checkmarks (SENT -> DELIVERED -> READ) to frontend
+        io?.to(sessionId).emit("message.status", {
+            keyId,
+            remoteJid,
+            status
+        });
+
+        // Dispatch webhook for message status update
+        dispatchWebhook(sessionId, "message.status", {
+            keyId,
+            remoteJid,
+            status
+        });
+    };
+
+    // Handle Message Status Updates (1-on-1 chats)
     sock.ev.on('messages.update', async (updates) => {
         if (!dbSessionId) return;
 
@@ -255,36 +341,94 @@ export const bindSessionStore = (sock: WASocket, sessionId: string, io: Server |
                 const keyId = update.key?.id;
                 if (!keyId) continue;
 
+                if (typeof update.update?.status !== 'number') continue;
+
+                // Baileys WAMessageStatus: 0=ERROR, 1=PENDING, 2=SERVER_ACK, 3=DELIVERY_ACK, 4=READ, 5=PLAYED
                 const statusMap: Record<number, string> = {
                     0: 'PENDING',
-                    1: 'SENT',
-                    2: 'DELIVERED',
-                    3: 'READ',
-                    4: 'READ', // Played
+                    1: 'PENDING',
+                    2: 'SENT',
+                    3: 'DELIVERED',
+                    4: 'READ',
+                    5: 'READ', // Played
                 };
 
-                const status = statusMap[update.update?.status || 0] || 'PENDING';
-
-                await prisma.message.updateMany({
-                    where: { sessionId: dbSessionId, keyId },
-                    data: { status: status as any }
-                });
-
-                // Emit real-time status checkmarks (SENT -> DELIVERED -> READ) to frontend
-                io?.to(sessionId).emit("message.status", {
-                    keyId,
-                    remoteJid: update.key?.remoteJid,
-                    status
-                });
-
-                // Dispatch webhook for message status update
-                dispatchWebhook(sessionId, "message.status", {
-                    keyId,
-                    remoteJid: update.key?.remoteJid,
-                    status
-                });
+                const status = statusMap[update.update.status] || 'PENDING';
+                await applyMessageStatusUpgrade(keyId, update.key?.remoteJid, status);
             } catch (e) {
                 logger.error("Store", "Error updating message status", e);
+            }
+        }
+    });
+
+    // Handle Group Receipt Updates (DELIVERED / READ in groups)
+    sock.ev.on('message-receipt.update', async (updates) => {
+        if (!dbSessionId) return;
+
+        for (const item of updates) {
+            try {
+                const keyId = item.key?.id;
+                if (!keyId || !item.receipt) continue;
+                const status = (item.receipt.readTimestamp || item.receipt.playedTimestamp)
+                    ? 'READ'
+                    : item.receipt.receiptTimestamp
+                        ? 'DELIVERED'
+                        : null;
+                if (!status) continue;
+                await applyMessageStatusUpgrade(keyId, item.key?.remoteJid, status);
+            } catch (e) {
+                logger.error("Store", "Error updating group receipt status", e);
+            }
+        }
+    });
+
+    // Handle New / Upserted Groups (e.g. number added to a new group or created a group)
+    sock.ev.on('groups.upsert', async (newGroups) => {
+        if (!dbSessionId) return;
+        for (const g of newGroups) {
+            try {
+                if (!g.id) continue;
+                let fullMeta: any = g;
+                if (!g.subject || !g.participants) {
+                    fullMeta = await sock.groupMetadata(g.id).catch(() => g);
+                }
+                await prisma.group.upsert({
+                    where: { sessionId_jid: { sessionId: dbSessionId, jid: g.id } },
+                    create: {
+                        sessionId: dbSessionId,
+                        jid: g.id,
+                        subject: fullMeta.subject || "Grupo",
+                        description: fullMeta.desc || null,
+                        ownerJid: fullMeta.owner || null,
+                        creation: fullMeta.creation ? new Date(fullMeta.creation * 1000) : undefined,
+                        restrict: Boolean(fullMeta.restrict),
+                        announce: Boolean(fullMeta.announce),
+                        participants: (fullMeta.participants || []) as any,
+                        metadata: fullMeta as any,
+                        isCommunity: Boolean(fullMeta.isCommunity),
+                        linkedParentJid: fullMeta.linkedParent || null
+                    },
+                    update: {
+                        subject: fullMeta.subject || undefined,
+                        description: fullMeta.desc ?? undefined,
+                        ownerJid: fullMeta.owner ?? undefined,
+                        restrict: fullMeta.restrict !== undefined ? Boolean(fullMeta.restrict) : undefined,
+                        announce: fullMeta.announce !== undefined ? Boolean(fullMeta.announce) : undefined,
+                        participants: fullMeta.participants ? (fullMeta.participants as any) : undefined,
+                        metadata: fullMeta as any,
+                        isCommunity: fullMeta.isCommunity !== undefined ? Boolean(fullMeta.isCommunity) : undefined,
+                        linkedParentJid: fullMeta.linkedParent ?? undefined
+                    }
+                });
+                io?.to(sessionId).emit("groups.upsert", [{
+                    jid: g.id,
+                    subject: fullMeta.subject || "Grupo",
+                    participants: fullMeta.participants || []
+                }]);
+                dispatchWebhook(sessionId, "group.update", { jid: g.id, ...fullMeta });
+                logger.info("Store", `Synced new group ${g.id} (${fullMeta.subject || ""}) for session ${sessionId}`);
+            } catch (e) {
+                logger.error("Store", "Error in groups.upsert handling", e);
             }
         }
     });
@@ -308,10 +452,33 @@ export const bindSessionStore = (sock: WASocket, sessionId: string, io: Server |
                 if (update.isCommunity !== undefined) updateData.isCommunity = update.isCommunity;
 
                 if (Object.keys(updateData).length > 0) {
-                    await prisma.group.updateMany({
+                    const updated = await prisma.group.updateMany({
                         where: { sessionId: dbSessionId, jid: update.id },
                         data: updateData
                     });
+                    if (updated.count === 0) {
+                        const g = await sock.groupMetadata(update.id).catch(() => null);
+                        if (g) {
+                            await prisma.group.upsert({
+                                where: { sessionId_jid: { sessionId: dbSessionId, jid: g.id } },
+                                create: {
+                                    sessionId: dbSessionId,
+                                    jid: g.id,
+                                    subject: g.subject,
+                                    description: g.desc,
+                                    ownerJid: g.owner,
+                                    creation: g.creation ? new Date(g.creation * 1000) : undefined,
+                                    restrict: g.restrict,
+                                    announce: g.announce,
+                                    participants: g.participants as any,
+                                    metadata: g as any,
+                                    isCommunity: g.isCommunity || false,
+                                    linkedParentJid: g.linkedParent || null
+                                },
+                                update: updateData
+                            });
+                        }
+                    }
                 }
                 
                 // Trigger webhook
@@ -339,13 +506,41 @@ export const bindSessionStore = (sock: WASocket, sessionId: string, io: Server |
                 participants: update.participants
             });
             
-            // To properly resync the group participants in DB, it's safer to re-fetch the entire group metadata
-            // But we don't await strictly to not block the socket
+            // Upsert full group metadata so even if our number was just added to a brand-new group, it is immediately created in DB
             sock.groupMetadata(update.id).then(async (g) => {
-                await prisma.group.updateMany({
-                    where: { sessionId: dbSessionId as string, jid: update.id as string },
-                    data: { participants: g.participants as any }
+                await prisma.group.upsert({
+                    where: { sessionId_jid: { sessionId: dbSessionId as string, jid: g.id } },
+                    create: {
+                        sessionId: dbSessionId as string,
+                        jid: g.id,
+                        subject: g.subject,
+                        description: g.desc,
+                        ownerJid: g.owner,
+                        creation: g.creation ? new Date(g.creation * 1000) : undefined,
+                        restrict: g.restrict,
+                        announce: g.announce,
+                        participants: g.participants as any,
+                        metadata: g as any,
+                        isCommunity: g.isCommunity || false,
+                        linkedParentJid: g.linkedParent || null
+                    },
+                    update: {
+                        subject: g.subject,
+                        description: g.desc,
+                        ownerJid: g.owner,
+                        restrict: g.restrict,
+                        announce: g.announce,
+                        participants: g.participants as any,
+                        metadata: g as any,
+                        isCommunity: g.isCommunity || false,
+                        linkedParentJid: g.linkedParent || null
+                    }
                 });
+                io?.to(sessionId).emit("groups.upsert", [{
+                    jid: g.id,
+                    subject: g.subject,
+                    participants: g.participants || []
+                }]);
             }).catch(e => {
                  logger.debug("Store", "Failed to refresh group participants metadata", e);
             });
@@ -357,9 +552,235 @@ export const bindSessionStore = (sock: WASocket, sessionId: string, io: Server |
     // Handle Presence Update (typing/recording/online)
     sock.ev.on('presence.update', async ({ id, presences }) => {
         try {
-            io?.to(sessionId).emit('presence.update', { id, presences });
+            const nowSec = getSyncedNowUnixSec();
+            const altJidsSet = new Set<string>();
+            if (id) altJidsSet.add(id);
+
+            if (id && !id.endsWith('@g.us')) {
+                const bareId = id.split('@')[0];
+                const sessionKeys = dbSessionId ? [sessionId, dbSessionId] : [sessionId];
+
+                if (bareId) {
+                    const authMappings = await prisma.authState.findMany({
+                        where: {
+                            sessionId: { in: sessionKeys },
+                            key: { in: [`lid-mapping-${bareId}`, `lid-mapping-${bareId}_reverse`] }
+                        },
+                        select: { key: true, value: true }
+                    }).catch(() => []);
+                    for (const m of authMappings) {
+                        const mappedVal = typeof m.value === 'string' ? m.value.replace(/"/g, '').trim() : '';
+                        if (!mappedVal) continue;
+                        if (m.key.endsWith('_reverse')) {
+                            altJidsSet.add(mappedVal.includes('@') ? mappedVal : `${mappedVal}@s.whatsapp.net`);
+                        } else {
+                            altJidsSet.add(mappedVal.includes('@') ? mappedVal : `${mappedVal}@lid`);
+                        }
+                    }
+                }
+
+                if (dbSessionId) {
+                    const lookupJids = Array.from(altJidsSet);
+                    const contacts = await prisma.contact.findMany({
+                        where: {
+                            sessionId: dbSessionId,
+                            OR: [
+                                { jid: { in: lookupJids } },
+                                { lid: { in: lookupJids } },
+                                { remoteJidAlt: { in: lookupJids } }
+                            ]
+                        },
+                        select: { jid: true, lid: true, remoteJidAlt: true, data: true }
+                    }).catch(() => []);
+                    for (const c of contacts) {
+                        if (c.jid) altJidsSet.add(c.jid);
+                        if (c.lid) altJidsSet.add(c.lid);
+                        if (c.remoteJidAlt) altJidsSet.add(c.remoteJidAlt);
+                    }
+                }
+            }
+
+            const altJids = Array.from(altJidsSet);
+            if (id && presences) {
+                for (const [senderJid, p] of Object.entries(presences)) {
+                    const status = p?.lastKnownPresence || 'unavailable';
+                    const isOnline = status === 'available' || status === 'composing' || status === 'recording' || status === 'paused';
+                    const prev = getCachedPresence(sessionId, [...altJids, senderJid]);
+                    const lastSeen = isOnline ? nowSec : (p?.lastSeen || prev?.lastSeen || undefined);
+                    const state: ContactPresenceState = { status, lastSeen, updatedAt: nowSec };
+                    for (const aj of altJids) {
+                        setCachedPresence(sessionId, aj, state);
+                    }
+                    if (senderJid && !altJidsSet.has(senderJid)) {
+                        setCachedPresence(sessionId, senderJid, state);
+                    }
+
+                    // Persist real WhatsApp lastSeen in Contact.data so it survives page reloads & server restarts
+                    if (lastSeen && dbSessionId && !id.endsWith('@g.us')) {
+                        void prisma.contact.updateMany({
+                            where: {
+                                sessionId: dbSessionId,
+                                OR: [
+                                    { jid: { in: altJids } },
+                                    { lid: { in: altJids } },
+                                    { remoteJidAlt: { in: altJids } }
+                                ]
+                            },
+                            data: {
+                                data: { lastSeen } as any
+                            }
+                        }).catch(() => {});
+                    }
+                }
+            }
+            io?.to(sessionId).emit('presence.update', { id, altJids, presences });
         } catch {
             // Ignore socket emit error
+        }
+    });
+
+    // Background Presence Subscription for active 1-on-1 contacts so "Visto por último" tracks when contacts open WhatsApp globally
+    sock.ev.on('connection.update', async ({ connection }) => {
+        if (connection === 'open') {
+            setTimeout(async () => {
+                try {
+                    if (!dbSessionId) {
+                        const s = await prisma.session.findUnique({ where: { sessionId }, select: { id: true } });
+                        if (s) dbSessionId = s.id;
+                    }
+                    if (!dbSessionId) return;
+
+                    await sock.sendPresenceUpdate('available').catch(() => {});
+
+                    const recentContacts = await prisma.contact.findMany({
+                        where: {
+                            sessionId: dbSessionId,
+                            NOT: { jid: { endsWith: '@g.us' } }
+                        },
+                        orderBy: { updatedAt: 'desc' },
+                        take: 50,
+                        select: { jid: true, lid: true, remoteJidAlt: true, data: true }
+                    });
+
+                    // Seed in-memory cache from persisted Contact.data.lastSeen
+                    const nowSec = getSyncedNowUnixSec();
+                    const jidsToSubscribe = new Set<string>();
+                    for (const c of recentContacts) {
+                        if (c.jid && !c.jid.includes('broadcast')) jidsToSubscribe.add(c.jid);
+                        if (c.lid) jidsToSubscribe.add(c.lid);
+                        const savedLastSeen = (c.data as any)?.lastSeen;
+                        if (typeof savedLastSeen === 'number' && savedLastSeen > 0) {
+                            const existing = getCachedPresence(sessionId, [c.jid, c.lid || ''].filter(Boolean));
+                            if (!existing) {
+                                const seeded: ContactPresenceState = { status: 'unavailable', lastSeen: savedLastSeen, updatedAt: nowSec };
+                                if (c.jid) setCachedPresence(sessionId, c.jid, seeded);
+                                if (c.lid) setCachedPresence(sessionId, c.lid, seeded);
+                            }
+                        }
+                    }
+
+                    const subArray = Array.from(jidsToSubscribe).slice(0, 80);
+                    if (subArray.length === 0) return;
+
+                    // Load existing tctokens from authState
+                    const tcKeys = subArray.map(j => `tctoken-${j}`);
+                    const tcRecords = await prisma.authState.findMany({
+                        where: {
+                            sessionId: { in: [sessionId, dbSessionId] },
+                            key: { in: tcKeys }
+                        },
+                        select: { key: true, value: true }
+                    }).catch(() => []);
+
+                    const tcMap = new Map<string, Buffer>();
+                    for (const r of tcRecords) {
+                        try {
+                            const j = r.key.replace(/^tctoken-/, '');
+                            const revived = JSON.parse(JSON.stringify(r.value), BufferJSON.reviver);
+                            if (revived?.token && Buffer.isBuffer(revived.token)) {
+                                tcMap.set(j, revived.token);
+                            }
+                        } catch {}
+                    }
+
+                    // Request privacy tokens for contacts that don't have one yet
+                    const missingTokenJids = subArray.filter(j => j.endsWith('@s.whatsapp.net') && !tcMap.has(j)).slice(0, 25);
+                    if (missingTokenJids.length > 0 && typeof (sock as any).getPrivacyTokens === 'function') {
+                        await (sock as any).getPrivacyTokens(missingTokenJids).catch(() => {});
+                    }
+
+                    for (const targetJid of subArray) {
+                        const token = tcMap.get(targetJid);
+                        await sock.presenceSubscribe(targetJid, token).catch(() => {});
+                    }
+                } catch {}
+            }, 4500);
+        }
+    });
+
+    // Handle Incoming Voice/Video Calls (WhatsApp Web Call Notification + Optional Auto-Reject)
+    sock.ev.on('call', async (calls) => {
+        const sessionRow = await prisma.session.findUnique({
+            where: { sessionId },
+            select: { id: true, config: true }
+        });
+        if (!sessionRow) return;
+        dbSessionId = sessionRow.id;
+        const sessCfg = (sessionRow.config || {}) as Record<string, any>;
+
+        for (const call of calls) {
+            try {
+                if (call.status !== 'offer' && call.status !== 'timeout') continue;
+                const callKeyId = `call-${call.id}`;
+                const rawRemoteJid = call.chatId || call.from;
+                if (!rawRemoteJid) continue;
+                let remoteJid = normalizeJid(rawRemoteJid);
+                if (isLidJid(remoteJid)) {
+                    remoteJid = normalizeJid(await resolveToPhoneJid(remoteJid, dbSessionId));
+                }
+
+                let autoRejected = false;
+                if (call.status === 'offer' && sessCfg.rejectCalls) {
+                    try {
+                        await sock.rejectCall(call.id, call.from);
+                        autoRejected = true;
+                        const replyText = (sessCfg.rejectCallMessage || "").trim();
+                        if (replyText) {
+                            await sock.sendMessage(remoteJid, { text: replyText });
+                        }
+                    } catch (err) {
+                        logger.debug("Store", "Error auto-rejecting call", err);
+                    }
+                }
+
+                const callText = call.isVideo
+                    ? (autoRejected ? "📹 Ligação de vídeo recusada automaticamente" : (call.status === 'timeout' ? "📹 Ligação de vídeo perdida" : "📹 Ligação de vídeo recebida"))
+                    : (autoRejected ? "📞 Ligação de voz recusada automaticamente" : (call.status === 'timeout' ? "📞 Ligação de voz perdida" : "📞 Ligação de voz recebida"));
+
+                const saved = await prisma.message.upsert({
+                    where: { sessionId_keyId: { sessionId: dbSessionId, keyId: callKeyId } },
+                    create: {
+                        sessionId: dbSessionId,
+                        keyId: callKeyId,
+                        remoteJid,
+                        fromMe: false,
+                        type: "TEXT",
+                        content: callText,
+                        status: "READ",
+                        timestamp: call.date || getSyncedNow()
+                    },
+                    update: {
+                        content: callText
+                    }
+                });
+
+                io?.to(sessionId).emit('message.update', [{
+                    ...saved,
+                    timestamp: saved.timestamp instanceof Date ? saved.timestamp.toISOString() : saved.timestamp
+                }]);
+            } catch (e) {
+                logger.debug("Store", "Error saving call notification", e);
+            }
         }
     });
 };
@@ -371,15 +792,20 @@ async function processAndSaveMessage(
     triggerWebhook: boolean,
     sock?: WASocket,
     config?: any,
-    io?: Server | null
+    io?: Server | null,
+    shouldDownloadMedia: boolean = true
 ) {
     const keyId = msg.key.id;
     const remoteJid = msg.key.remoteJid;
     const fromMe = msg.key.fromMe;
     const pushName = msg.pushName;
-    const timestamp = msg.messageTimestamp
-        ? new Date((typeof msg.messageTimestamp === 'number' ? msg.messageTimestamp : Number(msg.messageTimestamp)) * 1000)
-        : new Date();
+    const rawSec = msg.messageTimestamp
+        ? (typeof msg.messageTimestamp === 'number' ? msg.messageTimestamp : Number(msg.messageTimestamp))
+        : 0;
+    if (!fromMe && triggerWebhook && rawSec > 0) {
+        calibrateFromWhatsAppTimestamp(rawSec);
+    }
+    let timestamp = rawSec > 0 ? new Date(rawSec * 1000) : getSyncedNow();
 
     // Filter out Protocol & Empty Messages
     if (!msg.message) return false;
@@ -500,8 +926,12 @@ async function processAndSaveMessage(
         return null;
     }
 
+    const mediaInfo = extractMediaMessage(msg.message);
+    if (mediaInfo && keyId) {
+        cacheRawMediaMessage(keyId, msg, sessionId);
+    }
+
     // Check if message already exists to avoid duplicates
-    // Baileys 'notify' event can sometimes trigger multiple times or for history
     // Baileys 'notify' event can sometimes trigger multiple times or for history
     const existingMessage = await prisma.message.findUnique({
         where: { sessionId_keyId: { sessionId: dbSessionId, keyId: keyId! } },
@@ -511,14 +941,18 @@ async function processAndSaveMessage(
     if (existingMessage) {
         // If existing message is media and mediaUrl is missing, attempt recovery
         const isMedia = ['IMAGE', 'VIDEO', 'AUDIO', 'DOCUMENT', 'STICKER'].includes(existingMessage.type);
-        if (isMedia && !existingMessage.mediaUrl) {
+        if (isMedia && !existingMessage.mediaUrl && shouldDownloadMedia) {
             try {
                 const recoveredUrl = await downloadAndSaveMedia(msg, sessionId);
                 if (recoveredUrl) {
-                    await prisma.message.update({
+                    const updatedMsg = await prisma.message.update({
                         where: { id: existingMessage.id },
                         data: { mediaUrl: recoveredUrl }
                     });
+                    io?.to(sessionId).emit('message.update', [{
+                        ...updatedMsg,
+                        timestamp: updatedMsg.timestamp instanceof Date ? updatedMsg.timestamp.toISOString() : updatedMsg.timestamp
+                    }]);
                     logger.success("Store", `Recovered missing mediaUrl for message ${keyId}: ${recoveredUrl}`);
                 }
             } catch (e) {
@@ -526,8 +960,8 @@ async function processAndSaveMessage(
             }
         }
 
-        // Message exists! Update status if changed, but DO NOT re-trigger webhooks/bot
-        if (fromMe && existingMessage.status !== 'SENT') {
+        // Message exists! Only upgrade PENDING -> SENT, never downgrade DELIVERED/READ back to SENT
+        if (fromMe && existingMessage.status === 'PENDING') {
             await prisma.message.update({
                 where: { id: existingMessage.id },
                 data: { status: 'SENT' }
@@ -547,7 +981,6 @@ async function processAndSaveMessage(
         logger.warn("Store", `[DEBUG] Message ${keyId} has fromMe=${fromMe}. Key:`, msg.key);
     }
 
-    const mediaInfo = extractMediaMessage(msg.message);
     const messageContent = normalizeMessageContent(msg.message);
     let text = "";
     let messageType = "TEXT";
@@ -597,14 +1030,16 @@ async function processAndSaveMessage(
         text = `${pollTitle}|${pollOpts.join(";;")}`;
     }
 
-    // Determine effective participant for groups
-    // Determine effective participant for groups with standard logic
+    // Determine effective participant for groups & status@broadcast
     const isGroup = remoteJid.endsWith("@g.us");
+    const isStatusBroadcast = remoteJid === "status@broadcast";
     const remoteJidAlt = msg.key.remoteJidAlt; // LID/Phone JID handling
-    let senderJid = fromMe ? undefined : (isGroup ? (msg.key.participant || msg.participant) : remoteJid);
+    let senderJid = fromMe
+        ? (isStatusBroadcast && sock?.user?.id ? `${sock.user.id.split(":")[0].split("@")[0]}@s.whatsapp.net` : undefined)
+        : ((isGroup || isStatusBroadcast) ? (msg.key.participant || msg.participant || remoteJidAlt) : remoteJid);
 
     // Prefer remoteJidAlt for DMs if available (matches webhook logic)
-    if (!fromMe && !isGroup && remoteJidAlt) {
+    if (!fromMe && !isGroup && !isStatusBroadcast && remoteJidAlt) {
         senderJid = remoteJidAlt;
     }
 
@@ -618,6 +1053,21 @@ async function processAndSaveMessage(
     }
 
     const finalNormalizedRemoteJid = normalizeJid(normalizedRemoteJid);
+
+    // Ensure live outgoing messages (fromMe && triggerWebhook) never jump backward in chat due to host clock drift
+    if (fromMe && triggerWebhook && !isStatusBroadcast) {
+        try {
+            const latestInChat = await prisma.message.findFirst({
+                where: { sessionId: dbSessionId, remoteJid: finalNormalizedRemoteJid },
+                orderBy: { timestamp: "desc" },
+                select: { timestamp: true }
+            });
+            const minGuaranteedTs = getMonotonicChatTimestamp(latestInChat?.timestamp);
+            if (timestamp.getTime() < minGuaranteedTs.getTime()) {
+                timestamp = minGuaranteedTs;
+            }
+        } catch {}
+    }
 
     // Extract contextInfo (quoted message ID) BEFORE downloading media so we can emit instant socket update
     let quoteId: string | null = null;
@@ -691,9 +1141,8 @@ async function processAndSaveMessage(
                                         keyId: quoteId
                                     }
                                 },
-                                update: {
-                                    ...(quotedThumbnail ? { mediaUrl: quotedThumbnail } : {})
-                                },
+                                // Never overwrite an existing HD mediaUrl with a quoted thumbnail
+                                update: {},
                                 create: {
                                     sessionId: dbSessionId,
                                     remoteJid: finalNormalizedRemoteJid,
@@ -717,7 +1166,8 @@ async function processAndSaveMessage(
     }
 
     // ⚡ INSTANT REAL-TIME SOCKET EMIT (< 15ms) before media download / DB write finishes!
-    if (io) {
+    // For AUDIO/STICKER without thumbnail, wait until downloadAndSaveMedia finishes so frontend never hits a 404 before the file is saved.
+    if (io && (!mediaInfo || mediaInfo.media?.jpegThumbnail)) {
         let inlineMediaPreview: string | null = null;
         if (mediaInfo?.media?.jpegThumbnail) {
             try {
@@ -746,13 +1196,17 @@ async function processAndSaveMessage(
         }]);
     }
 
-    // Download Media (to save URL to DB) - only for live messages (triggerWebhook=true)
-    let fileUrl: string | null = null;
-    if (triggerWebhook) {
-        try {
-            fileUrl = await downloadAndSaveMedia(msg, sessionId);
-        } catch (e) {
-            logger.error("Store", "Error downloading media in store", e);
+    // Download Media (to save URL to DB) - for live messages (notify + append) and recent history
+    let fileUrl: string | null = keyId ? (getLocalSentMedia(keyId) || null) : null;
+    if (!fileUrl && shouldDownloadMedia && mediaInfo) {
+        const mediaObj = mediaInfo.media;
+        const hasRemoteMedia = !!(mediaObj?.url || mediaObj?.directPath || mediaObj?.thumbnailDirectPath);
+        if (hasRemoteMedia) {
+            try {
+                fileUrl = await downloadAndSaveMedia(msg, sessionId);
+            } catch (e) {
+                logger.error("Store", "Error downloading media in store", e);
+            }
         }
     }
 
@@ -760,13 +1214,23 @@ async function processAndSaveMessage(
         let activeSessionId = dbSessionId;
         let newMessage;
         try {
-            newMessage = await prisma.message.create({
-                data: {
+            newMessage = await prisma.message.upsert({
+                where: {
+                    sessionId_keyId: {
+                        sessionId: activeSessionId,
+                        keyId: keyId!
+                    }
+                },
+                update: {
+                    ...(fileUrl && !fileUrl.startsWith("data:") ? { mediaUrl: fileUrl } : {}),
+                    ...(fromMe ? { status: "SENT" } : {})
+                },
+                create: {
                     sessionId: activeSessionId,
                     remoteJid: finalNormalizedRemoteJid,
                     senderJid,
                     fromMe: fromMe || false,
-                    keyId,
+                    keyId: keyId!,
                     pushName,
                     type: messageType as any,
                     content: text,
@@ -782,13 +1246,23 @@ async function processAndSaveMessage(
                 const ref = await prisma.session.findUnique({ where: { sessionId }, select: { id: true } });
                 if (ref) {
                     activeSessionId = ref.id;
-                    newMessage = await prisma.message.create({
-                        data: {
+                    newMessage = await prisma.message.upsert({
+                        where: {
+                            sessionId_keyId: {
+                                sessionId: activeSessionId,
+                                keyId: keyId!
+                            }
+                        },
+                        update: {
+                            ...(fileUrl && !fileUrl.startsWith("data:") ? { mediaUrl: fileUrl } : {}),
+                            ...(fromMe ? { status: "SENT" } : {})
+                        },
+                        create: {
                             sessionId: activeSessionId,
                             remoteJid: finalNormalizedRemoteJid,
                             senderJid,
                             fromMe: fromMe || false,
-                            keyId,
+                            keyId: keyId!,
                             pushName,
                             type: messageType as any,
                             content: text,
@@ -807,7 +1281,8 @@ async function processAndSaveMessage(
         }
 
         // ⚡ INSTANT MEDIA READY EMIT: Notify frontend that mediaUrl is downloaded and ready for playback
-        if (triggerWebhook && io && fileUrl) {
+        const finalMediaUrl = newMessage?.mediaUrl || fileUrl;
+        if (io && finalMediaUrl) {
             io.to(sessionId).emit('message.update', [{
                 id: keyId,
                 sessionId: dbSessionId,
@@ -818,7 +1293,7 @@ async function processAndSaveMessage(
                 pushName,
                 type: messageType,
                 content: text,
-                mediaUrl: fileUrl,
+                mediaUrl: finalMediaUrl,
                 status: fromMe ? "SENT" : "PENDING",
                 timestamp: timestamp.toISOString(),
                 quoteId,
@@ -860,17 +1335,7 @@ async function processAndSaveMessage(
                             remoteJidAlt: remoteJidAlt || undefined
                         } : {}
                     });
-
-                    // Welcome Message Logic
-                    if (!fromMe && triggerWebhook && config?.welcomeMessage && sock) {
-                        const msgCount = await prisma.message.count({
-                            where: { sessionId: dbSessionId, remoteJid: finalRemoteJid }
-                        });
-                        if (msgCount === 1) {
-                            logger.info("Store", `Sending welcome message to ${finalRemoteJid}`);
-                            await sock.sendMessage(finalRemoteJid, { text: config.welcomeMessage });
-                        }
-                    }
+                    // Welcome message is handled centrally by bindAutoReply (with variable substitution & 24h cooldown)
                 } else if (isGroup && !fromMe && pushName) {
                     const effectiveParticipant = msg.key.participant || msg.participant;
                     if (effectiveParticipant) {

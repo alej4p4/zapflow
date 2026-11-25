@@ -31,6 +31,7 @@ import {
     Tag,
     MessageCircleReply,
     UserPlus,
+    Instagram,
 } from "lucide-react";
 import { usePathname } from "next/navigation";
 import { useSession, signOut } from "next-auth/react";
@@ -73,6 +74,7 @@ const navGroups: NavGroup[] = [
             { href: "/dashboard/autoreply", label: "Respostas automáticas", icon: MessageCircleReply },
             { href: "/dashboard/profile", label: "Perfil do bot", icon: UserCircle },
             { href: "/dashboard/scheduler", label: "Agendamentos", icon: CalendarClock },
+            { href: "/dashboard/instagram", label: "Instagram Posts", icon: Instagram },
             { href: "/dashboard/webhooks", label: "Webhooks e API", icon: Webhook },
         ],
     },
@@ -96,7 +98,7 @@ const navGroups: NavGroup[] = [
     },
 ];
 
-export function MobileNav({ appName = "BarraSoftware" }: { appName?: string }) {
+export function MobileNav({ appName = "ZapFlow" }: { appName?: string }) {
     const [open, setOpen] = useState(false);
     const pathname = usePathname();
     const { data: session } = useSession();
@@ -187,7 +189,13 @@ export function MobileNav({ appName = "BarraSoftware" }: { appName?: string }) {
                         className="w-full flex items-center justify-center gap-2 text-xs h-8"
                         onClick={async () => {
                             setOpen(false);
-                            await signOut({ callbackUrl: "/auth/login" });
+                            try {
+                                await Promise.race([
+                                    signOut({ redirect: false }),
+                                    new Promise(r => setTimeout(r, 1200))
+                                ]);
+                            } catch {}
+                            window.location.replace("/auth/login");
                         }}
                     >
                         <LogOut size={14} /> Sair

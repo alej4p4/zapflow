@@ -146,17 +146,17 @@ function getParticipantColor(name: string): string {
     return colors[Math.abs(hash) % colors.length];
 }
 
-function MessageStatusCheck({ status }: { status: string }) {
+function MessageStatusCheck({ status, light }: { status: string; light?: boolean }) {
     switch (status) {
         case "READ":
             return <CheckCheck className="h-3.5 w-3.5 text-[#53bdeb] inline-block shrink-0" />;
         case "DELIVERED":
-            return <CheckCheck className="h-3.5 w-3.5 text-[#667781] dark:text-[#8696a0] inline-block shrink-0" />;
+            return <CheckCheck className={cn("h-3.5 w-3.5 inline-block shrink-0", light ? "text-white/90" : "text-[#667781] dark:text-[#8696a0]")} />;
         case "SENT":
-            return <Check className="h-3.5 w-3.5 text-[#667781] dark:text-[#8696a0] inline-block shrink-0" />;
+            return <Check className={cn("h-3.5 w-3.5 inline-block shrink-0", light ? "text-white/90" : "text-[#667781] dark:text-[#8696a0]")} />;
         case "PENDING":
         default:
-            return <Clock className="h-3 w-3 text-[#667781] dark:text-[#8696a0] inline-block shrink-0" />;
+            return <Clock className={cn("h-3 w-3 inline-block shrink-0", light ? "text-white/90" : "text-[#667781] dark:text-[#8696a0]")} />;
     }
 }
 
@@ -253,11 +253,123 @@ function formatSegmentWithQuotes(text: string, query?: string): React.ReactNode 
     });
 }
 
+// ─── Interactive Phone Number Link with WhatsApp Redirection & ZapFlow Chat ───
+function MessagePhoneLink({
+    rawPhone,
+    children,
+}: {
+    rawPhone: string;
+    children: React.ReactNode;
+}) {
+    const [open, setOpen] = useState(false);
+
+    // Normalize phone digits
+    let digits = rawPhone.replace(/\D/g, "");
+    if (digits.startsWith("00")) digits = digits.slice(2);
+    // If Brazilian local (10 or 11 digits, e.g. 64992487124), prefix with 55
+    if (!digits.startsWith("55") && (digits.length === 10 || digits.length === 11)) {
+        digits = `55${digits}`;
+    }
+
+    const waUrl = `https://wa.me/${digits}`;
+    const targetJid = `${digits}@s.whatsapp.net`;
+
+    const handleRedirectWhatsApp = (e: React.MouseEvent) => {
+        e.stopPropagation();
+        window.open(waUrl, "_blank", "noopener,noreferrer");
+        setOpen(false);
+    };
+
+    const handleOpenInZapFlow = (e: React.MouseEvent) => {
+        e.stopPropagation();
+        window.dispatchEvent(
+            new CustomEvent("zapflow:open-chat", {
+                detail: { jid: targetJid, name: rawPhone.trim() }
+            })
+        );
+        setOpen(false);
+    };
+
+    const handleCopyNumber = (e: React.MouseEvent) => {
+        e.stopPropagation();
+        navigator.clipboard.writeText(rawPhone.trim());
+        toast.success("Número copiado para a área de transferência!");
+        setOpen(false);
+    };
+
+    return (
+        <Popover open={open} onOpenChange={setOpen}>
+            <PopoverTrigger asChild>
+                <span
+                    role="button"
+                    tabIndex={0}
+                    onClick={(e) => {
+                        e.stopPropagation();
+                        setOpen((prev) => !prev);
+                    }}
+                    onKeyDown={(e) => {
+                        if (e.key === "Enter" || e.key === " ") {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            setOpen((prev) => !prev);
+                        }
+                    }}
+                    className="text-[#027eb5] dark:text-[#53bdeb] underline hover:opacity-80 cursor-pointer font-medium inline select-text"
+                    title={`Clique para conversar ou ver opções de ${rawPhone}`}
+                >
+                    {children}
+                </span>
+            </PopoverTrigger>
+            <PopoverContent
+                side="top"
+                align="center"
+                className="w-64 p-1.5 rounded-xl bg-white dark:bg-[#202c33] shadow-xl border border-black/10 dark:border-white/10 z-50 text-foreground animate-in fade-in zoom-in-95 duration-100"
+                onClick={(e) => e.stopPropagation()}
+            >
+                <div className="px-2.5 py-1.5 border-b border-black/5 dark:border-white/10 mb-1">
+                    <p className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">
+                        Contato WhatsApp
+                    </p>
+                    <p className="text-sm font-bold text-foreground truncate mt-0.5">
+                        {rawPhone}
+                    </p>
+                </div>
+                <div className="flex flex-col gap-0.5">
+                    <button
+                        type="button"
+                        onClick={handleRedirectWhatsApp}
+                        className="w-full flex items-center gap-2.5 px-2.5 py-2 text-xs font-medium rounded-lg text-[#00a884] dark:text-[#25d366] hover:bg-[#00a884]/10 dark:hover:bg-[#25d366]/10 transition-colors text-left cursor-pointer"
+                    >
+                        <ExternalLink className="h-4 w-4 shrink-0" />
+                        <span>Conversar no WhatsApp (wa.me)</span>
+                    </button>
+                    <button
+                        type="button"
+                        onClick={handleOpenInZapFlow}
+                        className="w-full flex items-center gap-2.5 px-2.5 py-2 text-xs font-medium rounded-lg text-foreground hover:bg-black/5 dark:hover:bg-white/10 transition-colors text-left cursor-pointer"
+                    >
+                        <MessageCircle className="h-4 w-4 shrink-0 text-[#027eb5] dark:text-[#53bdeb]" />
+                        <span>Conversar aqui no ZapFlow</span>
+                    </button>
+                    <button
+                        type="button"
+                        onClick={handleCopyNumber}
+                        className="w-full flex items-center gap-2.5 px-2.5 py-2 text-xs font-medium rounded-lg text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/10 transition-colors text-left cursor-pointer"
+                    >
+                        <Copy className="h-4 w-4 shrink-0" />
+                        <span>Copiar número</span>
+                    </button>
+                </div>
+            </PopoverContent>
+        </Popover>
+    );
+}
+
 // ─── Helper for rendering text with links and @mentions ───
 function renderMessageContent(content: string | null | undefined, contactMap?: Record<string, string>, highlightQuery?: string) {
     if (!content) return null;
 
-    // Build pattern for URLs and @mentions (digits or known contact names)
+    // Build pattern for URLs, @mentions, and phone numbers
     const escapedNames = contactMap
         ? Array.from(new Set(Object.values(contactMap)))
               .filter(n => n && n.trim().length >= 3)
@@ -265,12 +377,14 @@ function renderMessageContent(content: string | null | undefined, contactMap?: R
               .map(n => n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
         : [];
 
+    const phonePattern = `(?:(?:\\+|00)?55\\s*)?(?:\\([1-9]{2}\\)\\s*|\\b[1-9]{2}\\s+)(?:9\\s*)?\\d{4}[-\\s]?\\d{4}\\b|\\([1-9]{2}\\)\\s*\\d{4,5}[-\\s]?\\d{4}\\b|\\b55[1-9]{2}9?\\d{8}\\b|\\+55[1-9]{2}9?\\d{8}\\b`;
+
     let tokenRegex: RegExp;
     if (escapedNames.length > 0) {
-        // Matches URL, or @(digits), or @(knownName)
-        tokenRegex = new RegExp(`(https?:\\/\\/[^\\s]+)|@(\\d{8,25})|@(${escapedNames.join('|')})`, 'g');
+        // Matches URL, or @(digits), or @(knownName), or phone
+        tokenRegex = new RegExp(`(https?:\\/\\/[^\\s]+)|@(\\d{8,25})|@(${escapedNames.join('|')})|(${phonePattern})`, 'g');
     } else {
-        tokenRegex = /(https?:\/\/[^\s]+)|@(\d{8,25})|@([A-Za-z0-9_\-\.\+]+)/g;
+        tokenRegex = new RegExp(`(https?:\\/\\/[^\\s]+)|@(\\d{8,25})|@([A-Za-z0-9_\\-\\.\\+]+)|(${phonePattern})`, 'g');
     }
 
     const parts: (string | React.ReactNode)[] = [];
@@ -328,6 +442,17 @@ function renderMessageContent(content: string | null | undefined, contactMap?: R
                     @{named}
                 </span>
             );
+        } else if (match[4]) {
+            // Phone number with WhatsApp redirection & ZapFlow chat options
+            const phoneStr = match[4];
+            parts.push(
+                <MessagePhoneLink
+                    key={`phone-${matchIndex}-${phoneStr}`}
+                    rawPhone={phoneStr}
+                >
+                    {highlightText(phoneStr, highlightQuery)}
+                </MessagePhoneLink>
+            );
         }
 
         lastIndex = matchIndex + match[0].length;
@@ -341,7 +466,17 @@ function renderMessageContent(content: string | null | undefined, contactMap?: R
 }
 
 // ─── Lazy media with fallback ──────────────────
-function LazyMedia({ src, alt, onClick }: { src: string; alt: string; onClick?: () => void }) {
+function LazyMedia({
+    src,
+    alt,
+    onClick,
+    overlayTimestamp
+}: {
+    src: string;
+    alt: string;
+    onClick?: () => void;
+    overlayTimestamp?: React.ReactNode;
+}) {
     const ref = useRef<HTMLDivElement>(null);
     const [visible, setVisible] = useState(false);
     const [loaded, setLoaded] = useState(false);
@@ -360,7 +495,7 @@ function LazyMedia({ src, alt, onClick }: { src: string; alt: string; onClick?: 
             <div
                 ref={ref}
                 onClick={onClick}
-                className="mb-1.5 flex items-center gap-2.5 p-2.5 rounded-lg bg-black/10 dark:bg-white/5 border border-black/5 dark:border-white/5 text-xs text-muted-foreground select-none cursor-pointer hover:bg-black/15 dark:hover:bg-white/10 transition-colors"
+                className="flex items-center gap-2.5 p-2.5 rounded-lg bg-black/10 dark:bg-white/5 border border-black/5 dark:border-white/5 text-xs text-muted-foreground select-none cursor-pointer hover:bg-black/15 dark:hover:bg-white/10 transition-colors"
                 title="Foto"
             >
                 <div className="h-8 w-8 rounded bg-[#00a884]/15 flex items-center justify-center shrink-0">
@@ -377,7 +512,7 @@ function LazyMedia({ src, alt, onClick }: { src: string; alt: string; onClick?: 
     return (
         <div
             ref={ref}
-            className="mb-1.5 overflow-hidden rounded-lg relative min-h-[100px] w-full max-w-[480px] bg-black/5 dark:bg-black/30 flex items-center justify-center cursor-pointer group/img select-none"
+            className="overflow-hidden rounded-lg relative min-h-[100px] w-full max-w-[480px] bg-black/5 dark:bg-black/30 flex items-center justify-center cursor-pointer group/img select-none"
             onClick={onClick}
         >
             {visible ? (
@@ -391,6 +526,7 @@ function LazyMedia({ src, alt, onClick }: { src: string; alt: string; onClick?: 
                         onError={() => setHasError(true)}
                         loading="lazy"
                     />
+                    {overlayTimestamp}
                 </>
             ) : (
                 <div className="h-36 w-full bg-muted/20 rounded-lg animate-pulse" />
@@ -399,7 +535,7 @@ function LazyMedia({ src, alt, onClick }: { src: string; alt: string; onClick?: 
     );
 }
 
-function LazyVideo({ src }: { src: string }) {
+function LazyVideo({ src, overlayTimestamp }: { src: string; overlayTimestamp?: React.ReactNode }) {
     const ref = useRef<HTMLDivElement>(null);
     const [visible, setVisible] = useState(false);
     useEffect(() => {
@@ -410,9 +546,17 @@ function LazyVideo({ src }: { src: string }) {
         return () => obs.disconnect();
     }, []);
     return (
-        <div ref={ref} className="mb-1.5 overflow-hidden rounded-xl">
-            {visible ? <video src={src} controls className="max-w-full max-h-64 rounded-xl" preload="none" />
-                : <div className="h-32 bg-muted/30 rounded-xl animate-pulse flex items-center justify-center"><Video className="h-6 w-6 text-muted-foreground/50" /></div>}
+        <div ref={ref} className="overflow-hidden rounded-lg relative min-h-[120px] w-full max-w-[480px] bg-black/5 dark:bg-black/30 flex items-center justify-center">
+            {visible ? (
+                <>
+                    <video src={src} controls className="max-w-full max-h-64 rounded-lg object-contain" preload="none" />
+                    {overlayTimestamp}
+                </>
+            ) : (
+                <div className="h-32 bg-muted/30 rounded-lg animate-pulse flex items-center justify-center">
+                    <Video className="h-6 w-6 text-muted-foreground/50" />
+                </div>
+            )}
         </div>
     );
 }
@@ -482,7 +626,7 @@ function WhatsAppAudioPlayer({
         return () => window.removeEventListener("zapflow:audio-rate-change", onRateChange);
     }, []);
 
-    // WhatsApp-style single audio playback: pause others when this audio plays
+    // WhatsApp-style single audio playback: pause others when this audio plays OR when recording starts
     useEffect(() => {
         const onOtherAudioPlay = (e: any) => {
             if (e.detail?.src !== audioSrc && audioRef.current && !audioRef.current.paused) {
@@ -490,8 +634,18 @@ function WhatsAppAudioPlayer({
                 setIsPlaying(false);
             }
         };
+        const onStopAll = () => {
+            if (audioRef.current && !audioRef.current.paused) {
+                audioRef.current.pause();
+                setIsPlaying(false);
+            }
+        };
         window.addEventListener("zapflow:audio-play", onOtherAudioPlay);
-        return () => window.removeEventListener("zapflow:audio-play", onOtherAudioPlay);
+        window.addEventListener("zapflow:stop-all-audios", onStopAll);
+        return () => {
+            window.removeEventListener("zapflow:audio-play", onOtherAudioPlay);
+            window.removeEventListener("zapflow:stop-all-audios", onStopAll);
+        };
     }, [audioSrc]);
 
     useEffect(() => {
@@ -577,6 +731,10 @@ function WhatsAppAudioPlayer({
 
     const togglePlay = async () => {
         if (!audioRef.current) return;
+        if (typeof window !== "undefined" && (window as any).__isZapFlowRecording) {
+            toast.info("Gravação de áudio em andamento. Conclua ou descarte para ouvir áudios.");
+            return;
+        }
         if (isPlaying) {
             audioRef.current.pause();
             return;
@@ -2141,6 +2299,28 @@ function ChatInputBar({
     const mediaRecorderRef = useRef<MediaRecorder | null>(null);
     const audioChunksRef = useRef<Blob[]>([]);
     const recordingTimerRef = useRef<NodeJS.Timeout | null>(null);
+    const [audioWaveBars, setAudioWaveBars] = useState<number[]>(() => Array(35).fill(4));
+    const audioContextRef = useRef<AudioContext | null>(null);
+    const analyserRef = useRef<AnalyserNode | null>(null);
+    const animFrameRef = useRef<number | null>(null);
+
+    const cleanupAudioVisualizer = () => {
+        if (typeof window !== "undefined") {
+            (window as any).__isZapFlowRecording = false;
+        }
+        if (animFrameRef.current) {
+            cancelAnimationFrame(animFrameRef.current);
+            animFrameRef.current = null;
+        }
+        if (audioContextRef.current) {
+            try {
+                audioContextRef.current.close();
+            } catch {}
+            audioContextRef.current = null;
+        }
+        analyserRef.current = null;
+        setAudioWaveBars(Array(35).fill(4));
+    };
 
     // Mention state
     const [mentionQuery, setMentionQuery] = useState<string | null>(null);
@@ -2248,6 +2428,17 @@ function ChatInputBar({
                 return;
             }
 
+            // 1. Immediately pause/stop any other audios or videos currently playing in the chat/browser
+            window.dispatchEvent(new CustomEvent("zapflow:stop-all-audios"));
+            if (typeof document !== "undefined") {
+                document.querySelectorAll("audio, video").forEach(el => {
+                    try { (el as HTMLMediaElement).pause(); } catch {}
+                });
+            }
+            if (typeof window !== "undefined") {
+                (window as any).__isZapFlowRecording = true;
+            }
+
             const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
 
             let mimeType = 'audio/webm;codecs=opus';
@@ -2273,6 +2464,47 @@ function ChatInputBar({
                 }
             };
 
+            // 2. Setup Web Audio API Analyser for real-time oscilloscope waveform bars
+            try {
+                const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+                if (AudioContextClass) {
+                    const ctx = new AudioContextClass();
+                    audioContextRef.current = ctx;
+                    const source = ctx.createMediaStreamSource(stream);
+                    const analyser = ctx.createAnalyser();
+                    analyser.fftSize = 64;
+                    analyser.smoothingTimeConstant = 0.4;
+                    source.connect(analyser);
+                    analyserRef.current = analyser;
+
+                    const bufferLength = analyser.frequencyBinCount;
+                    const dataArray = new Uint8Array(bufferLength);
+                    let bars: number[] = Array(35).fill(4);
+
+                    let lastSample = 0;
+                    const updateWave = (timestamp: number) => {
+                        if (!analyserRef.current) return;
+                        if (timestamp - lastSample > 45) {
+                            lastSample = timestamp;
+                            analyserRef.current.getByteFrequencyData(dataArray);
+                            let sum = 0;
+                            for (let i = 0; i < bufferLength; i++) {
+                                sum += dataArray[i];
+                            }
+                            const avg = sum / bufferLength;
+                            const rawHeight = 4 + (avg / 255) * 28;
+                            const height = Math.max(4, Math.min(28, Math.round(rawHeight)));
+                            bars = [...bars.slice(1), height];
+                            setAudioWaveBars([...bars]);
+                        }
+                        animFrameRef.current = requestAnimationFrame(updateWave);
+                    };
+                    animFrameRef.current = requestAnimationFrame(updateWave);
+                }
+            } catch (audioErr) {
+                console.warn("Could not start audio visualizer:", audioErr);
+            }
+
             recorder.start(250);
             setIsRecording(true);
             setRecordingTime(0);
@@ -2287,10 +2519,12 @@ function ChatInputBar({
         } catch (err: any) {
             console.error("Erro ao iniciar gravação:", err);
             toast.error("Permissão de microfone negada ou indisponível");
+            cleanupAudioVisualizer();
         }
     };
 
     const cancelRecording = () => {
+        cleanupAudioVisualizer();
         if (recordingTimerRef.current) clearInterval(recordingTimerRef.current);
         if (mediaRecorderRef.current) {
             if (mediaRecorderRef.current.state !== 'inactive') {
@@ -2308,6 +2542,7 @@ function ChatInputBar({
     };
 
     const pauseAndPreviewRecording = () => {
+        cleanupAudioVisualizer();
         if (recordingTimerRef.current) clearInterval(recordingTimerRef.current);
         const recorder = mediaRecorderRef.current;
         if (!recorder) return;
@@ -2331,6 +2566,7 @@ function ChatInputBar({
     };
 
     const stopAndSendRecording = () => {
+        cleanupAudioVisualizer();
         if (recordedPreview) {
             const { blob, mimeType, url } = recordedPreview;
             URL.revokeObjectURL(url);
@@ -2374,6 +2610,7 @@ function ChatInputBar({
 
     useEffect(() => {
         return () => {
+            cleanupAudioVisualizer();
             if (recordingTimerRef.current) clearInterval(recordingTimerRef.current);
             if (mediaRecorderRef.current?.state !== 'inactive') {
                 mediaRecorderRef.current?.stop();
@@ -2800,10 +3037,15 @@ function ChatInputBar({
                             <span className="font-mono text-sm font-semibold text-red-500 shrink-0">
                                 {formatRecordingTime(recordingTime)}
                             </span>
-                            <div className="flex-1 flex items-center gap-1 overflow-hidden px-1">
-                                <span className="text-xs text-muted-foreground select-none truncate">
-                                    Gravando áudio...
-                                </span>
+                            {/* Live Audio Waves (WhatsApp Web Oscilloscope Bars) */}
+                            <div className="flex-1 flex items-center justify-center gap-[3px] h-8 px-2 overflow-hidden select-none">
+                                {audioWaveBars.map((h, i) => (
+                                    <div
+                                        key={i}
+                                        style={{ height: `${h}px` }}
+                                        className="w-[3px] rounded-full bg-red-500/85 transition-[height] duration-75"
+                                    />
+                                ))}
                             </div>
                             <Button
                                 type="button"
@@ -3315,6 +3557,7 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
     const [loadingMore, setLoadingMore] = useState(false);
     const [contactMap, setContactMap] = useState<Record<string, string>>({});
     const [lightboxMedia, setLightboxMedia] = useState<{ src: string; caption?: string | null } | null>(null);
+    const [previewDocument, setPreviewDocument] = useState<{ src: string; title: string } | null>(null);
     const [participantNames, setParticipantNames] = useState<string[]>([]);
     const [participantsList, setParticipantsList] = useState<GroupParticipant[]>([]);
     const [oldestTimestamp, setOldestTimestamp] = useState<string | null>(null);
@@ -3338,6 +3581,7 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
     }[]>([]);
     const [activePreviewIdx, setActivePreviewIdx] = useState<number>(0);
     const previewFile = previewFiles[activePreviewIdx] || null;
+    const [isCaptionEmojiOpen, setIsCaptionEmojiOpen] = useState<boolean>(false);
 
     // Lightbox Zoom & Rotate state (#C16)
     const [lightboxZoom, setLightboxZoom] = useState<number>(1);
@@ -3509,6 +3753,15 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
 
     // Active chat assigned labels
     const [chatLabels, setChatLabels] = useState<LabelData[]>([]);
+
+    // Floating reaction pill anchored directly to message (never jumps to top-right)
+    const [activeReactionKeyId, setActiveReactionKeyId] = useState<string | null>(null);
+
+    useEffect(() => {
+        const handleCloseReaction = () => setActiveReactionKeyId(null);
+        window.addEventListener("click", handleCloseReaction);
+        return () => window.removeEventListener("click", handleCloseReaction);
+    }, []);
 
     const fetchCurrentChatLabels = useCallback(async () => {
         if (!sessionId || !jid) return;
@@ -3873,6 +4126,18 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
         window.addEventListener("keydown", handleKeyDown);
         return () => window.removeEventListener("keydown", handleKeyDown);
     }, [lightboxMedia, handleLightboxNav]);
+
+    // Close previewDocument on Escape
+    useEffect(() => {
+        if (!previewDocument) return;
+        const handleKeyDown = (e: KeyboardEvent) => {
+            if (e.key === "Escape") {
+                setPreviewDocument(null);
+            }
+        };
+        window.addEventListener("keydown", handleKeyDown);
+        return () => window.removeEventListener("keydown", handleKeyDown);
+    }, [previewDocument]);
 
     // Request desktop notifications permission quietly
     useEffect(() => {
@@ -4478,7 +4743,13 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
             if (filesToProcess.length > 0) {
                 e.preventDefault();
                 e.stopPropagation();
-                initiateFilesPreview(filesToProcess);
+                const chatInputEl = document.querySelector("textarea[placeholder*='mensagem']") as HTMLTextAreaElement | null;
+                const currentCaption = chatInputEl?.value?.trim();
+                if (currentCaption && chatInputEl) {
+                    chatInputEl.value = "";
+                    chatInputEl.dispatchEvent(new Event("input", { bubbles: true }));
+                }
+                initiateFilesPreview(filesToProcess, undefined, currentCaption || undefined);
             }
         };
 
@@ -4639,7 +4910,12 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
         const itemsToSend = [...previewFiles];
         setPreviewFiles([]);
         setActivePreviewIdx(0);
-        for (const item of itemsToSend) {
+        for (let i = 0; i < itemsToSend.length; i++) {
+            const item = itemsToSend[i];
+            if (i > 0) {
+                // Sequential delay ensures WhatsApp delivers multi-image in exact order
+                await new Promise(r => setTimeout(r, 450));
+            }
             await processFileUpload(item.file, item.type, item.caption);
             if (item.previewUrl) URL.revokeObjectURL(item.previewUrl);
         }
@@ -6658,7 +6934,7 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
                                         if (isSelectMode) toggleSelectMessage(msg.keyId);
                                     }}
                                     className={cn(
-                                        "flex gap-2 group items-start rounded-lg transition-colors",
+                                        "flex gap-1.5 group items-start rounded-lg transition-colors",
                                         msg.fromMe ? "justify-end" : "justify-start",
                                         isSelectMode && "cursor-pointer px-2 py-1 hover:bg-[#00a884]/10",
                                         isSelectMode && selectedMsgIds.includes(msg.keyId) && "bg-[#00a884]/15"
@@ -6707,33 +6983,44 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
 
                                     {/* Action buttons (Reply & React) for my messages (on left) */}
                                     {msg.fromMe && (
-                                        <div className="flex items-center self-center opacity-0 group-hover:opacity-100 transition-opacity order-first">
-                                            <Popover>
-                                                <PopoverTrigger asChild>
-                                                    <button
-                                                        type="button"
-                                                        className="p-1.5 text-muted-foreground/50 hover:text-[#00a884] hover:bg-black/5 dark:hover:bg-white/10 rounded-full cursor-pointer"
-                                                        title="Reagir"
-                                                    >
-                                                        <Smile className="h-3.5 w-3.5" />
-                                                    </button>
-                                                </PopoverTrigger>
-                                                <PopoverContent side="top" align="end" className="p-1.5 w-auto rounded-full bg-white dark:bg-[#233138] shadow-2xl border border-border/30 flex items-center gap-1 z-50 animate-in fade-in zoom-in-95 duration-100">
+                                        <div
+                                            data-open={activeReactionKeyId === msg.keyId}
+                                            className="relative flex items-center self-center opacity-0 group-hover:opacity-100 data-[open=true]:opacity-100 transition-opacity order-first shrink-0"
+                                        >
+                                            {activeReactionKeyId === msg.keyId && (
+                                                <div
+                                                    onClick={(e) => e.stopPropagation()}
+                                                    className="absolute bottom-full mb-1.5 right-0 z-50 flex items-center gap-1 p-1 rounded-full bg-white dark:bg-[#233138] shadow-2xl border border-border/30 select-none animate-in fade-in zoom-in-95 duration-100 whitespace-nowrap"
+                                                >
                                                     {["👍", "❤️", "😂", "😮", "😢", "🙏"].map(emoji => (
                                                         <button
                                                             key={emoji}
                                                             type="button"
-                                                            onClick={() => handleReaction(msg, emoji)}
+                                                            onClick={() => {
+                                                                handleReaction(msg, emoji);
+                                                                setActiveReactionKeyId(null);
+                                                            }}
                                                             className={cn(
-                                                                "h-8 w-8 flex items-center justify-center text-lg rounded-full hover:scale-125 transition-transform hover:bg-black/5 dark:hover:bg-white/10 cursor-pointer",
+                                                                "h-7.5 w-7.5 flex items-center justify-center text-base rounded-full hover:scale-125 transition-transform hover:bg-black/5 dark:hover:bg-white/10 cursor-pointer",
                                                                 msg.userReaction === emoji && "bg-[#00a884]/20 scale-110"
                                                             )}
                                                         >
                                                             {emoji}
                                                         </button>
                                                     ))}
-                                                </PopoverContent>
-                                            </Popover>
+                                                </div>
+                                            )}
+                                            <button
+                                                type="button"
+                                                onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    setActiveReactionKeyId(prev => prev === msg.keyId ? null : msg.keyId);
+                                                }}
+                                                className="p-1.5 text-muted-foreground/50 hover:text-[#00a884] hover:bg-black/5 dark:hover:bg-white/10 rounded-full cursor-pointer"
+                                                title="Reagir"
+                                            >
+                                                <Smile className="h-3.5 w-3.5" />
+                                            </button>
                                             <button
                                                 type="button"
                                                 onClick={() => { setReplyingTo(msg); scrollToBottom(true); }}
@@ -6748,10 +7035,11 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
                                     {/* Authentic WhatsApp Bubble */}
                                     <div
                                         className={cn(
-                                            "flex flex-col max-w-[85%] sm:max-w-[70%] px-3 py-1.5 shadow-[0_1px_0.5px_rgba(11,20,26,0.13)] cursor-context-menu relative text-[14.2px] leading-[19px] group/bubble",
+                                            "flex flex-col max-w-[85%] sm:max-w-[70%] shadow-[0_1px_0.5px_rgba(11,20,26,0.13)] cursor-context-menu relative text-[14.2px] leading-[19px] group/bubble",
+                                            (msg.type === 'IMAGE' || msg.type === 'VIDEO') ? "p-1 rounded-xl" : "px-3 py-1.5 rounded-xl",
                                             msg.fromMe
-                                                ? "bg-[#d9fdd3] dark:bg-[#005c4b] text-[#111b21] dark:text-[#e9edef] rounded-xl rounded-tr-xs ml-auto"
-                                                : "bg-white dark:bg-[#202c33] text-[#111b21] dark:text-[#e9edef] rounded-xl rounded-tl-xs mr-auto"
+                                                ? "bg-[#d9fdd3] dark:bg-[#005c4b] text-[#111b21] dark:text-[#e9edef] rounded-tr-xs"
+                                                : "bg-white dark:bg-[#202c33] text-[#111b21] dark:text-[#e9edef] rounded-tl-xs"
                                         )}
                                         onContextMenu={(e) => handleContextMenu(e, msg)}
                                         onDoubleClick={() => { setReplyingTo(msg); scrollToBottom(true); }}
@@ -6861,12 +7149,25 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
                                         {/* IMAGE (with fallback if mediaUrl is missing) */}
                                         {msg.type === 'IMAGE' && (
                                             msg.mediaUrl ? (
-                                                <div className="relative group/media">
-                                                    <LazyMedia src={msg.mediaUrl} alt="Imagem" onClick={() => setLightboxMedia({ src: msg.mediaUrl!, caption: msg.content })} />
+                                                <div className="relative group/media overflow-hidden rounded-[10px]">
+                                                    <LazyMedia
+                                                        src={msg.mediaUrl}
+                                                        alt="Imagem"
+                                                        onClick={() => setLightboxMedia({ src: msg.mediaUrl!, caption: msg.content })}
+                                                        overlayTimestamp={!msg.content?.trim() ? (
+                                                            <div className="absolute bottom-1.5 right-1.5 z-10 px-1.5 py-0.5 rounded-full bg-black/50 text-white text-[10.5px] font-medium flex items-center gap-1 backdrop-blur-[2px] select-none shadow-xs pointer-events-none">
+                                                                {starredIds.includes(msg.keyId) && (
+                                                                    <Star className="h-3 w-3 fill-amber-400 text-amber-400 shrink-0 mr-0.5" />
+                                                                )}
+                                                                <span>{new Date(msg.timestamp).toLocaleTimeString("pt-BR", { hour: '2-digit', minute: '2-digit' })}</span>
+                                                                {msg.fromMe && <MessageStatusCheck status={msg.status} light />}
+                                                            </div>
+                                                        ) : undefined}
+                                                    />
                                                     <Button
                                                         size="icon"
                                                         variant="secondary"
-                                                        className="absolute top-2 right-2 h-8 w-8 rounded-full opacity-0 group-hover/media:opacity-100 transition-opacity bg-background/80 backdrop-blur-sm"
+                                                        className="absolute top-2 right-2 h-8 w-8 rounded-full opacity-0 group-hover/media:opacity-100 transition-opacity bg-background/80 backdrop-blur-sm z-10"
                                                         onClick={() => handleDownload(msg.mediaUrl!, `IMAGE-${msg.keyId}.jpg`)}
                                                     >
                                                         <Download className="h-4 w-4" />
@@ -6882,8 +7183,19 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
 
                                         {/* VIDEO */}
                                         {msg.type === 'VIDEO' && msg.mediaUrl && (
-                                            <div className="relative group/media">
-                                                <LazyVideo src={msg.mediaUrl} />
+                                            <div className="relative group/media overflow-hidden rounded-[10px]">
+                                                <LazyVideo
+                                                    src={msg.mediaUrl}
+                                                    overlayTimestamp={!msg.content?.trim() ? (
+                                                        <div className="absolute bottom-1.5 right-1.5 z-10 px-1.5 py-0.5 rounded-full bg-black/50 text-white text-[10.5px] font-medium flex items-center gap-1 backdrop-blur-[2px] select-none shadow-xs pointer-events-none">
+                                                            {starredIds.includes(msg.keyId) && (
+                                                                <Star className="h-3 w-3 fill-amber-400 text-amber-400 shrink-0 mr-0.5" />
+                                                            )}
+                                                            <span>{new Date(msg.timestamp).toLocaleTimeString("pt-BR", { hour: '2-digit', minute: '2-digit' })}</span>
+                                                            {msg.fromMe && <MessageStatusCheck status={msg.status} light />}
+                                                        </div>
+                                                    ) : undefined}
+                                                />
                                                 <Button
                                                     size="icon"
                                                     variant="secondary"
@@ -7117,9 +7429,10 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
                                         {/* DOCUMENT (WhatsApp Web Rich File Card #C10) */}
                                         {msg.type !== 'TEXT' && msg.type !== 'IMAGE' && msg.type !== 'STICKER' && msg.type !== 'VIDEO' && msg.type !== 'AUDIO' && msg.type !== 'LOCATION' && msg.type !== 'CONTACT' && msg.type !== 'POLL' && (() => {
                                             const rawFileName = (msg.type === 'DOCUMENT' && msg.content ? msg.content.trim() : "") ||
-                                                `DOCUMENTO-${msg.keyId.slice(-6)}.pdf`;
+                                                `DOCUMENTO-${msg.keyId.slice(-6).toUpperCase()}.pdf`;
                                             const extMatch = rawFileName.match(/\.([a-zA-Z0-9]{2,5})$/);
-                                            const ext = (extMatch ? extMatch[1] : (msg.mediaUrl?.split('.').pop() || "DOC")).toUpperCase().slice(0, 4);
+                                            const ext = (extMatch ? extMatch[1] : (msg.mediaUrl?.split('.').pop() || "PDF")).toUpperCase().slice(0, 4);
+                                            const isPdf = ext === "PDF" || (msg.mediaUrl && msg.mediaUrl.toLowerCase().includes('.pdf'));
                                             const badgeColor =
                                                 ext === "PDF"
                                                     ? "bg-red-500 text-white"
@@ -7130,12 +7443,35 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
                                                             : (ext === "XML" || ext === "ZIP" || ext === "RAR")
                                                                 ? "bg-amber-600 text-white"
                                                                 : "bg-[#00a884] text-white";
+
+                                            const cleanMediaUrl = msg.mediaUrl ? (
+                                                msg.mediaUrl.endsWith('.bin') && isPdf
+                                                    ? msg.mediaUrl.replace(/\.bin$/, '.pdf')
+                                                    : msg.mediaUrl
+                                            ) : undefined;
+
+                                            const docViewUrl = cleanMediaUrl ? (
+                                                `${cleanMediaUrl}${cleanMediaUrl.includes('?') ? '&' : '?'}filename=${encodeURIComponent(rawFileName)}`
+                                            ) : undefined;
+
+                                            const handleOpenDoc = (e?: React.MouseEvent) => {
+                                                if (e) e.stopPropagation();
+                                                if (!docViewUrl) return;
+                                                if (isPdf) {
+                                                    setPreviewDocument({ src: docViewUrl, title: rawFileName });
+                                                } else {
+                                                    window.open(docViewUrl, "_blank", "noopener,noreferrer");
+                                                }
+                                            };
+
                                             return (
                                                 <div
+                                                    onClick={handleOpenDoc}
                                                     className={cn(
-                                                        "flex items-center justify-between gap-3 py-2.5 px-3 rounded-xl mb-1.5 min-w-[230px] border border-black/5 dark:border-white/10 select-none",
+                                                        "flex items-center justify-between gap-3 py-2.5 px-3 rounded-xl mb-1.5 min-w-[230px] border border-black/5 dark:border-white/10 select-none cursor-pointer hover:bg-black/10 dark:hover:bg-white/10 transition-all",
                                                         msg.fromMe ? "bg-black/5 dark:bg-black/25" : "bg-black/5 dark:bg-white/5"
                                                     )}
+                                                    title={isPdf ? "Clique para visualizar documento PDF" : "Clique para abrir documento"}
                                                 >
                                                     <div className="flex items-center gap-2.5 min-w-0 flex-1">
                                                         <div className={cn("h-10 w-9 rounded-lg flex flex-col items-center justify-center shrink-0 font-bold text-[9.5px] tracking-wider shadow-xs", badgeColor)}>
@@ -7151,23 +7487,21 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
                                                             </span>
                                                         </div>
                                                     </div>
-                                                    {msg.mediaUrl && (
-                                                        <div className="flex items-center gap-1 shrink-0">
-                                                            <a
-                                                                href={msg.mediaUrl}
-                                                                target="_blank"
-                                                                rel="noopener noreferrer"
-                                                                onClick={(e) => e.stopPropagation()}
-                                                                className="h-8 w-8 rounded-full flex items-center justify-center text-muted-foreground hover:text-[#00a884] hover:bg-black/5 dark:hover:bg-white/10 transition-colors"
-                                                                title="Abrir / Visualizar documento"
+                                                    {cleanMediaUrl && (
+                                                        <div className="flex items-center gap-1 shrink-0" onClick={(e) => e.stopPropagation()}>
+                                                            <button
+                                                                type="button"
+                                                                onClick={handleOpenDoc}
+                                                                className="h-8 w-8 rounded-full flex items-center justify-center text-muted-foreground hover:text-[#00a884] hover:bg-black/5 dark:hover:bg-white/10 transition-colors cursor-pointer"
+                                                                title="Visualizar documento"
                                                             >
                                                                 <Eye className="h-4 w-4" />
-                                                            </a>
+                                                            </button>
                                                             <Button
                                                                 size="icon"
                                                                 variant="ghost"
-                                                                className="h-8 w-8 rounded-full shrink-0 text-muted-foreground hover:text-foreground"
-                                                                onClick={() => handleDownload(msg.mediaUrl!, rawFileName)}
+                                                                className="h-8 w-8 rounded-full shrink-0 text-muted-foreground hover:text-foreground cursor-pointer"
+                                                                onClick={() => handleDownload(cleanMediaUrl, rawFileName)}
                                                                 title="Baixar arquivo"
                                                             >
                                                                 <Download className="h-4 w-4" />
@@ -7214,13 +7548,14 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
                                         })()}
 
                                         {/* Text content with mentions & Timestamp + status checks */}
-                                        {msg.type !== 'CONTACT' && (
+                                        {msg.type !== 'CONTACT' && (!((msg.type === 'IMAGE' || msg.type === 'VIDEO') && !msg.content?.trim())) && (
                                         <div className={cn(
                                             "flex flex-wrap items-end justify-end gap-x-2 gap-y-0.5",
+                                            (msg.type === 'IMAGE' || msg.type === 'VIDEO') && "px-2 pt-1.5 pb-0.5",
                                             msg.type === 'AUDIO' && !msg.content && "-mt-[18px] pointer-events-none [&_*]:pointer-events-auto"
                                         )}>
                                             {msg.type !== 'DOCUMENT' && msg.type !== 'LOCATION' && msg.type !== 'CONTACT' && msg.type !== 'POLL' && (
-                                                <span className="flex-1 break-words whitespace-pre-wrap text-[14.2px]">
+                                                <span className="flex-1 break-words whitespace-pre-wrap text-[14.2px] leading-[19px]">
                                                     {renderMessageContent(msg.content, contactMap, searchQuery)}
                                                 </span>
                                             )}
@@ -7259,33 +7594,44 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
 
                                     {/* Action buttons (Reply & React) for incoming messages (on right) */}
                                     {!msg.fromMe && (
-                                        <div className="flex items-center self-center opacity-0 group-hover:opacity-100 transition-opacity">
-                                            <Popover>
-                                                <PopoverTrigger asChild>
-                                                    <button
-                                                        type="button"
-                                                        className="p-1.5 text-muted-foreground/50 hover:text-[#00a884] hover:bg-black/5 dark:hover:bg-white/10 rounded-full cursor-pointer"
-                                                        title="Reagir"
-                                                    >
-                                                        <Smile className="h-3.5 w-3.5" />
-                                                    </button>
-                                                </PopoverTrigger>
-                                                <PopoverContent side="top" align="start" className="p-1.5 w-auto rounded-full bg-white dark:bg-[#233138] shadow-2xl border border-border/30 flex items-center gap-1 z-50 animate-in fade-in zoom-in-95 duration-100">
+                                        <div
+                                            data-open={activeReactionKeyId === msg.keyId}
+                                            className="relative flex items-center self-center opacity-0 group-hover:opacity-100 data-[open=true]:opacity-100 transition-opacity shrink-0"
+                                        >
+                                            {activeReactionKeyId === msg.keyId && (
+                                                <div
+                                                    onClick={(e) => e.stopPropagation()}
+                                                    className="absolute bottom-full mb-1.5 left-0 z-50 flex items-center gap-1 p-1 rounded-full bg-white dark:bg-[#233138] shadow-2xl border border-border/30 select-none animate-in fade-in zoom-in-95 duration-100 whitespace-nowrap"
+                                                >
                                                     {["👍", "❤️", "😂", "😮", "😢", "🙏"].map(emoji => (
                                                         <button
                                                             key={emoji}
                                                             type="button"
-                                                            onClick={() => handleReaction(msg, emoji)}
+                                                            onClick={() => {
+                                                                handleReaction(msg, emoji);
+                                                                setActiveReactionKeyId(null);
+                                                            }}
                                                             className={cn(
-                                                                "h-8 w-8 flex items-center justify-center text-lg rounded-full hover:scale-125 transition-transform hover:bg-black/5 dark:hover:bg-white/10 cursor-pointer",
+                                                                "h-7.5 w-7.5 flex items-center justify-center text-base rounded-full hover:scale-125 transition-transform hover:bg-black/5 dark:hover:bg-white/10 cursor-pointer",
                                                                 msg.userReaction === emoji && "bg-[#00a884]/20 scale-110"
                                                             )}
                                                         >
                                                             {emoji}
                                                         </button>
                                                     ))}
-                                                </PopoverContent>
-                                            </Popover>
+                                                </div>
+                                            )}
+                                            <button
+                                                type="button"
+                                                onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    setActiveReactionKeyId(prev => prev === msg.keyId ? null : msg.keyId);
+                                                }}
+                                                className="p-1.5 text-muted-foreground/50 hover:text-[#00a884] hover:bg-black/5 dark:hover:bg-white/10 rounded-full cursor-pointer"
+                                                title="Reagir"
+                                            >
+                                                <Smile className="h-3.5 w-3.5" />
+                                            </button>
                                             <button
                                                 type="button"
                                                 onClick={() => { setReplyingTo(msg); scrollToBottom(true); }}
@@ -7616,6 +7962,77 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
                 </div>
             )}
 
+            {/* WhatsApp Web Style Document / PDF Viewer Modal (#C10) */}
+            {previewDocument && (
+                <div
+                    className="fixed inset-0 z-[99999] bg-black/85 backdrop-blur-md flex flex-col items-center justify-center p-2 sm:p-4 select-none animate-in fade-in duration-150"
+                    onClick={() => setPreviewDocument(null)}
+                >
+                    <div
+                        className="w-full max-w-5xl h-[88vh] bg-white dark:bg-[#202c33] rounded-2xl shadow-2xl flex flex-col overflow-hidden border border-black/10 dark:border-white/10"
+                        onClick={(e) => e.stopPropagation()}
+                    >
+                        {/* Modal Header */}
+                        <div className="flex items-center justify-between px-4 py-3 border-b border-black/10 dark:border-white/10 bg-[#f0f2f5] dark:bg-[#111b21] shrink-0">
+                            <div className="flex items-center gap-2.5 min-w-0 flex-1 mr-2">
+                                <div className="h-9 w-8 rounded-lg bg-red-500 text-white flex flex-col items-center justify-center shrink-0 font-bold text-[9px] shadow-xs">
+                                    <FileText className="h-4 w-4 mb-0.5" />
+                                    <span>PDF</span>
+                                </div>
+                                <div className="min-w-0 flex-1">
+                                    <p className="text-sm font-semibold text-foreground truncate" title={previewDocument.title}>
+                                        {previewDocument.title}
+                                    </p>
+                                    <span className="text-[10px] text-muted-foreground uppercase tracking-wide">
+                                        Visualizador de Documento • ZapFlow
+                                    </span>
+                                </div>
+                            </div>
+                            <div className="flex items-center gap-1.5 shrink-0">
+                                <a
+                                    href={previewDocument.src}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="h-8 px-2.5 rounded-lg flex items-center gap-1.5 text-xs font-medium text-foreground hover:bg-black/5 dark:hover:bg-white/10 transition-colors cursor-pointer border border-border/40"
+                                    title="Abrir em tela cheia em nova aba"
+                                >
+                                    <ExternalLink className="h-3.5 w-3.5 text-[#00a884] dark:text-[#25d366]" />
+                                    <span className="hidden sm:inline">Nova aba</span>
+                                </a>
+                                <Button
+                                    size="sm"
+                                    variant="outline"
+                                    className="h-8 px-2.5 text-xs gap-1.5 cursor-pointer"
+                                    onClick={() => handleDownload(previewDocument.src, previewDocument.title)}
+                                    title="Baixar arquivo"
+                                >
+                                    <Download className="h-3.5 w-3.5" />
+                                    <span className="hidden sm:inline">Baixar</span>
+                                </Button>
+                                <Button
+                                    size="icon"
+                                    variant="ghost"
+                                    className="h-8 w-8 rounded-full text-muted-foreground hover:text-foreground cursor-pointer"
+                                    onClick={() => setPreviewDocument(null)}
+                                    title="Fechar (Esc)"
+                                >
+                                    <X className="h-4.5 w-4.5" />
+                                </Button>
+                            </div>
+                        </div>
+
+                        {/* Modal Body / Iframe */}
+                        <div className="flex-1 w-full h-full bg-[#525659] relative">
+                            <iframe
+                                src={previewDocument.src}
+                                className="w-full h-full border-0"
+                                title={previewDocument.title}
+                            />
+                        </div>
+                    </div>
+                </div>
+            )}
+
             {/* WhatsApp Web Style Multi-File Media Preview Modal before Sending (#C15) */}
             {previewFiles.length > 0 && previewFile && (
                 <div className="fixed inset-0 z-[99999] bg-black/90 backdrop-blur-md flex flex-col justify-between p-4 sm:p-6 animate-in fade-in duration-150 select-none">
@@ -7643,19 +8060,19 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
                     </div>
 
                     {/* Media Preview centered */}
-                    <div className="flex-1 flex items-center justify-center p-4 max-h-[62vh] overflow-hidden">
+                    <div className="flex-1 flex items-center justify-center p-2 max-h-[52vh] overflow-hidden">
                         {previewFile.type === 'image' && (
                             <img
                                 src={previewFile.previewUrl}
                                 alt="Pré-visualização"
-                                className="max-w-full max-h-[58vh] object-contain rounded-xl shadow-2xl"
+                                className="max-w-full max-h-[50vh] object-contain rounded-xl shadow-2xl"
                             />
                         )}
                         {previewFile.type === 'video' && (
                             <video
                                 src={previewFile.previewUrl}
                                 controls
-                                className="max-w-full max-h-[58vh] rounded-xl shadow-2xl"
+                                className="max-w-full max-h-[50vh] rounded-xl shadow-2xl"
                             />
                         )}
                         {previewFile.type !== 'image' && previewFile.type !== 'video' && (
@@ -7667,57 +8084,23 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
                         )}
                     </div>
 
-                    {/* Bottom Queue Strip + Caption Input + Send Button (#C15) */}
-                    <div className="w-full max-w-2xl mx-auto flex flex-col gap-3">
-                        {/* Thumbnail Strip of queued files + Add More button */}
-                        <div className="flex items-center justify-center gap-2 overflow-x-auto py-1">
-                            {previewFiles.map((item, idx) => (
-                                <div
-                                    key={idx}
-                                    onClick={() => setActivePreviewIdx(idx)}
-                                    className={cn(
-                                        "relative h-14 w-14 rounded-xl overflow-hidden border-2 flex items-center justify-center bg-white/10 cursor-pointer shrink-0 group/thumb transition-all",
-                                        idx === activePreviewIdx ? "border-[#00a884] scale-105" : "border-white/20 opacity-70 hover:opacity-100"
-                                    )}
-                                >
-                                    {item.type === 'image' ? (
-                                        <img src={item.previewUrl} alt="" className="h-full w-full object-cover" />
-                                    ) : (
-                                        <FileText className="h-6 w-6 text-white/80" />
-                                    )}
-                                    <button
-                                        type="button"
-                                        onClick={(e) => {
-                                            e.stopPropagation();
-                                            handleRemovePreviewFile(idx);
-                                        }}
-                                        className="absolute top-0.5 right-0.5 h-4.5 w-4.5 rounded-full bg-black/75 text-white flex items-center justify-center opacity-0 group-hover/thumb:opacity-100 transition-opacity cursor-pointer"
-                                        title="Remover arquivo"
-                                    >
-                                        <X className="h-3 w-3" />
-                                    </button>
-                                </div>
-                            ))}
-                            <button
-                                type="button"
-                                onClick={() => triggerUpload(uploadType || "*")}
-                                className="h-14 w-14 rounded-xl border-2 border-dashed border-white/30 hover:border-[#00a884] text-white/70 hover:text-[#00a884] flex items-center justify-center shrink-0 transition-colors cursor-pointer"
-                                title="Adicionar mais arquivos"
-                            >
-                                <Plus className="h-6 w-6" />
-                            </button>
-                        </div>
-
-                        <div className="w-full flex items-center gap-2 bg-[#2a3942] rounded-2xl p-1.5 shadow-2xl">
-                            <input
-                                type="text"
+                    {/* Floating Caption Box & Bottom Bar matching WhatsApp Web (#C15) */}
+                    <div className="w-full max-w-2xl mx-auto flex flex-col gap-3 z-20">
+                        {/* Multiline Floating Caption Card */}
+                        <div className="w-full bg-[#1f2c34] rounded-2xl p-2 border border-white/10 shadow-2xl flex items-end gap-2">
+                            <textarea
                                 value={previewFile.caption}
                                 onChange={(e) => {
                                     const val = e.target.value;
                                     setPreviewFiles(prev => prev.map((item, i) => i === activePreviewIdx ? { ...item, caption: val } : item));
                                 }}
                                 onKeyDown={(e) => {
-                                    if (e.key === "Enter") {
+                                    if (e.key === "Enter" && !e.shiftKey && !e.ctrlKey) {
+                                        if (!previewFile.caption.includes('\n')) {
+                                            e.preventDefault();
+                                            handleSendPreviewFile();
+                                        }
+                                    } else if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
                                         e.preventDefault();
                                         handleSendPreviewFile();
                                     } else if (e.key === "Escape") {
@@ -7726,17 +8109,105 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
                                     }
                                 }}
                                 placeholder="Adicione uma legenda..."
-                                className="flex-1 bg-transparent px-3 py-2 text-sm text-white placeholder:text-white/50 outline-none"
+                                rows={Math.min(5, Math.max(1, previewFile.caption.split('\n').length))}
+                                className="flex-1 bg-transparent px-3 py-1.5 text-sm text-white placeholder:text-white/50 outline-none resize-none leading-relaxed max-h-[120px]"
                                 autoFocus
                             />
+                            <div className="flex items-center gap-1 shrink-0 pb-0.5">
+                                {previewFile.caption.length > 0 && (
+                                    <button
+                                        type="button"
+                                        onClick={() => setPreviewFiles(prev => prev.map((item, i) => i === activePreviewIdx ? { ...item, caption: "" } : item))}
+                                        className="h-8 w-8 rounded-full text-white/60 hover:text-white hover:bg-white/10 flex items-center justify-center cursor-pointer"
+                                        title="Limpar legenda"
+                                    >
+                                        <X className="h-4 w-4" />
+                                    </button>
+                                )}
+                                <Popover open={isCaptionEmojiOpen} onOpenChange={setIsCaptionEmojiOpen}>
+                                    <PopoverTrigger asChild>
+                                        <button
+                                            type="button"
+                                            className="h-8 w-8 rounded-full text-white/70 hover:text-white hover:bg-white/10 flex items-center justify-center cursor-pointer"
+                                            title="Inserir emoji"
+                                        >
+                                            <Smile className="h-4.5 w-4.5" />
+                                        </button>
+                                    </PopoverTrigger>
+                                    <PopoverContent side="top" align="end" className="p-2 w-72 rounded-2xl bg-[#202c33] border border-white/10 shadow-2xl z-[99999]">
+                                        <div className="text-[11px] font-semibold text-white/60 px-1 mb-1.5 uppercase tracking-wider">
+                                            Emojis rápidos
+                                        </div>
+                                        <div className="grid grid-cols-7 gap-1">
+                                            {["✅", "📦", "🚛", "👍", "❤️", "😂", "😮", "🥺", "🙏", "✔️", "❌", "📍", "📋", "📝", "📅", "⭐", "🔥", "🎯", "💰", "🌾", "🚚"].map(emoji => (
+                                                <button
+                                                    key={emoji}
+                                                    type="button"
+                                                    onClick={() => {
+                                                        setPreviewFiles(prev => prev.map((item, i) => i === activePreviewIdx ? { ...item, caption: (item.caption ? `${item.caption} ${emoji}` : emoji) } : item));
+                                                    }}
+                                                    className="h-8 w-8 rounded-lg flex items-center justify-center text-base hover:bg-white/10 hover:scale-125 transition-transform cursor-pointer"
+                                                >
+                                                    {emoji}
+                                                </button>
+                                            ))}
+                                        </div>
+                                    </PopoverContent>
+                                </Popover>
+                            </div>
+                        </div>
+
+                        {/* Bottom Row: Carousel of thumbnails + Add button + Circular Green Send button */}
+                        <div className="flex items-center justify-between gap-3">
+                            <div className="flex items-center gap-2 overflow-x-auto py-1 flex-1">
+                                {previewFiles.map((item, idx) => (
+                                    <div
+                                        key={idx}
+                                        onClick={() => setActivePreviewIdx(idx)}
+                                        className={cn(
+                                            "relative h-14 w-14 rounded-xl overflow-hidden border-2 flex items-center justify-center bg-white/10 cursor-pointer shrink-0 group/thumb transition-all",
+                                            idx === activePreviewIdx ? "border-[#00a884] ring-2 ring-[#00a884]/40 scale-105" : "border-white/20 opacity-70 hover:opacity-100"
+                                        )}
+                                    >
+                                        {item.type === 'image' ? (
+                                            <img src={item.previewUrl} alt="" className="h-full w-full object-cover" />
+                                        ) : (
+                                            <FileText className="h-6 w-6 text-white/80" />
+                                        )}
+                                        {item.caption.trim().length > 0 && (
+                                            <span className="absolute bottom-0.5 right-0.5 h-2 w-2 rounded-full bg-[#00a884]" title="Com legenda" />
+                                        )}
+                                        <button
+                                            type="button"
+                                            onClick={(e) => {
+                                                e.stopPropagation();
+                                                handleRemovePreviewFile(idx);
+                                            }}
+                                            className="absolute top-0.5 right-0.5 h-4 w-4 rounded-full bg-black/80 text-white flex items-center justify-center opacity-0 group-hover/thumb:opacity-100 transition-opacity cursor-pointer"
+                                            title="Remover arquivo"
+                                        >
+                                            <X className="h-2.5 w-2.5" />
+                                        </button>
+                                    </div>
+                                ))}
+                                <button
+                                    type="button"
+                                    onClick={() => triggerUpload(uploadType || "*")}
+                                    className="h-14 w-14 rounded-xl border-2 border-dashed border-white/30 hover:border-[#00a884] text-white/70 hover:text-[#00a884] flex items-center justify-center shrink-0 transition-colors cursor-pointer"
+                                    title="Adicionar mais arquivos"
+                                >
+                                    <Plus className="h-6 w-6" />
+                                </button>
+                            </div>
+
+                            {/* WhatsApp Style Circular Green Send Button */}
                             <button
                                 type="button"
                                 onClick={handleSendPreviewFile}
-                                className="h-10 px-4 rounded-full bg-[#00a884] hover:bg-[#00a884]/90 text-white flex items-center justify-center gap-1.5 shrink-0 shadow-md cursor-pointer transition-transform active:scale-95 text-xs font-semibold"
-                                title="Enviar todos (Enter)"
+                                className="h-12 w-12 rounded-full bg-[#00a884] hover:bg-[#00a884]/90 text-white flex items-center justify-center shrink-0 shadow-xl cursor-pointer transition-transform active:scale-95"
+                                title="Enviar (Enter ou Ctrl+Enter)"
                             >
-                                <Send className="h-4 w-4 fill-current" />
-                                {previewFiles.length > 1 && <span>({previewFiles.length})</span>}
+                                <Send className="h-5 w-5 fill-current ml-0.5" />
                             </button>
                         </div>
                     </div>

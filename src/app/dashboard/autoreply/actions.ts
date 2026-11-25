@@ -4,6 +4,8 @@ import { prisma } from "@/lib/prisma";
 import { canAccessSession } from "@/lib/api-auth";
 import { getAuthenticatedUserForAction } from "@/lib/server-action-auth";
 import { Prisma } from "@prisma/client";
+import { CHATBOT_FLOW_KEYWORD } from "@/lib/chatbot-flow";
+import { resetFlowAndPausesForSession } from "@/modules/whatsapp/store/autoreply";
 
 // Fetch rules directly from DB without API call
 export async function getAutoReplies(sessionId: string) {
@@ -75,6 +77,19 @@ export async function createAutoReply(sessionId: string, data: { keyword: string
         data: createData
     });
 
+    if (data.keyword === CHATBOT_FLOW_KEYWORD) {
+        try {
+            const parsedFlow = data.response ? JSON.parse(data.response) : null;
+            if (parsedFlow?.enabled) {
+                await prisma.botConfig.updateMany({
+                    where: { sessionId: session.id, enabled: false },
+                    data: { enabled: true }
+                });
+            }
+        } catch {}
+        // Mantém estados em andamento para não perder progresso dos contatos que estão conversando com o robô
+    }
+
     return newRule;
 }
 
@@ -141,6 +156,19 @@ export async function updateAutoReply(sessionId: string, ruleId: string, data: {
         where: { id: ruleId },
         data: updateData
     });
+
+    if (data.keyword === CHATBOT_FLOW_KEYWORD) {
+        try {
+            const parsedFlow = data.response ? JSON.parse(data.response) : null;
+            if (parsedFlow?.enabled) {
+                await prisma.botConfig.updateMany({
+                    where: { sessionId: rule.session.id, enabled: false },
+                    data: { enabled: true }
+                });
+            }
+        } catch {}
+        // Mantém estados em andamento para não perder progresso dos contatos que estão conversando com o robô
+    }
 
     return updatedRule;
 }

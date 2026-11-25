@@ -61,11 +61,17 @@ export function SidebarShell({ appName, userName, userEmail, version }: SidebarS
                         </div>
                         <ThemeToggle variant="compact" />
                         <button
-                            onClick={() => {
+                            onClick={async () => {
                                 if (typeof document !== 'undefined') {
                                     document.cookie = "sessionId=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;";
                                 }
-                                signOut({ callbackUrl: "/auth/login" });
+                                try {
+                                    await Promise.race([
+                                        signOut({ redirect: false }),
+                                        new Promise(r => setTimeout(r, 1200))
+                                    ]);
+                                } catch {}
+                                window.location.replace("/auth/login");
                             }}
                             className="p-2 rounded-lg text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"
                         >
@@ -91,9 +97,20 @@ export function SidebarShell({ appName, userName, userEmail, version }: SidebarS
                             variant="outline"
                             size="sm"
                             className="w-full flex items-center justify-center gap-2 text-xs h-8 rounded-lg border-border/40 hover:bg-destructive/10 hover:text-destructive hover:border-destructive/30 transition-colors"
-                            onClick={() => signOut({ callbackUrl: "/auth/login" })}
+                            onClick={async () => {
+                                if (typeof document !== 'undefined') {
+                                    document.cookie = "sessionId=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;";
+                                }
+                                try {
+                                    await Promise.race([
+                                        signOut({ redirect: false }),
+                                        new Promise(r => setTimeout(r, 1200))
+                                    ]);
+                                } catch {}
+                                window.location.replace("/auth/login");
+                            }}
                         >
-                            <LogOut size={14} /> Sign Out
+                            <LogOut size={14} /> Sair
                         </Button>
                         <p className="text-[9px] text-muted-foreground/50 text-center mt-2 font-mono">v{version}</p>
                     </>

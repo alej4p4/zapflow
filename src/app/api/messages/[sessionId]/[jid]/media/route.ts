@@ -18,6 +18,8 @@ export async function POST(
         const file = formData.get("file") as File;
         const type = formData.get("type") as string; // image, video, audio, document
         const caption = formData.get("caption") as string || "";
+        const viewOnce = formData.get("viewOnce") === "true";
+        const quoteId = (formData.get("quoteId") as string) || (formData.get("quotedMessageId") as string) || undefined;
         
         if (!file) {
              return NextResponse.json({ status: false, message: "file is required", error: "file is required" }, { status: 400 });
@@ -53,7 +55,9 @@ export async function POST(
              type, 
              file.type, 
              file.name, 
-             caption
+             caption,
+             viewOnce,
+             quoteId
         );
 
         return NextResponse.json({ status: true, message: "Operation successful", data: sent });

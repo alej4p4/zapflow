@@ -127,7 +127,7 @@ export default function ContactListPage() {
             const link = document.createElement("a");
             link.href = url;
             const nowStr = new Date().toISOString().slice(0, 10);
-            link.download = `contatos_barrasoftware_${nowStr}.csv`;
+            link.download = `contatos_zapflow_${nowStr}.csv`;
             document.body.appendChild(link);
             link.click();
             document.body.removeChild(link);

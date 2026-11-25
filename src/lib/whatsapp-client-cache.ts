@@ -3,6 +3,7 @@
 export interface CachedContact {
     id: string;
     jid: string;
+    lid?: string | null;
     name: string | null;
     notify: string | null;
     verifiedName: string | null;

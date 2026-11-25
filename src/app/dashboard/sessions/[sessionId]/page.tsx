@@ -53,6 +53,7 @@ export default function SessionDetailPage() {
     const [phoneNumber, setPhoneNumber] = useState("");
     const [pairingCode, setPairingCode] = useState<string | null>(null);
     const [isPairing, setIsPairing] = useState(false);
+    const [isSyncingWhatsApp, setIsSyncingWhatsApp] = useState(false);
 
     const fetchSession = async () => {
         try {
@@ -113,15 +114,16 @@ export default function SessionDetailPage() {
 
             // Re-fetch full details on major status change (like connection) to get 'me' info
             if (data.status === 'CONNECTED') {
+                setIsSyncingWhatsApp(true);
                 fetchSession();
                 setCookie("sessionId", sessionId);
-                toast.success("WhatsApp conectado com sucesso! Abrindo conversas e grupos...", {
+                toast.success("WhatsApp conectado com sucesso!", {
                     icon: "💬",
                     duration: 3000,
                 });
                 setTimeout(() => {
                     router.push(`/dashboard/chat?session=${sessionId}`);
-                }, 1200);
+                }, 2200);
             }
         });
 

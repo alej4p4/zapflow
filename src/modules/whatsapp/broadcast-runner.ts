@@ -163,23 +163,43 @@ async function executeBroadcast(logId: string): Promise<void> {
     const errors: { jid: string; error: string }[] = [];
     const baseDelay = log.delay || 2000;
 
-    // Detect structured media payload (image, video, document, audio) or plain text
-    let messageTemplate = log.message;
-    let mediaPayload: { type: "image" | "video" | "document" | "audio"; mimetype: string; filename?: string; base64: string } | null = null;
-    let mediaBuffer: Buffer | null = null;
+    // Detect structured sequence, single media payload (image, video, document, audio), or plain text
+    type MediaPayload = { type: "image" | "video" | "document" | "audio"; mimetype: string; filename?: string; base64: string };
+    type SequenceItem = { text: string; media: MediaPayload | null; buffer: Buffer | null };
 
-    if (log.message && log.message.startsWith("{") && log.message.includes('"media"')) {
+    let sequenceItems: SequenceItem[] = [];
+
+    if (log.message && log.message.startsWith("{")) {
         try {
             const parsed = JSON.parse(log.message);
-            if (parsed.media && parsed.media.base64) {
-                mediaPayload = parsed.media;
-                messageTemplate = parsed.caption || "";
+            if (Array.isArray(parsed.sequence) && parsed.sequence.length > 0) {
+                sequenceItems = parsed.sequence.map((item: any) => {
+                    let buf: Buffer | null = null;
+                    if (item.media?.base64) {
+                        const cleanBase64 = item.media.base64.replace(/^data:[^;]+;base64,/, "");
+                        buf = Buffer.from(cleanBase64, "base64");
+                    }
+                    return {
+                        text: item.caption || item.message || "",
+                        media: item.media || null,
+                        buffer: buf,
+                    };
+                });
+            } else if (parsed.media && parsed.media.base64) {
                 const cleanBase64 = parsed.media.base64.replace(/^data:[^;]+;base64,/, "");
-                mediaBuffer = Buffer.from(cleanBase64, "base64");
+                sequenceItems = [{
+                    text: parsed.caption || "",
+                    media: parsed.media,
+                    buffer: Buffer.from(cleanBase64, "base64"),
+                }];
             }
         } catch {
             // Fallback plain text
         }
+    }
+
+    if (sequenceItems.length === 0) {
+        sequenceItems = [{ text: log.message, media: null, buffer: null }];
     }
 
     await prisma.broadcastLog.update({
@@ -216,9 +236,13 @@ async function executeBroadcast(logId: string): Promise<void> {
                 const phoneFormatted = cleanNumber ? `+${cleanNumber}` : "";
 
                 try {
+                    const sessRow = await prisma.session.findUnique({
+                        where: { sessionId: log.sessionId },
+                        select: { id: true }
+                    });
                     const contact = await prisma.contact.findFirst({
                         where: {
-                            sessionId: log.sessionId,
+                            sessionId: sessRow?.id || log.sessionId,
                             OR: [
                                 { jid: target },
                                 { jid: `${cleanNumber}@s.whatsapp.net` }
@@ -236,8 +260,7 @@ async function executeBroadcast(logId: string): Promise<void> {
                 const currentHour = new Date().getHours();
                 const saudacao = currentHour >= 5 && currentHour < 12 ? "Bom dia" : currentHour >= 12 && currentHour < 18 ? "Boa tarde" : "Boa noite";
 
-                // Substituição das variáveis dinâmicas na legenda ou texto da mensagem
-                const personalizedText = messageTemplate
+                const personalize = (tpl: string) => tpl
                     .replace(/\{nome\}/gi, contactName || "Amigo(a)")
                     .replace(/\{primeiro_nome\}/gi, firstName || contactName || "Amigo(a)")
                     .replace(/\{saudacao\}/gi, saudacao)
@@ -253,40 +276,23 @@ async function executeBroadcast(logId: string): Promise<void> {
                     } catch {}
                 }
 
-                // Monta mensagem de mídia com legenda dinâmica ou texto puro
-                let contentToSend: AnyMessageContent;
-                if (mediaPayload && mediaBuffer) {
-                    const options: any = { mimetype: mediaPayload.mimetype };
-                    if (personalizedText && personalizedText.trim().length > 0) {
-                        options.caption = personalizedText;
+                // Monta cada item da sequência (suporta 1 ou várias mensagens separadas de texto/mídia)
+                const builtPayloads: AnyMessageContent[] = sequenceItems.map(item => {
+                    const pText = personalize(item.text || "");
+                    if (item.media && item.buffer) {
+                        const options: any = { mimetype: item.media.mimetype };
+                        if (pText && pText.trim().length > 0) {
+                            options.caption = pText;
+                        }
+                        if (item.media.type === "image") return { image: item.buffer, ...options };
+                        if (item.media.type === "video") return { video: item.buffer, ...options };
+                        if (item.media.type === "audio") {
+                            return { audio: item.buffer, mimetype: item.media.mimetype || "audio/mp4", ptt: false };
+                        }
+                        return { document: item.buffer, fileName: item.media.filename || "documento", ...options };
                     }
-
-                    if (mediaPayload.type === "image") {
-                        contentToSend = { image: mediaBuffer, ...options };
-                    } else if (mediaPayload.type === "video") {
-                        contentToSend = { video: mediaBuffer, ...options };
-                    } else if (mediaPayload.type === "document") {
-                        contentToSend = {
-                            document: mediaBuffer,
-                            fileName: mediaPayload.filename || "documento",
-                            ...options
-                        };
-                    } else if (mediaPayload.type === "audio") {
-                        contentToSend = {
-                            audio: mediaBuffer,
-                            mimetype: mediaPayload.mimetype || "audio/mp4",
-                            ptt: false
-                        };
-                    } else {
-                        contentToSend = {
-                            document: mediaBuffer,
-                            fileName: mediaPayload.filename || "arquivo",
-                            ...options
-                        };
-                    }
-                } else {
-                    contentToSend = { text: personalizedText };
-                }
+                    return { text: pText };
+                });
 
                 // Obtém socket atualizado (resiliente a reconexões rápidas)
                 let liveSocket: typeof instance.socket | null = waManager.getInstance(log.sessionId)?.socket || instance.socket || null;
@@ -302,22 +308,40 @@ async function executeBroadcast(logId: string): Promise<void> {
                 }
 
                 // Disparo com skipAntiSpam para não entrar na fila do antispam e não travar após 15 mensagens
-                try {
-                    await liveSocket.sendMessage(target, contentToSend, { skipAntiSpam: true } as any);
-                } catch (sendErr: any) {
-                    const errMsg = String(sendErr?.message || "");
-                    if (target.endsWith("@s.whatsapp.net") && errMsg.includes("Cannot read properties of null")) {
-                        // Resolve LID / canonical JID via onWhatsApp quando o contato não possui mapeamento LID prévio
-                        const checkRes = await liveSocket.onWhatsApp(target).catch(() => null);
-                        const validEntry = Array.isArray(checkRes) ? checkRes[0] : null;
-                        if (validEntry?.exists && validEntry?.jid) {
-                            target = validEntry.jid;
+                for (let sIdx = 0; sIdx < builtPayloads.length; sIdx++) {
+                    const contentToSend = builtPayloads[sIdx];
+                    let attempt = 0;
+                    while (true) {
+                        try {
                             await liveSocket.sendMessage(target, contentToSend, { skipAntiSpam: true } as any);
-                        } else {
-                            throw new Error("Número sem WhatsApp ativo ou inválido");
+                            break;
+                        } catch (sendErr: any) {
+                            const errMsg = String(sendErr?.message || "");
+                            const isRateLimit = errMsg.toLowerCase().includes("rate-overlimit") || errMsg.includes("429");
+                            if (isRateLimit && attempt < 2) {
+                                attempt++;
+                                const waitMs = attempt * 3500;
+                                logger.warn("Broadcast", `Rate-overlimit para ${target}, aguardando ${waitMs}ms (tentativa ${attempt}/2)...`);
+                                await new Promise(r => setTimeout(r, waitMs));
+                                continue;
+                            }
+                            if (target.endsWith("@s.whatsapp.net") && errMsg.includes("Cannot read properties of null")) {
+                                const checkRes = await liveSocket.onWhatsApp(target).catch(() => null);
+                                const validEntry = Array.isArray(checkRes) ? checkRes[0] : null;
+                                if (validEntry?.exists && validEntry?.jid) {
+                                    target = validEntry.jid;
+                                    await liveSocket.sendMessage(target, contentToSend, { skipAntiSpam: true } as any);
+                                    break;
+                                } else {
+                                    throw new Error("Número sem WhatsApp ativo ou inválido");
+                                }
+                            } else {
+                                throw sendErr;
+                            }
                         }
-                    } else {
-                        throw sendErr;
+                    }
+                    if (sIdx < builtPayloads.length - 1) {
+                        await new Promise(r => setTimeout(r, 350));
                     }
                 }
 

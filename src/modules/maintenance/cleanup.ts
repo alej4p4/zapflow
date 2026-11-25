@@ -8,9 +8,9 @@ import { logger } from "@/lib/logger";
  * No ambiente Railway (volume de 500MB), mantém o diretório de mídia controlado (máx 200MB)
  * para garantir que mensagens com fotos e prints sempre tenham espaço para escrita.
  */
-const RETENTION_DAYS = Number(process.env.MEDIA_RETENTION_DAYS || 14);
-const MAX_MEDIA_BYTES = Number(process.env.MAX_MEDIA_STORAGE_MB || 220) * 1024 * 1024;
-const TARGET_MEDIA_BYTES = 120 * 1024 * 1024; // Libera espaço até 120MB se estourar
+const RETENTION_DAYS = Number(process.env.MEDIA_RETENTION_DAYS || 90);
+const MAX_MEDIA_BYTES = Number(process.env.MAX_MEDIA_STORAGE_MB || 4096) * 1024 * 1024;
+const TARGET_MEDIA_BYTES = Number(process.env.TARGET_MEDIA_STORAGE_MB || 3072) * 1024 * 1024; // Libera espaço até 3GB se estourar
 const INTERVAL_MS = 30 * 60 * 1000; // A cada 30 minutos
 
 export function cleanupMedia(days = RETENTION_DAYS): number {

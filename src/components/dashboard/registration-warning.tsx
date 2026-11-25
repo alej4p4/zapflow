@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useCallback } from "react";
 import { toast } from "sonner";
 import { ShieldAlert, WifiOff, RefreshCw, X, Volume2 } from "lucide-react";
 import { useSession } from "@/components/dashboard/session-provider";
@@ -40,7 +40,25 @@ export function RegistrationWarning({ role, registrationEnabled }: RegistrationW
     const { sessions, sessionId, refreshSessions } = useSession();
     const prevStatusMapRef = useRef<Record<string, string>>({});
     const [disconnectedSession, setDisconnectedSession] = useState<{ sessionId: string; name: string; status: string } | null>(null);
-    const [dismissedForSession, setDismissedForSession] = useState<Record<string, boolean>>({});
+    const [dismissedForSession, setDismissedForSession] = useState<Record<string, boolean>>(() => {
+        if (typeof window === "undefined") return {};
+        try {
+            const raw = sessionStorage.getItem("zapflow_dismissed_disconnect_warnings");
+            return raw ? JSON.parse(raw) : {};
+        } catch {
+            return {};
+        }
+    });
+
+    const handleDismiss = useCallback((sid: string) => {
+        setDismissedForSession(prev => {
+            const next = { ...prev, [sid]: true };
+            try {
+                sessionStorage.setItem("zapflow_dismissed_disconnect_warnings", JSON.stringify(next));
+            } catch {}
+            return next;
+        });
+    }, []);
 
     // 1. Public Registration Warning with 1-click disable button
     useEffect(() => {
@@ -101,9 +119,19 @@ export function RegistrationWarning({ role, registrationEnabled }: RegistrationW
             prevStatusMapRef.current[s.sessionId] = s.status;
         }
 
+        // Clear any active disconnect warning if that session is now CONNECTED
+        setDisconnectedSession(prev => {
+            if (!prev) return null;
+            const current = sessions.find(s => s.sessionId === prev.sessionId);
+            if (!current || current.status === "CONNECTED" || current.status === "CONNECTING") {
+                return null;
+            }
+            return prev;
+        });
+
         if (newlyDisconnected) {
             playDisconnectAlertSound();
-            setDisconnectedSession(prev => prev?.sessionId === newlyDisconnected.sessionId ? prev : newlyDisconnected);
+            setDisconnectedSession(newlyDisconnected);
             toast.error(`Conexão perdida: ${newlyDisconnected.name || newlyDisconnected.sessionId}`, {
                 description: "A sessão do WhatsApp desconectou. Reconecte para continuar enviando mensagens.",
                 duration: 10000,
@@ -111,13 +139,12 @@ export function RegistrationWarning({ role, registrationEnabled }: RegistrationW
             return;
         }
 
-        // Also check if currently selected session is disconnected
-        const active = sessions.find(s => s.sessionId === sessionId) || sessions[0];
-        // Only warn if the session is genuinely DISCONNECTED or LOGGED_OUT (never during transient CONNECTING/reconnect)
+        // Only warn if the currently selected session is genuinely disconnected
+        const active = sessionId ? sessions.find(s => s.sessionId === sessionId) : null;
         if (active && (active.status === "DISCONNECTED" || active.status === "LOGGED_OUT") && !dismissedForSession[active.sessionId]) {
             setDisconnectedSession(prev => prev?.sessionId === active.sessionId && prev?.status === active.status ? prev : active);
         } else if (active && (active.status === "CONNECTED" || active.status === "CONNECTING")) {
-            setDisconnectedSession(prev => prev ? null : prev);
+            setDisconnectedSession(null);
         }
     }, [sessions, sessionId, dismissedForSession]);
 
@@ -158,7 +185,7 @@ export function RegistrationWarning({ role, registrationEnabled }: RegistrationW
                 </Link>
                 <button
                     type="button"
-                    onClick={() => setDismissedForSession(prev => ({ ...prev, [disconnectedSession.sessionId]: true }))}
+                    onClick={() => handleDismiss(disconnectedSession.sessionId)}
                     className="p-1.5 rounded-lg hover:bg-white/20 text-white/90 transition-colors"
                     title="Ocultar aviso"
                 >

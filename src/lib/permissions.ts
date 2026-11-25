@@ -93,6 +93,12 @@ export const SYSTEM_TABS: TabDefinition[] = [
         description: "Programação de mensagens e lembretes para envio futuro automático"
     },
     {
+        path: "/dashboard/instagram",
+        label: "Instagram Posts",
+        category: "Automação",
+        description: "Agendamento de publicações (Feed, Reels e Stories) via API oficial da Meta"
+    },
+    {
         path: "/dashboard/webhooks",
         label: "Webhooks e API",
         category: "Automação",
@@ -201,6 +207,19 @@ export const PERMISSION_PRESETS = [
 ];
 
 /**
+ * Finds the most specific SYSTEM_TABS entry matching a pathname.
+ */
+export function findMatchingTab(pathname: string): TabDefinition | undefined {
+    const matches = SYSTEM_TABS.filter(
+        (t) =>
+            pathname === t.path ||
+            (t.path !== "/dashboard" && pathname.startsWith(t.path + "/"))
+    );
+    if (matches.length === 0) return undefined;
+    return matches.sort((a, b) => b.path.length - a.path.length)[0];
+}
+
+/**
  * Checks whether a given path is allowed for a user.
  */
 export function isRouteAllowed(
@@ -211,8 +230,8 @@ export function isRouteAllowed(
     // SuperAdmin always has full access
     if (role === "SUPERADMIN") return true;
 
-    // Check superadmin only routes
-    const tabDef = SYSTEM_TABS.find(t => t.path === pathname || (t.path !== "/dashboard" && pathname.startsWith(t.path + "/")));
+    // Find the most specific tab definition for this pathname
+    const tabDef = findMatchingTab(pathname);
     if (tabDef?.superadminOnly && role !== "SUPERADMIN") {
         return false;
     }
@@ -220,9 +239,12 @@ export function isRouteAllowed(
     // If explicit permissions list exists
     if (Array.isArray(permissions)) {
         if (permissions.length === 0) return false;
-        return permissions.some(allowedPath => {
+        if (tabDef) {
+            return permissions.includes(tabDef.path);
+        }
+        return permissions.some((allowedPath) => {
             if (pathname === allowedPath) return true;
-            if (allowedPath !== "/dashboard" && pathname.startsWith(allowedPath)) return true;
+            if (allowedPath !== "/dashboard" && pathname.startsWith(allowedPath + "/")) return true;
             return false;
         });
     }

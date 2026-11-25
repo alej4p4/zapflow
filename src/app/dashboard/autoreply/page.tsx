@@ -34,6 +34,9 @@ import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { getAutoReplies, createAutoReply, deleteAutoReply, updateAutoReply } from "./actions";
 import { SessionGuard } from "@/components/dashboard/session-guard";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { ChatbotFlowBuilder } from "@/components/autoreply/chatbot-flow-builder";
+import { CHATBOT_FLOW_KEYWORD } from "@/lib/chatbot-flow";
 
 const AWAY_SCHEDULE_KEYWORD = "__AWAY_SCHEDULE__";
 
@@ -65,6 +68,7 @@ export default function AutoReplyPage() {
     const [loading, setLoading] = useState(false);
 
     // Away / Business Hours Schedule state (#14)
+    const [flowRule, setFlowRule] = useState<{ id: string; response: string } | null>(null);
     const [awayRuleId, setAwayRuleId] = useState<string | null>(null);
     const [awayEnabled, setAwayEnabled] = useState(false);
     const [startTime, setStartTime] = useState("07:30");
@@ -123,7 +127,9 @@ export default function AutoReplyPage() {
             } else {
                 setAwayRuleId(null);
             }
-            setRules(data.filter(r => r.keyword !== AWAY_SCHEDULE_KEYWORD));
+            const foundFlowRule = data.find(r => r.keyword === CHATBOT_FLOW_KEYWORD);
+            setFlowRule(foundFlowRule ? { id: foundFlowRule.id, response: foundFlowRule.response } : null);
+            setRules(data.filter(r => r.keyword !== AWAY_SCHEDULE_KEYWORD && r.keyword !== CHATBOT_FLOW_KEYWORD));
         } catch (error: any) {
             console.error(error);
             toast.error(error.message || "Erro ao carregar respostas automáticas");
@@ -391,6 +397,21 @@ export default function AutoReplyPage() {
                 </Dialog>
             </div>
 
+            <Tabs defaultValue="flow" className="space-y-6">
+                <TabsList className="grid w-full max-w-md grid-cols-2">
+                    <TabsTrigger value="flow">Fluxo do Chatbot (Etapas)</TabsTrigger>
+                    <TabsTrigger value="rules">Palavras-Chave &amp; Ausência</TabsTrigger>
+                </TabsList>
+
+                <TabsContent value="flow" className="space-y-6">
+                    <ChatbotFlowBuilder
+                        sessionId={sessionId || ""}
+                        existingRule={flowRule}
+                        onSaved={fetchRules}
+                    />
+                </TabsContent>
+
+                <TabsContent value="rules" className="space-y-6">
             {/* Card #14: Horário de Funcionamento / Ausência Automática */}
             <Card className="border-primary/20 shadow-sm">
                 <CardHeader className="pb-3 border-b bg-muted/20">
@@ -680,6 +701,8 @@ export default function AutoReplyPage() {
                     </DialogFooter>
                 </DialogContent>
             </Dialog>
+                </TabsContent>
+            </Tabs>
         </div>
         </SessionGuard>
     );

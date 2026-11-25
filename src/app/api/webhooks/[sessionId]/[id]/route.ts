@@ -6,19 +6,18 @@ export async function PUT(
     request: NextRequest,
     { params }: { params: Promise<{ sessionId: string; id: string }> }
 ) {
-    const user = await getAuthenticatedUser(request);
-    if (!user) {
-        return NextResponse.json({ status: false, message: "Unauthorized", error: "Unauthorized" }, { status: 401 });
-    }
-    
-    const { sessionId, id } = await params;
-
-    const hasAccess = await canAccessSession(user.id, user.role, sessionId);
-    if (!hasAccess) {
-        return NextResponse.json({ status: false, message: "Forbidden - Cannot access this session", error: "Forbidden - Cannot access this session" }, { status: 403 });
-    }
-
     try {
+        const user = await getAuthenticatedUser(request);
+        if (!user) {
+            return NextResponse.json({ status: false, message: "Unauthorized", error: "Unauthorized" }, { status: 401 });
+        }
+        
+        const { sessionId, id } = await params;
+
+        const hasAccess = await canAccessSession(user.id, user.role, sessionId);
+        if (!hasAccess) {
+            return NextResponse.json({ status: false, message: "Forbidden - Cannot access this session", error: "Forbidden - Cannot access this session" }, { status: 403 });
+        }
         const body = await request.json();
         const { name, url, secret, events, isActive } = body;
 
@@ -73,19 +72,18 @@ export async function DELETE(
     request: NextRequest,
     { params }: { params: Promise<{ sessionId: string; id: string }> }
 ) {
-    const user = await getAuthenticatedUser(request);
-    if (!user) {
-        return NextResponse.json({ status: false, message: "Unauthorized", error: "Unauthorized" }, { status: 401 });
-    }
-    
-    const { sessionId, id } = await params;
-
-    const hasAccess = await canAccessSession(user.id, user.role, sessionId);
-    if (!hasAccess) {
-        return NextResponse.json({ status: false, message: "Forbidden - Cannot access this session", error: "Forbidden - Cannot access this session" }, { status: 403 });
-    }
-
     try {
+        const user = await getAuthenticatedUser(request);
+        if (!user) {
+            return NextResponse.json({ status: false, message: "Unauthorized", error: "Unauthorized" }, { status: 401 });
+        }
+        
+        const { sessionId, id } = await params;
+
+        const hasAccess = await canAccessSession(user.id, user.role, sessionId);
+        if (!hasAccess) {
+            return NextResponse.json({ status: false, message: "Forbidden - Cannot access this session", error: "Forbidden - Cannot access this session" }, { status: 403 });
+        }
         const session = await prisma.session.findFirst({
             where: {
                 OR: [

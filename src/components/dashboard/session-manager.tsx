@@ -35,10 +35,15 @@ type Session = {
     } | null;
 };
 
-let globalSessionListCache: Session[] | null = null;
+let globalSessionListCache: { userId?: string; sessions: Session[] } | null = null;
 
 export function SessionManager({ user }: { user: any }) {
-    const [sessions, setSessions] = useState<Session[]>(() => globalSessionListCache || []);
+    const [sessions, setSessions] = useState<Session[]>(() => {
+        if (globalSessionListCache && globalSessionListCache.userId === user?.id) {
+            return globalSessionListCache.sessions;
+        }
+        return [];
+    });
     const [newSessionName, setNewSessionName] = useState("");
     const [newSessionId, setNewSessionId] = useState("");
     const [loading, setLoading] = useState(false);
@@ -92,7 +97,7 @@ export function SessionManager({ user }: { user: any }) {
         fetch(`/api/sessions${all ? '?all=true' : ''}`).then(res => res.json()).then(responseData => {
             const data = responseData?.data || [];
             if (Array.isArray(data)) {
-                globalSessionListCache = data;
+                globalSessionListCache = { userId: user?.id, sessions: data };
                 setSessions(data);
             }
         });

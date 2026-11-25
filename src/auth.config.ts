@@ -5,17 +5,21 @@ export const authConfig = {
         signIn: '/auth/login',
     },
     callbacks: {
-        authorized({ auth, request: { nextUrl } }) {
+        authorized({ auth, request }) {
+            const { nextUrl } = request;
             const isLoggedIn = !!auth?.user;
             const isOnDashboard = nextUrl.pathname.startsWith('/dashboard');
+            const proto = request.headers.get("x-forwarded-proto") || nextUrl.protocol.replace(":", "") || "http";
+            const host = request.headers.get("x-forwarded-host") || request.headers.get("host") || nextUrl.host;
+            const externalOrigin = `${proto}://${host}`;
             
             if (isOnDashboard) {
                 if (isLoggedIn) return true;
-                return false; // Redirect unauthenticated users to login page
+                const loginUrl = new URL('/auth/login', externalOrigin);
+                loginUrl.searchParams.set('callbackUrl', nextUrl.pathname);
+                return Response.redirect(loginUrl);
             } else if (isLoggedIn && nextUrl.pathname === '/auth/login') {
-                const base = process.env.BASE_URL || process.env.NEXTAUTH_URL;
-                const origin = (base && nextUrl.origin.includes('0.0.0.0')) ? base : nextUrl;
-                return Response.redirect(new URL('/dashboard', origin));
+                return Response.redirect(new URL('/dashboard', externalOrigin));
             }
             return true;
         },

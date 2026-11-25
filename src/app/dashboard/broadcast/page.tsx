@@ -77,7 +77,7 @@ interface PhoneGroup {
 interface BroadcastAttachment {
     name: string;
     size: number;
-    type: "image" | "video" | "document";
+    type: "image" | "video" | "document" | "audio";
     mimetype: string;
     base64: string;
     previewUrl?: string;
@@ -90,9 +90,20 @@ function formatFileSize(bytes: number): string {
 }
 
 function parseBroadcastMessage(msg: string): { text: string; media?: { type: string; filename: string; mimetype?: string } } {
-    if (msg && msg.startsWith("{") && msg.includes('"media"')) {
+    if (msg && msg.startsWith("{")) {
         try {
             const parsed = JSON.parse(msg);
+            if (Array.isArray(parsed.sequence) && parsed.sequence.length > 0) {
+                const first = parsed.sequence[0];
+                return {
+                    text: `[${parsed.sequence.length} msgs] ${first.caption || (first.media ? first.media.filename : "")}`.trim(),
+                    media: first.media ? {
+                        type: first.media.type,
+                        filename: first.media.filename,
+                        mimetype: first.media.mimetype
+                    } : undefined
+                };
+            }
             if (parsed.media) {
                 return {
                     text: parsed.caption || "",
@@ -173,6 +184,7 @@ export default function BroadcastPage() {
     const [contacts, setContacts] = useState("");
     const [message, setMessage] = useState("");
     const [attachment, setAttachment] = useState<BroadcastAttachment | null>(null);
+    const [extraMessages, setExtraMessages] = useState<Array<{ id: string; text: string; attachment: BroadcastAttachment | null }>>([]);
     const fileInputRef = useRef<HTMLInputElement>(null);
     const [delay, setDelay] = useState([500]);
     const [pickerSearch, setPickerSearch] = useState("");
@@ -228,7 +240,9 @@ export default function BroadcastPage() {
 
         // A. Importação de rascunho de grupo via chat (suporta JSON array de números ou texto puro)
         const draftGroup = sessionStorage.getItem("zapflow_broadcast_draft_recipients");
+        let hasLocalDraft = false;
         if (draftGroup) {
+            hasLocalDraft = true;
             try {
                 const parsed = JSON.parse(draftGroup);
                 if (Array.isArray(parsed)) {
@@ -247,8 +261,25 @@ export default function BroadcastPage() {
                 const rawDraft = localStorage.getItem(DRAFT_KEY(sessionId));
                 if (rawDraft) {
                     const draft = JSON.parse(rawDraft);
-                    if (typeof draft.contacts === "string") setContacts(draft.contacts);
-                    if (typeof draft.message === "string") setMessage(draft.message);
+                    if (typeof draft.contacts === "string" && draft.contacts.trim()) {
+                        hasLocalDraft = true;
+                        setContacts(draft.contacts);
+                    }
+                    if (typeof draft.message === "string" && draft.message.trim()) {
+                        hasLocalDraft = true;
+                        setMessage(draft.message);
+                    }
+                    if (Array.isArray(draft.extraMessages)) {
+                        setExtraMessages(
+                            draft.extraMessages
+                                .filter((em: unknown): em is { id?: string; text?: string } => Boolean(em && typeof em === "object"))
+                                .map((em: { id?: string; text?: string }, i: number) => ({
+                                    id: typeof em.id === "string" && em.id ? em.id : `msg-restored-${Date.now()}-${i}`,
+                                    text: typeof em.text === "string" ? em.text : "",
+                                    attachment: null,
+                                }))
+                        );
+                    }
                     if (Array.isArray(draft.delay)) setDelay(draft.delay);
                     if (draft.scheduleMode) setScheduleMode(draft.scheduleMode);
                     if (typeof draft.scheduledAt === "string") setScheduledAt(draft.scheduledAt);
@@ -329,6 +360,44 @@ export default function BroadcastPage() {
                 const data = await res.json();
                 if (data.status && data.broadcast) {
                     const b = data.broadcast;
+
+                    // Se não havia rascunho no localStorage (ex: novo domínio/navegador), restaura o último disparo do banco
+                    if (!hasLocalDraft && Array.isArray(b.recipientJids) && b.recipientJids.length > 0) {
+                        setContacts(b.recipientJids.join("\n"));
+                        if (typeof b.message === "string" && b.message.trim()) {
+                            try {
+                                const parsedSeq = JSON.parse(b.message);
+                                if (parsedSeq && Array.isArray(parsedSeq.sequence) && parsedSeq.sequence.length > 0) {
+                                    setMessage(typeof parsedSeq.sequence[0]?.caption === "string" ? parsedSeq.sequence[0].caption : "");
+                                    setExtraMessages(
+                                        parsedSeq.sequence.slice(1).map((item: { caption?: string }, idx: number) => ({
+                                            id: `msg-db-${Date.now()}-${idx}`,
+                                            text: typeof item?.caption === "string" ? item.caption : "",
+                                            attachment: null,
+                                        }))
+                                    );
+                                } else {
+                                    setMessage(b.message);
+                                }
+                            } catch {
+                                setMessage(b.message);
+                            }
+                        }
+                        if (typeof b.delay === "number" && b.delay > 0) {
+                            setDelay([Math.max(1, Math.round(b.delay / 1000))]);
+                        }
+                        if (b.repeatDaily || (Array.isArray(b.programmedSlots) && b.programmedSlots.length > 0)) {
+                            setScheduleMode("programmed");
+                            setRepeatDaily(Boolean(b.repeatDaily));
+                            const slots = Array.isArray(b.programmedSlots) && b.programmedSlots.length > 0
+                                ? b.programmedSlots
+                                : (b.timeSlot ? [b.timeSlot] : []);
+                            if (slots.length > 0) {
+                                setProgrammedTimesInput(slots.join(", "));
+                            }
+                        }
+                    }
+
                     if (data.hasActive) {
                         const activeState: BroadcastProgress = {
                             broadcastId: b.id,
@@ -384,6 +453,7 @@ export default function BroadcastPage() {
                 const draft = {
                     contacts,
                     message,
+                    extraMessages: extraMessages.map((em) => ({ id: em.id, text: em.text })),
                     delay,
                     scheduleMode,
                     scheduledAt,
@@ -395,7 +465,7 @@ export default function BroadcastPage() {
         }, 250);
 
         return () => clearTimeout(timer);
-    }, [contacts, message, delay, scheduleMode, scheduledAt, programmedTimesInput, repeatDaily, sessionId]);
+    }, [contacts, message, extraMessages, delay, scheduleMode, scheduledAt, programmedTimesInput, repeatDaily, sessionId]);
 
     // 3. Socket para acompanhar atualizações em tempo real
     useEffect(() => {
@@ -1048,11 +1118,38 @@ export default function BroadcastPage() {
         }
     };
 
+    const handleExtraFileSelect = (idx: number, e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0];
+        if (!file) return;
+        if (file.size > 20 * 1024 * 1024) {
+            toast.error("Arquivo muito grande (máximo 20MB)");
+            e.target.value = "";
+            return;
+        }
+        let type: BroadcastAttachment["type"] = "document";
+        if (file.type.startsWith("image/")) type = "image";
+        else if (file.type.startsWith("video/")) type = "video";
+        else if (file.type.startsWith("audio/")) type = "audio";
+        const previewUrl = type === "image" ? URL.createObjectURL(file) : undefined;
+        const reader = new FileReader();
+        reader.onload = () => {
+            const base64 = String(reader.result || "");
+            setExtraMessages(prev => prev.map((item, i) => i === idx ? {
+                ...item,
+                attachment: { name: file.name, type, size: file.size, mimetype: file.type || "application/octet-stream", base64, previewUrl }
+            } : item));
+        };
+        reader.readAsDataURL(file);
+        e.target.value = "";
+    };
+
     // Limpa campos do formulário conscientemente (sem afetar o disparo em processo)
     const handleClearForm = () => {
         setContacts("");
         setMessage("");
         removeAttachment();
+        extraMessages.forEach(em => em.attachment?.previewUrl && URL.revokeObjectURL(em.attachment.previewUrl));
+        setExtraMessages([]);
         setPickerSearch("");
         setSelectedContacts([]);
         setSelectedGroups([]);
@@ -1064,7 +1161,8 @@ export default function BroadcastPage() {
 
     const handleSend = async () => {
         if (!sessionId) return toast.error("Nenhuma sessão ativa encontrada");
-        if (!attachment && !message.trim()) {
+        const hasExtraValid = extraMessages.some(em => em.text.trim() || em.attachment);
+        if (!attachment && !message.trim() && !hasExtraValid) {
             return toast.error("Digite uma mensagem ou anexe uma mídia/documento para o disparo");
         }
 
@@ -1076,6 +1174,36 @@ export default function BroadcastPage() {
             return toast.error("Nenhum destinatário informado");
         }
 
+        const firstBlock = (message.trim() || attachment)
+            ? [{
+                message: message.trim(),
+                ...(attachment ? {
+                    media: {
+                        base64: attachment.base64,
+                        filename: attachment.name,
+                        mimetype: attachment.mimetype,
+                        type: attachment.type
+                    }
+                } : {})
+            }]
+            : [];
+
+        const extraBlocks = extraMessages
+            .filter(em => em.text.trim() || em.attachment)
+            .map(em => ({
+                message: em.text.trim(),
+                ...(em.attachment ? {
+                    media: {
+                        base64: em.attachment.base64,
+                        filename: em.attachment.name,
+                        mimetype: em.attachment.mimetype,
+                        type: em.attachment.type
+                    }
+                } : {})
+            }));
+
+        const allSequence = [...firstBlock, ...extraBlocks];
+
         let bodyPayload: any = {
             recipients,
             message: message.trim(),
@@ -1083,7 +1211,9 @@ export default function BroadcastPage() {
             mode: scheduleMode
         };
 
-        if (attachment) {
+        if (allSequence.length > 1 || (extraBlocks.length > 0 && allSequence.length >= 1)) {
+            bodyPayload.messages = allSequence;
+        } else if (attachment) {
             bodyPayload.media = {
                 base64: attachment.base64,
                 filename: attachment.name,
@@ -1597,6 +1727,114 @@ export default function BroadcastPage() {
                                         </p>
                                     </div>
 
+                                    {/* Mensagens adicionais separadas (sequência por destinatário) */}
+                                    {extraMessages.map((em, emIdx) => (
+                                        <div key={em.id} className="p-3.5 rounded-xl border border-border/60 bg-muted/20 space-y-3">
+                                            <div className="flex flex-wrap items-center justify-between gap-2">
+                                                <div className="flex items-center gap-2">
+                                                    <span className="text-xs font-semibold text-foreground">Mensagem #{emIdx + 2}</span>
+                                                    {em.attachment && (
+                                                        <span className="text-[10px] font-medium px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-600 border border-emerald-500/20">
+                                                            Com anexo
+                                                        </span>
+                                                    )}
+                                                </div>
+                                                <div className="flex items-center gap-1.5">
+                                                    <label className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs rounded-md border border-dashed hover:border-primary hover:text-primary bg-background cursor-pointer">
+                                                        <Paperclip className="h-3.5 w-3.5 text-primary" />
+                                                        <span>{em.attachment ? "Trocar arquivo" : "Anexar mídia / arquivo"}</span>
+                                                        <input
+                                                            type="file"
+                                                            className="hidden"
+                                                            accept="image/*,video/*,audio/*,application/pdf,.xlsx,.xls,.csv,.doc,.docx,.txt"
+                                                            onChange={(e) => handleExtraFileSelect(emIdx, e)}
+                                                            disabled={isSubmitting}
+                                                        />
+                                                    </label>
+                                                    <Button
+                                                        type="button"
+                                                        variant="ghost"
+                                                        size="icon"
+                                                        className="h-7 w-7 text-muted-foreground hover:text-destructive cursor-pointer"
+                                                        onClick={() => {
+                                                            if (em.attachment?.previewUrl) URL.revokeObjectURL(em.attachment.previewUrl);
+                                                            setExtraMessages(prev => prev.filter((_, i) => i !== emIdx));
+                                                        }}
+                                                        disabled={isSubmitting}
+                                                        title="Remover esta mensagem"
+                                                    >
+                                                        <X className="h-4 w-4" />
+                                                    </Button>
+                                                </div>
+                                            </div>
+
+                                            {em.attachment && (
+                                                <div className="flex items-center justify-between p-2 rounded-lg border bg-primary/5 border-primary/20">
+                                                    <div className="flex items-center gap-2.5 min-w-0">
+                                                        {em.attachment.type === "image" && em.attachment.previewUrl ? (
+                                                            <img src={em.attachment.previewUrl} alt="Preview" className="h-10 w-10 rounded object-cover border shrink-0" />
+                                                        ) : (
+                                                            <FileText className="h-5 w-5 text-amber-600 shrink-0" />
+                                                        )}
+                                                        <div className="min-w-0">
+                                                            <p className="text-xs font-semibold truncate">{em.attachment.name}</p>
+                                                            <p className="text-[11px] text-muted-foreground">{formatFileSize(em.attachment.size)} • {em.attachment.type.toUpperCase()}</p>
+                                                        </div>
+                                                    </div>
+                                                    <Button
+                                                        type="button"
+                                                        variant="ghost"
+                                                        size="icon"
+                                                        className="h-7 w-7 text-muted-foreground hover:text-destructive"
+                                                        onClick={() => {
+                                                            if (em.attachment?.previewUrl) URL.revokeObjectURL(em.attachment.previewUrl);
+                                                            setExtraMessages(prev => prev.map((it, i) => i === emIdx ? { ...it, attachment: null } : it));
+                                                        }}
+                                                        disabled={isSubmitting}
+                                                    >
+                                                        <X className="h-3.5 w-3.5" />
+                                                    </Button>
+                                                </div>
+                                            )}
+
+                                            <div className="flex flex-wrap items-center gap-1.5">
+                                                <span className="text-[11px] text-muted-foreground mr-1">Variáveis:</span>
+                                                {["{primeiro_nome}", "{nome}", "{saudacao}", "{telefone}"].map(tag => (
+                                                    <button
+                                                        key={tag}
+                                                        type="button"
+                                                        onClick={() => setExtraMessages(prev => prev.map((it, i) => i === emIdx ? { ...it, text: it.text + (it.text.endsWith(" ") || it.text === "" ? "" : " ") + tag + " " } : it))}
+                                                        className="px-2 py-0.5 text-[11px] font-mono font-medium rounded bg-primary/10 hover:bg-primary/20 text-primary border border-primary/20 cursor-pointer"
+                                                        disabled={isSubmitting}
+                                                    >
+                                                        {tag}
+                                                    </button>
+                                                ))}
+                                            </div>
+
+                                            <Textarea
+                                                placeholder={em.attachment ? "Legenda desta mídia (opcional)..." : "Digite o texto desta mensagem separada..."}
+                                                className="h-44 max-h-56 [field-sizing:fixed] overflow-y-auto text-sm resize-y"
+                                                style={{ fieldSizing: "fixed", maxHeight: "220px", height: "180px", overflowY: "auto" }}
+                                                value={em.text}
+                                                onChange={(e) => setExtraMessages(prev => prev.map((it, i) => i === emIdx ? { ...it, text: e.target.value } : it))}
+                                                disabled={isSubmitting}
+                                            />
+                                        </div>
+                                    ))}
+
+                                    <Button
+                                        type="button"
+                                        variant="outline"
+                                        size="sm"
+                                        className="w-full border-dashed text-xs h-9 gap-1.5 hover:border-primary hover:text-primary cursor-pointer"
+                                        onClick={() => setExtraMessages(prev => [...prev, { id: `msg-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`, text: "", attachment: null }])}
+                                        disabled={isSubmitting}
+                                    >
+                                        <Plus className="h-4 w-4 text-primary" />
+                                        Adicionar outra mensagem (texto ou mídia separada)
+                                    </Button>
+
                                     <div className="space-y-4 pt-4">
                                         <div className="space-y-2">
                                             <div className="flex flex-wrap items-center justify-between gap-2">
@@ -1961,7 +2199,9 @@ export default function BroadcastPage() {
                                                         <XCircle className="h-4 w-4" /> Erros de envio ({broadcastProgress.errors.length})
                                                     </h4>
                                                     {(() => {
+                                                        const isTempRateLimit = (errObj: any) => String(errObj?.error || "").toLowerCase().includes("rate-overlimit");
                                                         const selectableJids = (broadcastProgress.errors || [])
+                                                            .filter(e => !isTempRateLimit(e))
                                                             .map(e => (typeof e === "string" ? e : e?.jid))
                                                             .filter((jid): jid is string => Boolean(jid) && !isJidExcluded(jid));
                                                         if (selectableJids.length === 0) return null;
@@ -1997,13 +2237,14 @@ export default function BroadcastPage() {
                                                             Excluir selecionados dos próximos disparos ({selectedErrorJids.length})
                                                         </Button>
                                                     ) : (
-                                                        broadcastProgress.errors.some(e => !isJidExcluded(e.jid)) && (
+                                                        broadcastProgress.errors.some(e => !isJidExcluded(e.jid) && !String(e?.error || "").toLowerCase().includes("rate-overlimit")) && (
                                                             <Button
                                                                 type="button"
                                                                 variant="outline"
                                                                 size="sm"
                                                                 onClick={() => {
                                                                     const allErrJids = (broadcastProgress.errors || [])
+                                                                        .filter(e => !String(e?.error || "").toLowerCase().includes("rate-overlimit"))
                                                                         .map(e => (typeof e === "string" ? e : e?.jid))
                                                                         .filter((jid): jid is string => Boolean(jid) && !isJidExcluded(jid));
                                                                     handleExcludeRecipients(allErrJids);

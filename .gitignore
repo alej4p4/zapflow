@@ -52,3 +52,7 @@ server.log
 /desktop/turbopack-aliases/
 /desktop/template/wa-akg.sqlite*
 /release/
+/data/logs/
+/data/autoreply-state.json
+/graphify-out/
+check_lid_debug.js

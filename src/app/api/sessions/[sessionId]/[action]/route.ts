@@ -49,19 +49,29 @@ export async function POST(
             case "restart":
                 await waManager.restartSession(sessionId);
                 break;
-            case "logout":
-                // Retrieve instance to logout properly
+            case "logout": {
                 const instance = waManager.getInstance(sessionId);
                 if (instance?.socket) {
-                    await instance.socket.logout();
-                } else {
-                    // Fallback DB update if instance not running
-                    await prisma.session.update({
-                        where: { sessionId },
-                        data: { status: "LOGGED_OUT", qr: null }
-                    });
+                    await Promise.race([
+                        instance.socket.logout().catch(() => {}),
+                        new Promise(r => setTimeout(r, 4000))
+                    ]);
                 }
+                if (instance) {
+                    await instance.shutdown().catch(() => {});
+                    waManager.removeInstance(sessionId);
+                }
+                await prisma.authState.deleteMany({ where: { sessionId } }).catch(() => {});
+                await prisma.session.update({
+                    where: { sessionId },
+                    data: { status: "LOGGED_OUT", qr: null }
+                }).catch(() => {});
+                try {
+                    const io = (global as any).io;
+                    io?.to(sessionId).emit("connection.update", { status: "LOGGED_OUT", qr: null });
+                } catch {}
                 break;
+            }
         }
 
         return NextResponse.json({ status: true, message: `Session ${action}ed successfully` });

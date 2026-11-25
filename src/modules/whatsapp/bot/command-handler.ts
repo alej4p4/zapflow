@@ -28,7 +28,7 @@ const DEFAULT_CONFIG = {
     maxStickerDuration: 10,
     enablePing: true,
     enableUptime: true,
-    botName: "BarraSoftware Bot",
+    botName: "ZapFlow Bot",
     prefix: "#",
     removeBgApiKey: null as string | null
 };
@@ -306,8 +306,8 @@ export async function handleBotCommand(
 
                     // Convert
                     const sticker = new Sticker(buffer as Buffer, {
-                        pack: (config as any).botName || "BarraSoftware Bot",
-                        author: "By " + ((config as any).botName || "BarraSoftware Bot"),
+                        pack: (config as any).botName || "ZapFlow Bot",
+                        author: "By " + ((config as any).botName || "ZapFlow Bot"),
                         type: "full", // full, crop, circle
                         quality: 15 // Extreme quality reduction for size
                     });
@@ -327,7 +327,7 @@ export async function handleBotCommand(
 
             case "menu":
             case "help": {
-                const botName = (config as any).botName || "BarraSoftware Bot";
+                const botName = (config as any).botName || "ZapFlow Bot";
                 const menu = `
 🤖 *${botName} Menu* 🤖
 

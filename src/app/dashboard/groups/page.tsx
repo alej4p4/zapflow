@@ -226,7 +226,7 @@ export default function GroupsPage() {
                                     <Input
                                         value={newGroupName}
                                         onChange={e => setNewGroupName(e.target.value)}
-                                        placeholder="Ex: Clientes VIP BarraSoftware"
+                                        placeholder="Ex: Clientes VIP ZapFlow"
                                         className="mt-1.5 h-9 text-xs"
                                         autoFocus
                                     />

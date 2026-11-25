@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import type { WASocket } from "@whiskeysockets/baileys";
 import { logger } from "@/lib/logger";
+import { upsertAndCrossLinkContact } from "./contacts";
 
 export async function syncGroups(sock: WASocket, sessionId: string) {
     try {
@@ -63,6 +64,28 @@ export async function syncGroups(sock: WASocket, sessionId: string) {
             );
         }
         logger.success("Store", `Synced ${groupList.length} groups for session ${sessionId}`);
+
+        // Cross-link LID <-> Phone mappings from group participants in background
+        const participantPairs = new Map<string, string>();
+        for (const g of groupList) {
+            for (const p of (g.participants || []) as any[]) {
+                const lid = p.id?.endsWith("@lid") ? p.id : (p.lid?.endsWith("@lid") ? p.lid : null);
+                const pn = p.phoneNumber?.endsWith("@s.whatsapp.net") ? p.phoneNumber : (p.id?.endsWith("@s.whatsapp.net") ? p.id : null);
+                if (lid && pn) {
+                    participantPairs.set(lid, pn);
+                }
+            }
+        }
+        if (participantPairs.size > 0) {
+            const entries = Array.from(participantPairs.entries());
+            for (let i = 0; i < entries.length; i += 25) {
+                const batch = entries.slice(i, i + 25);
+                await Promise.all(batch.map(([lid, pn]) =>
+                    upsertAndCrossLinkContact(dbSessionId, { id: pn, lid, phoneNumber: pn })
+                ));
+            }
+            logger.info("Store", `Cross-linked ${participantPairs.size} LID/Phone pairs from group participants`);
+        }
     } catch (e) {
         logger.error("Store", "Failed to sync groups", e);
     }

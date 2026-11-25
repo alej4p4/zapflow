@@ -1,5 +1,5 @@
 import { prisma } from "@/lib/prisma";
-import { AuthenticationCreds, AuthenticationState, BufferJSON, initAuthCreds, SignalDataTypeMap } from "@whiskeysockets/baileys";
+import { AuthenticationCreds, AuthenticationState, BufferJSON, initAuthCreds, proto, SignalDataTypeMap } from "@whiskeysockets/baileys";
 import { logger } from "@/lib/logger";
 
 export const usePrismaAuthState = async (sessionId: string): Promise<{ state: AuthenticationState, saveCreds: () => Promise<void> }> => {
@@ -69,7 +69,7 @@ export const usePrismaAuthState = async (sessionId: string): Promise<{ state: Au
                             if (!id) continue;
                             let value = JSON.parse(JSON.stringify(record.value), BufferJSON.reviver);
                             if (type === 'app-state-sync-key' && value) {
-                                value = BufferJSON.reviver(null, value);
+                                value = proto.Message.AppStateSyncKeyData.fromObject(value) as any;
                             }
                             if (value) {
                                 data[id] = value;
@@ -106,15 +106,19 @@ export const usePrismaAuthState = async (sessionId: string): Promise<{ state: Au
                         }).catch(e => logger.error("Auth", "Error batch deleting auth state:", e));
                     }
 
-                    // Upsert updated keys
+                    // Upsert updated keys in controlled chunks to avoid pool exhaustion
                     if (writes.length > 0) {
-                        await Promise.all(writes.map(w =>
-                            prisma.authState.upsert({
-                                where: { sessionId_key: { sessionId, key: w.key } },
-                                create: { sessionId, key: w.key, value: w.value },
-                                update: { value: w.value }
-                            }).catch(e => logger.error("Auth", `Error upserting auth key ${w.key}:`, e))
-                        ));
+                        const CHUNK_SIZE = 25;
+                        for (let i = 0; i < writes.length; i += CHUNK_SIZE) {
+                            const chunk = writes.slice(i, i + CHUNK_SIZE);
+                            await Promise.all(chunk.map(w =>
+                                prisma.authState.upsert({
+                                    where: { sessionId_key: { sessionId, key: w.key } },
+                                    create: { sessionId, key: w.key, value: w.value },
+                                    update: { value: w.value }
+                                }).catch(e => logger.error("Auth", `Error upserting auth key ${w.key}:`, e))
+                            ));
+                        }
                     }
                 }
             }

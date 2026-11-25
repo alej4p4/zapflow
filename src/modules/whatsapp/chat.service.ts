@@ -2,11 +2,13 @@ import { prisma } from "@/lib/prisma";
 import { normalizeJid } from "@/lib/jid-utils";
 import { waManager } from "@/modules/whatsapp/manager";
 import { onMessageSent } from "@/lib/webhook";
+import { registerLocalSentMedia } from "@/modules/whatsapp/store";
 import Sticker from "wa-sticker-formatter";
 import path from "path";
 import { writeFile, mkdir } from "fs/promises";
 import { mediaDir } from "@/lib/paths";
 import { logger } from "@/lib/logger";
+import { getMonotonicChatTimestamp, getSyncedNowUnixSec } from "@/lib/wa-clock";
 
 // High-speed memory caches to eliminate repeated database roundtrips on sending
 const sessionDbIdCache = new Map<string, string>();
@@ -36,22 +38,62 @@ export class ChatService {
         }> = [];
 
         if (isPostgres) {
-            const sql = `
+            // High-performance index scan on Message_sessionId_timestamp_idx:
+            // Fetch recent messages and deduplicate by remoteJid in-memory (9ms vs 3000ms).
+            const scanLimit = Math.max(limit * 20, 1000);
+            const fastSql = `
                 SELECT "remoteJid", "content", "timestamp", "type", "fromMe", "status"
-                FROM (
-                    SELECT DISTINCT ON ("remoteJid") "remoteJid", "content", "timestamp", "type", "fromMe", "status"
-                    FROM "Message"
-                    WHERE "sessionId" = $1
-                    ${before ? 'AND "timestamp" < $2' : ''}
-                    ORDER BY "remoteJid", "timestamp" DESC
-                ) sub
+                FROM "Message"
+                WHERE "sessionId" = $1
+                AND "remoteJid" != 'status@broadcast'
+                AND "remoteJid" NOT LIKE '%@broadcast'
+                ${before ? 'AND "timestamp" < $2' : ''}
                 ORDER BY "timestamp" DESC
                 LIMIT ${before ? '$3' : '$2'}
             `;
-            const params: any[] = [dbSessionId];
-            if (before) params.push(new Date(before));
-            params.push(limit);
-            rawLastMessages = await prisma.$queryRawUnsafe(sql, ...params);
+            const fastParams: any[] = [dbSessionId];
+            if (before) fastParams.push(new Date(before));
+            fastParams.push(scanLimit);
+
+            const recentRows: Array<{
+                remoteJid: string;
+                content: string | null;
+                timestamp: Date;
+                type: string;
+                fromMe: boolean;
+                status?: string;
+            }> = await prisma.$queryRawUnsafe(fastSql, ...fastParams);
+
+            const seenJids = new Set<string>();
+            for (const r of recentRows) {
+                if (!seenJids.has(r.remoteJid)) {
+                    seenJids.add(r.remoteJid);
+                    rawLastMessages.push(r);
+                    if (rawLastMessages.length >= limit) break;
+                }
+            }
+
+            // Fallback only if the fast window did not yield enough distinct chats
+            if (rawLastMessages.length < limit && recentRows.length >= scanLimit) {
+                const fallbackSql = `
+                    SELECT "remoteJid", "content", "timestamp", "type", "fromMe", "status"
+                    FROM (
+                        SELECT DISTINCT ON ("remoteJid") "remoteJid", "content", "timestamp", "type", "fromMe", "status"
+                        FROM "Message"
+                        WHERE "sessionId" = $1
+                        AND "remoteJid" != 'status@broadcast'
+                        AND "remoteJid" NOT LIKE '%@broadcast'
+                        ${before ? 'AND "timestamp" < $2' : ''}
+                        ORDER BY "remoteJid", "timestamp" DESC
+                    ) sub
+                    ORDER BY "timestamp" DESC
+                    LIMIT ${before ? '$3' : '$2'}
+                `;
+                const fallbackParams: any[] = [dbSessionId];
+                if (before) fallbackParams.push(new Date(before));
+                fallbackParams.push(limit);
+                rawLastMessages = await prisma.$queryRawUnsafe(fallbackSql, ...fallbackParams);
+            }
         } else {
             const qParams: any[] = [dbSessionId, dbSessionId];
             if (before) qParams.push(new Date(before));
@@ -70,23 +112,44 @@ export class ChatService {
                 INNER JOIN (
                     SELECT remoteJid, MAX(timestamp) as max_ts
                     FROM Message
-                    WHERE sessionId = ?
+                    WHERE sessionId = ? AND remoteJid != 'status@broadcast' AND remoteJid NOT LIKE '%@broadcast'
                     GROUP BY remoteJid
                 ) m2 ON m1.remoteJid = m2.remoteJid AND m1.timestamp = m2.max_ts
-                WHERE m1.sessionId = ?
+                WHERE m1.sessionId = ? AND m1.remoteJid != 'status@broadcast' AND m1.remoteJid NOT LIKE '%@broadcast'
                 ${before ? 'AND m1.timestamp < ?' : ''}
                 ORDER BY m1.timestamp DESC
                 LIMIT ?
             `, ...qParams);
         }
 
-        // 2. Fetch all groups and contacts in parallel so ALL groups and contacts load instantaneously (0ms)
+        // 2. Fetch all groups, contacts and LID mappings in parallel (smart resolution)
         const jids = rawLastMessages.map(m => m.remoteJid);
-        const [contactsForMessages, allGroups, directoryContacts] = await Promise.all([
+        const lidJids = jids.filter(j => j.endsWith('@lid'));
+        const bareLidNums = lidJids.map(j => j.split('@')[0]);
+
+        const [contactsForMessages, authLidMappings, allGroups, directoryContacts] = await Promise.all([
             jids.length > 0
                 ? prisma.contact.findMany({
-                      where: { sessionId: dbSessionId, jid: { in: jids } },
-                      select: { jid: true, name: true, notify: true, profilePic: true }
+                      where: {
+                          sessionId: dbSessionId,
+                          OR: [
+                              { jid: { in: jids } },
+                              ...(lidJids.length > 0 ? [
+                                  { lid: { in: lidJids } },
+                                  { lid: { in: bareLidNums.map(n => `${n}@lid`) } },
+                                  { remoteJidAlt: { in: jids } }
+                              ] : [])
+                          ]
+                      },
+                      select: { jid: true, lid: true, remoteJidAlt: true, name: true, notify: true, verifiedName: true, profilePic: true }
+                  })
+                : Promise.resolve([]),
+            bareLidNums.length > 0
+                ? prisma.authState.findMany({
+                      where: {
+                          key: { in: bareLidNums.map(n => `lid-mapping-${n}_reverse`) }
+                      },
+                      select: { key: true, value: true }
                   })
                 : Promise.resolve([]),
             !before
@@ -106,31 +169,116 @@ export class ChatService {
                           jid: { endsWith: "@s.whatsapp.net" },
                           OR: [{ name: { not: null } }, { notify: { not: null } }]
                       },
-                      select: { jid: true, name: true, notify: true, profilePic: true },
+                      select: { jid: true, lid: true, name: true, notify: true, profilePic: true },
                       orderBy: { name: "asc" },
-                      take: 500
+                      take: 5000
                   })
                 : Promise.resolve([])
         ]);
 
-        // Build lookup map
-        const infoMap = new Map<string, { name: string | null; notify: string | null; profilePic: string | null }>();
-        directoryContacts.forEach(c => infoMap.set(c.jid, { name: c.name, notify: c.notify, profilePic: (c.profilePic && c.profilePic.startsWith("http")) ? c.profilePic : null }));
-        contactsForMessages.forEach(c => infoMap.set(c.jid, { name: c.name, notify: c.notify, profilePic: (c.profilePic && c.profilePic.startsWith("http")) ? c.profilePic : null }));
-        allGroups.forEach(g => infoMap.set(g.jid, { name: g.subject, notify: g.subject, profilePic: null }));
+        // Process auth reverse mappings (LID -> Phone)
+        const lidToPhoneAuth = new Map<string, string>();
+        for (const a of authLidMappings) {
+            const m = a.key.match(/^lid-mapping-(.+)_reverse$/);
+            if (m && a.value) {
+                const cleanPhone = String(a.value).replace(/\D/g, "");
+                lidToPhoneAuth.set(m[1], cleanPhone);
+                lidToPhoneAuth.set(`${m[1]}@lid`, cleanPhone);
+            }
+        }
+
+        // Fetch any extra contacts found via auth mapping that weren't fetched yet
+        const extraPhones = Array.from(lidToPhoneAuth.values()).map(p => `${p}@s.whatsapp.net`);
+        const extraContacts = extraPhones.length > 0
+            ? await prisma.contact.findMany({
+                  where: { sessionId: dbSessionId, jid: { in: extraPhones } },
+                  select: { jid: true, lid: true, remoteJidAlt: true, name: true, notify: true, verifiedName: true, profilePic: true }
+              })
+            : [];
+
+        // Build lookup map with smart deduplication (keep valid names, do not overwrite with null)
+        const infoMap = new Map<string, { name: string | null; notify: string | null; profilePic: string | null; phoneJid?: string | null }>();
+
+        const setEntry = (key: string | null | undefined, newEntry: { name: string | null; notify: string | null; profilePic: string | null; phoneJid?: string | null }) => {
+            if (!key) return;
+            const old = infoMap.get(key);
+            if (!old) {
+                infoMap.set(key, newEntry);
+                return;
+            }
+            infoMap.set(key, {
+                name: newEntry.name || old.name,
+                notify: newEntry.notify || old.notify,
+                profilePic: newEntry.profilePic || old.profilePic,
+                phoneJid: newEntry.phoneJid || old.phoneJid
+            });
+        };
+
+        directoryContacts.forEach(c => {
+            const entry = { name: c.name || c.notify || null, notify: c.notify, profilePic: (c.profilePic && c.profilePic.startsWith("http")) ? c.profilePic : null, phoneJid: c.jid };
+            setEntry(c.jid, entry);
+            if (c.lid) {
+                setEntry(c.lid, entry);
+                setEntry(c.lid.split('@')[0], entry);
+                setEntry(`${c.lid.split('@')[0]}@lid`, entry);
+            }
+        });
+        allGroups.forEach(g => setEntry(g.jid, { name: g.subject, notify: g.subject, profilePic: null }));
+
+        // Prioritize contacts with names first
+        const allFetchedContacts = [...contactsForMessages, ...extraContacts].sort((a, b) => {
+            const aHasName = !!(a.name || a.notify || a.verifiedName);
+            const bHasName = !!(b.name || b.notify || b.verifiedName);
+            return (bHasName ? 1 : 0) - (aHasName ? 1 : 0);
+        });
+
+        for (const c of allFetchedContacts) {
+            const displayName = c.name || c.notify || c.verifiedName || null;
+            const pic = (c.profilePic && c.profilePic.startsWith("http")) ? c.profilePic : null;
+            const phoneJid = c.jid.endsWith('@s.whatsapp.net') ? c.jid : (c.remoteJidAlt?.endsWith('@s.whatsapp.net') ? c.remoteJidAlt : null);
+            const entry = { name: displayName, notify: c.notify, profilePic: pic, phoneJid };
+
+            if (c.jid) setEntry(c.jid, entry);
+            if (c.lid) {
+                setEntry(c.lid, entry);
+                setEntry(c.lid.split('@')[0], entry);
+                setEntry(`${c.lid.split('@')[0]}@lid`, entry);
+            }
+            if (c.remoteJidAlt) {
+                setEntry(c.remoteJidAlt, entry);
+            }
+        }
 
         // 3. Build result array: first chats with messages (sorted by latest timestamp DESC)
         const result: any[] = [];
         const seenJids = new Set<string>();
         for (const msg of rawLastMessages) {
-            if (seenJids.has(msg.remoteJid)) continue;
+            let info = infoMap.get(msg.remoteJid);
+            let mappedPhoneJid: string | null = null;
+            if (msg.remoteJid.endsWith('@lid')) {
+                const bare = msg.remoteJid.split('@')[0];
+                const mappedPhone = lidToPhoneAuth.get(bare);
+                if (mappedPhone) {
+                    mappedPhoneJid = `${mappedPhone}@s.whatsapp.net`;
+                    if (!info || !info.name) {
+                        const phoneInfo = infoMap.get(mappedPhoneJid);
+                        if (phoneInfo) info = phoneInfo;
+                        else if (!info) info = { name: null, notify: null, profilePic: null, phoneJid: mappedPhoneJid };
+                    }
+                }
+            }
+
+            // Canonicalize @lid -> @s.whatsapp.net when known so the same contact never appears twice
+            const canonicalJid = info?.phoneJid || mappedPhoneJid || msg.remoteJid;
+            if (seenJids.has(canonicalJid) || seenJids.has(msg.remoteJid)) continue;
+            seenJids.add(canonicalJid);
             seenJids.add(msg.remoteJid);
 
-            const info = infoMap.get(msg.remoteJid);
             result.push({
-                jid: msg.remoteJid,
+                jid: canonicalJid,
                 name: info?.name || null,
                 notify: info?.notify || null,
+                phone: info?.phoneJid ? info.phoneJid.split('@')[0] : (canonicalJid.endsWith('@lid') ? null : canonicalJid.split('@')[0]),
                 profilePic: info?.profilePic || null,
                 lastMessage: {
                     content: msg.content,
@@ -160,12 +308,14 @@ export class ChatService {
 
             // 5. Append saved directory contacts so "Contatos" tab & search are 100% immediate in 0ms
             for (const c of directoryContacts) {
-                if (seenJids.has(c.jid)) continue;
+                if (seenJids.has(c.jid) || (c.lid && seenJids.has(c.lid))) continue;
                 seenJids.add(c.jid);
+                if (c.lid) seenJids.add(c.lid);
                 result.push({
                     jid: c.jid,
                     name: c.name || c.notify || null,
                     notify: c.notify || null,
+                    phone: c.jid.split('@')[0],
                     profilePic: (c.profilePic && c.profilePic.startsWith("http")) ? c.profilePic : null,
                     lastMessage: undefined
                 });
@@ -178,6 +328,7 @@ export class ChatService {
             return result.filter(c =>
                 (c.name || '').toLowerCase().includes(q) ||
                 (c.notify || '').toLowerCase().includes(q) ||
+                (c.phone || '').toLowerCase().includes(q) ||
                 c.jid.toLowerCase().includes(q)
             );
         }
@@ -298,6 +449,31 @@ export class ChatService {
         const participantNamesSet = new Set<string>();
         const candidateIds = new Set<string>();
 
+        // Pre-populate known team members
+        const knownTeam: Record<string, string> = {
+            "556696175239": "Alexandre Daniel",
+            "556699583468": "Vinicius",
+            "556696692215": "Marcelo",
+            "5566996692215": "Marcelo",
+            "556696473868": "Edvaldo"
+        };
+        for (const [phone, tName] of Object.entries(knownTeam)) {
+            contactMap[phone] = tName;
+            contactMap[`${phone}@s.whatsapp.net`] = tName;
+        }
+
+        // Include current session owner in contactMap
+        try {
+            const currentSession = await prisma.session.findUnique({
+                where: { id: dbSessionId },
+                select: { name: true }
+            });
+            if (currentSession?.name) {
+                const sName = currentSession.name.trim();
+                contactMap["self"] = sName;
+            }
+        } catch {}
+
         let groupParticipants: Array<{ id: string; phoneNumber?: string }> = [];
         if (isGroup) {
             try {
@@ -363,7 +539,9 @@ export class ChatService {
                 });
 
                 for (const c of contacts) {
-                    const displayName = c.name || c.notify || c.verifiedName;
+                    const rawName = c.name || c.notify || c.verifiedName;
+                    const isPhone = rawName && /^\+?[\d\s\-\(\)]+$/.test(rawName.trim());
+                    const displayName = isPhone ? null : rawName;
                     if (!displayName) continue;
                     if (c.jid) {
                         contactMap[c.jid] = displayName;
@@ -433,7 +611,7 @@ export class ChatService {
                              (p.phoneNumber && contactMap[p.phoneNumber]) ||
                              (p.id && contactMap[p.id]);
 
-                if (name) {
+                if (name && !/^\+?[\d\s\-\(\)]+$/.test(name.trim())) {
                     if (lidNum) contactMap[lidNum] = name;
                     if (p.id) contactMap[p.id] = name;
                     if (phoneNum) contactMap[phoneNum] = name;
@@ -443,7 +621,7 @@ export class ChatService {
                     const formattedPhone = `+${phoneNum}`;
                     if (lidNum && !contactMap[lidNum]) contactMap[lidNum] = formattedPhone;
                     if (p.id && !contactMap[p.id]) contactMap[p.id] = formattedPhone;
-                    participantNamesSet.add(formattedPhone);
+                    participantNamesSet.add(name || formattedPhone);
                 }
             }
         }
@@ -457,14 +635,14 @@ export class ChatService {
                                  (lidNum && contactMap[lidNum]) ||
                                  (p.phoneNumber && contactMap[p.phoneNumber]) ||
                                  (p.id && contactMap[p.id]) ||
-                                 (phoneNum ? `+${phoneNum}` : lidNum);
+                                 (phoneNum ? `+${phoneNum}` : (lidNum || p.id || ''));
             return {
-                id: p.id,
-                name: resolvedName,
-                phoneNumber: p.phoneNumber || p.id,
-                avatarJid: p.phoneNumber || p.id
+                id: p.id || '',
+                name: resolvedName || (p.phoneNumber || p.id || 'Contato'),
+                phoneNumber: p.phoneNumber || p.id || '',
+                avatarJid: p.phoneNumber || p.id || ''
             };
-        }).sort((a, b) => a.name.localeCompare(b.name));
+        }).sort((a, b) => (a.name || '').localeCompare(b.name || ''));
 
         // Return chronological order (oldest first)
         return {
@@ -606,6 +784,67 @@ export class ChatService {
         };
     }
 
+    static async resolveQuotedMessageOption(sessionId: string, quotedMessageId: string | undefined, instance: any): Promise<any> {
+        if (!quotedMessageId) return undefined;
+        try {
+            const quotedCacheKey = `${sessionId}:${quotedMessageId}`;
+            let quotedMsg = recentQuotedCache.get(quotedCacheKey);
+
+            if (!quotedMsg) {
+                let dbSessionId = sessionDbIdCache.get(sessionId);
+                if (!dbSessionId) {
+                    const dbSession = await prisma.session.findFirst({ where: { OR: [{ sessionId }, { id: sessionId }] }, select: { id: true } });
+                    if (dbSession) {
+                        dbSessionId = dbSession.id;
+                        sessionDbIdCache.set(sessionId, dbSessionId);
+                    }
+                }
+
+                if (dbSessionId) {
+                    quotedMsg = await prisma.message.findFirst({
+                        where: { sessionId: dbSessionId, keyId: quotedMessageId },
+                        select: { keyId: true, remoteJid: true, fromMe: true, content: true, senderJid: true }
+                    });
+                    if (quotedMsg) {
+                        recentQuotedCache.set(quotedCacheKey, quotedMsg);
+                        if (recentQuotedCache.size > 200) {
+                            const firstKey = recentQuotedCache.keys().next().value;
+                            if (firstKey) recentQuotedCache.delete(firstKey);
+                        }
+                    }
+                }
+            }
+
+            if (quotedMsg) {
+                const rawParticipant = quotedMsg.fromMe 
+                    ? instance?.socket?.user?.id 
+                    : (quotedMsg.senderJid || quotedMsg.remoteJid);
+                
+                let cleanParticipant: string | undefined = undefined;
+                if (rawParticipant) {
+                    const [userPart, domain] = rawParticipant.split('@');
+                    const cleanUser = userPart.split(':')[0];
+                    cleanParticipant = domain ? `${cleanUser}@${domain}` : cleanUser;
+                }
+
+                return {
+                    key: {
+                        remoteJid: quotedMsg.remoteJid,
+                        fromMe: quotedMsg.fromMe,
+                        id: quotedMsg.keyId,
+                        participant: cleanParticipant
+                    },
+                    message: {
+                        conversation: quotedMsg.content || ""
+                    }
+                };
+            }
+        } catch (e) {
+            console.error("Error fetching quoted message (non-fatal):", e);
+        }
+        return undefined;
+    }
+
     static async sendTextMessage(sessionId: string, jid: string, messagePayload: any, mentions?: string[], quotedMessageId?: string) {
         let instance = waManager.getInstance(sessionId);
 
@@ -623,65 +862,7 @@ export class ChatService {
         }
 
         // Handle quoted/reply message with in-memory caching for zero SQL latency
-        let quotedOption: any = undefined;
-        if (quotedMessageId) {
-            try {
-                const quotedCacheKey = `${sessionId}:${quotedMessageId}`;
-                let quotedMsg = recentQuotedCache.get(quotedCacheKey);
-
-                if (!quotedMsg) {
-                    let dbSessionId = sessionDbIdCache.get(sessionId);
-                    if (!dbSessionId) {
-                        const dbSession = await prisma.session.findFirst({ where: { OR: [{ sessionId }, { id: sessionId }] }, select: { id: true } });
-                        if (dbSession) {
-                            dbSessionId = dbSession.id;
-                            sessionDbIdCache.set(sessionId, dbSessionId);
-                        }
-                    }
-
-                    if (dbSessionId) {
-                        quotedMsg = await prisma.message.findFirst({
-                            where: { sessionId: dbSessionId, keyId: quotedMessageId },
-                            select: { keyId: true, remoteJid: true, fromMe: true, content: true, senderJid: true }
-                        });
-                        if (quotedMsg) {
-                            recentQuotedCache.set(quotedCacheKey, quotedMsg);
-                            if (recentQuotedCache.size > 200) {
-                                const firstKey = recentQuotedCache.keys().next().value;
-                                if (firstKey) recentQuotedCache.delete(firstKey);
-                            }
-                        }
-                    }
-                }
-
-                if (quotedMsg) {
-                    const rawParticipant = quotedMsg.fromMe 
-                        ? instance.socket.user?.id 
-                        : (quotedMsg.senderJid || quotedMsg.remoteJid);
-                    
-                    let cleanParticipant: string | undefined = undefined;
-                    if (rawParticipant) {
-                        const [userPart, domain] = rawParticipant.split('@');
-                        const cleanUser = userPart.split(':')[0];
-                        cleanParticipant = domain ? `${cleanUser}@${domain}` : cleanUser;
-                    }
-
-                    quotedOption = {
-                        key: {
-                            remoteJid: quotedMsg.remoteJid,
-                            fromMe: quotedMsg.fromMe,
-                            id: quotedMsg.keyId,
-                            participant: cleanParticipant
-                        },
-                        message: {
-                            conversation: quotedMsg.content || ""
-                        }
-                    };
-                }
-            } catch (e) {
-                console.error("Error fetching quoted message (non-fatal):", e);
-            }
-        }
+        const quotedOption = await this.resolveQuotedMessageOption(sessionId, quotedMessageId, instance);
 
         let msgPayload = typeof messagePayload === "string" ? { text: messagePayload } : { ...messagePayload };
 
@@ -700,8 +881,8 @@ export class ChatService {
                 if (!res.ok) throw new Error(`Failed to fetch sticker media`);
                 const buffer = await res.arrayBuffer();
                 const sticker = new Sticker(Buffer.from(buffer), {
-                    pack: msgPayload.sticker.pack || "BarraSoftware Bot",
-                    author: msgPayload.sticker.author || "BarraSoftware",
+                    pack: msgPayload.sticker.pack || "ZapFlow Bot",
+                    author: msgPayload.sticker.author || "ZapFlow",
                     type: "full",
                     quality: 50
                 });
@@ -765,8 +946,69 @@ export class ChatService {
                 while ((m = mentionDigitsRegex.exec(textContent)) !== null) {
                     extractedMentions.push(`${m[1]}@s.whatsapp.net`);
                 }
+
+                // Resolve name and phone based mentions in groups
+                if (jid.endsWith('@g.us')) {
+                    try {
+                        let lookupDbSessionId = sessionDbIdCache.get(sessionId);
+                        if (!lookupDbSessionId) {
+                            const sessionRecord = await prisma.session.findFirst({
+                                where: { OR: [{ sessionId }, { id: sessionId }] },
+                                select: { id: true }
+                            });
+                            if (sessionRecord) {
+                                lookupDbSessionId = sessionRecord.id;
+                                sessionDbIdCache.set(sessionId, lookupDbSessionId);
+                            }
+                        }
+                        if (lookupDbSessionId) {
+                            const groupRecord = await prisma.group.findFirst({
+                                where: { sessionId: lookupDbSessionId, jid },
+                                select: { participants: true }
+                            });
+                            const parts = (groupRecord?.participants as any[]) || [];
+                            if (parts.length > 0) {
+                                const partJids = parts.map(p => p.phoneNumber || p.id).filter(Boolean);
+                                const contacts = await prisma.contact.findMany({
+                                    where: {
+                                        sessionId: lookupDbSessionId,
+                                        OR: [
+                                            { jid: { in: partJids } },
+                                            { lid: { in: parts.map(p => p.id).filter(Boolean) } }
+                                        ]
+                                    },
+                                    select: { jid: true, lid: true, name: true, notify: true }
+                                });
+                                const contactNameMap = new Map<string, string[]>();
+                                contacts.forEach(c => {
+                                    const names = [c.name, c.notify].filter(Boolean) as string[];
+                                    names.forEach(n => {
+                                        const lower = n.toLowerCase().trim();
+                                        const jidsForName = contactNameMap.get(lower) || [];
+                                        if (c.jid) jidsForName.push(c.jid);
+                                        if (c.lid) jidsForName.push(c.lid);
+                                        contactNameMap.set(lower, jidsForName);
+                                    });
+                                });
+                                parts.forEach(p => {
+                                    const phone = (p.phoneNumber || p.id || "").split('@')[0];
+                                    if (phone && textContent.includes(`@${phone}`)) {
+                                        extractedMentions.push(p.id.endsWith('@lid') || p.id.endsWith('@s.whatsapp.net') ? p.id : `${p.id}@s.whatsapp.net`);
+                                        if (p.phoneNumber) extractedMentions.push(p.phoneNumber);
+                                    }
+                                });
+                                contactNameMap.forEach((matchedJids, nameLower) => {
+                                    if (textContent.toLowerCase().includes(`@${nameLower}`)) {
+                                        extractedMentions.push(...matchedJids);
+                                    }
+                                });
+                            }
+                        }
+                    } catch {}
+                }
+
                 if (extractedMentions.length > 0) {
-                    mentions = extractedMentions;
+                    mentions = Array.from(new Set(extractedMentions));
                 }
             }
         }
@@ -775,13 +1017,35 @@ export class ChatService {
             msgPayload.mentions = mentions;
         }
 
+        // Ensure monotonic WhatsApp-synced timestamp so sent messages never jump above earlier messages
+        let lastChatTs: Date | null = null;
+        try {
+            let dbSessionId = sessionDbIdCache.get(sessionId);
+            if (!dbSessionId) {
+                const sr = await prisma.session.findFirst({ where: { OR: [{ sessionId }, { id: sessionId }] }, select: { id: true } });
+                if (sr) { dbSessionId = sr.id; sessionDbIdCache.set(sessionId, dbSessionId); }
+            }
+            if (dbSessionId) {
+                const latestMsg = await prisma.message.findFirst({
+                    where: { sessionId: dbSessionId, remoteJid: normalizeJid(jid) },
+                    orderBy: { timestamp: "desc" },
+                    select: { timestamp: true }
+                });
+                lastChatTs = latestMsg?.timestamp || null;
+            }
+        } catch {}
+        const syncedTimestamp = getMonotonicChatTimestamp(lastChatTs);
+
         // Direct user chat skips anti-spam queue to guarantee 0ms latency identical to WhatsApp Web
-        const options: any = { mentions: mentions || [], skipAntiSpam: true };
+        const options: any = { mentions: mentions || [], skipAntiSpam: true, timestamp: syncedTimestamp };
         if (quotedOption) {
             options.quoted = quotedOption;
         }
 
         const sendResult = await instance.socket.sendMessage(jid, msgPayload, options);
+        if (sendResult) {
+            (sendResult as any).syncedTimestampMs = syncedTimestamp.getTime();
+        }
 
         // Instant Real-time emit: notify frontend that message is SENT immediately (< 10ms)
         const keyId = sendResult?.key?.id;
@@ -800,7 +1064,7 @@ export class ChatService {
                 message: {
                     conversation: typeof msgPayload.text === 'string' ? msgPayload.text : (msgPayload.caption || "")
                 },
-                messageTimestamp: Math.floor(Date.now() / 1000)
+                messageTimestamp: getSyncedNowUnixSec()
             };
 
             // Map media types to proper message structure for webhook
@@ -844,7 +1108,10 @@ export class ChatService {
         type: string,
         mimetype: string,
         fileName: string,
-        caption: string
+        caption: string,
+        viewOnce = false,
+        quotedMessageId?: string,
+        explicitMentions?: string[]
     ) {
         let instance = waManager.getInstance(sessionId);
 
@@ -864,6 +1131,9 @@ export class ChatService {
         const messageOptions: any = {};
         if (caption) messageOptions.caption = caption;
         messageOptions.mimetype = mimetype;
+        if (viewOnce && (type === 'image' || type === 'video')) {
+            messageOptions.viewOnce = true;
+        }
 
         let content: any = {};
 
@@ -872,15 +1142,25 @@ export class ChatService {
         } else if (type === 'video') {
             content = { video: buffer, ...messageOptions };
         } else if (type === 'audio') {
-            content = { audio: buffer, mimetype: 'audio/mp4', ptt: false };
+            content = { audio: buffer, mimetype: mimetype || 'audio/mp4', ptt: false };
         } else if (type === 'voice') {
-            content = { audio: buffer, mimetype: mimetype || 'audio/ogg; codecs=opus', ptt: true };
+            const { ensureOggOpusAudio } = await import("@/lib/audio-convert");
+            const convertedVoice = await ensureOggOpusAudio(buffer, mimetype);
+            buffer = convertedVoice.buffer;
+            mimetype = convertedVoice.mimetype;
+            content = {
+                audio: buffer,
+                mimetype: 'audio/ogg; codecs=opus',
+                ptt: true,
+                ...(convertedVoice.seconds ? { seconds: convertedVoice.seconds } : {}),
+                ...(convertedVoice.waveform ? { waveform: convertedVoice.waveform } : {}),
+            };
         } else if (type === 'document') {
             content = { document: buffer, mimetype, fileName, ...messageOptions };
         } else if (type === 'sticker') {
             const sticker = new Sticker(buffer, {
-                pack: "BarraSoftware Bot",
-                author: "BarraSoftware",
+                pack: "ZapFlow Bot",
+                author: "ZapFlow",
                 type: "full",
                 quality: 50
             });
@@ -889,18 +1169,192 @@ export class ChatService {
             content = { document: buffer, mimetype, fileName, ...messageOptions };
         }
 
-        const sendResult = await instance.socket.sendMessage(jid, content, { skipAntiSpam: true } as any);
+        // Automatically resolve mentions if caption contains '@' or explicitMentions passed
+        let mentions: string[] = Array.isArray(explicitMentions) ? [...explicitMentions] : [];
+        if (caption && caption.includes('@')) {
+            const mentionDigitsRegex = /@(\d{8,25})/g;
+            let m;
+            while ((m = mentionDigitsRegex.exec(caption)) !== null) {
+                mentions.push(`${m[1]}@s.whatsapp.net`);
+            }
+
+            // Resolve name-based mentions in groups
+            if (jid.endsWith('@g.us')) {
+                try {
+                    let lookupDbSessionId = sessionDbIdCache.get(sessionId);
+                    if (!lookupDbSessionId) {
+                        const sessionRecord = await prisma.session.findFirst({
+                            where: { OR: [{ sessionId }, { id: sessionId }] },
+                            select: { id: true }
+                        });
+                        if (sessionRecord) {
+                            lookupDbSessionId = sessionRecord.id;
+                            sessionDbIdCache.set(sessionId, lookupDbSessionId);
+                        }
+                    }
+
+                    if (lookupDbSessionId) {
+                        const groupRecord = await prisma.group.findFirst({
+                            where: { sessionId: lookupDbSessionId, jid },
+                            select: { participants: true }
+                        });
+
+                        const parts = (groupRecord?.participants as any[]) || [];
+                        if (parts.length > 0) {
+                            const partJids = parts.map(p => p.phoneNumber || p.id).filter(Boolean);
+                            const contacts = await prisma.contact.findMany({
+                                where: {
+                                    sessionId: lookupDbSessionId,
+                                    OR: [
+                                        { jid: { in: partJids } },
+                                        { lid: { in: parts.map(p => p.id).filter(Boolean) } }
+                                    ]
+                                },
+                                select: { jid: true, lid: true, name: true, notify: true }
+                            });
+
+                            const contactNameMap = new Map<string, string[]>();
+                            contacts.forEach(c => {
+                                const names = [c.name, c.notify].filter(Boolean) as string[];
+                                names.forEach(n => {
+                                    const lower = n.toLowerCase().trim();
+                                    const jidsForName = contactNameMap.get(lower) || [];
+                                    if (c.jid) jidsForName.push(c.jid);
+                                    if (c.lid) jidsForName.push(c.lid);
+                                    contactNameMap.set(lower, jidsForName);
+                                });
+                            });
+
+                            // Check each participant name against caption
+                            parts.forEach(p => {
+                                const phone = (p.phoneNumber || p.id || "").split('@')[0];
+                                if (phone && caption.includes(`@${phone}`)) {
+                                    mentions.push(p.id.endsWith('@lid') || p.id.endsWith('@s.whatsapp.net') ? p.id : `${p.id}@s.whatsapp.net`);
+                                    if (p.phoneNumber) mentions.push(p.phoneNumber);
+                                }
+                            });
+
+                            contactNameMap.forEach((matchedJids, nameLower) => {
+                                if (caption.toLowerCase().includes(`@${nameLower}`)) {
+                                    mentions.push(...matchedJids);
+                                }
+                            });
+                        }
+                    }
+                } catch (mentionErr) {
+                    console.error("Error resolving caption mentions:", mentionErr);
+                }
+            }
+            mentions = Array.from(new Set(mentions));
+            if (mentions.length > 0) {
+                content.mentions = mentions;
+            }
+        }
+
+        let dbSessionId = sessionDbIdCache.get(sessionId);
+        let lastChatTs: Date | null = null;
+        try {
+            if (!dbSessionId) {
+                const sessionRecord = await prisma.session.findFirst({
+                    where: { OR: [{ sessionId }, { id: sessionId }] },
+                    select: { id: true }
+                });
+                if (sessionRecord) {
+                    dbSessionId = sessionRecord.id;
+                    sessionDbIdCache.set(sessionId, dbSessionId);
+                }
+            }
+            if (dbSessionId) {
+                const latestMsg = await prisma.message.findFirst({
+                    where: { sessionId: dbSessionId, remoteJid: normalizeJid(jid) },
+                    orderBy: { timestamp: "desc" },
+                    select: { timestamp: true }
+                });
+                lastChatTs = latestMsg?.timestamp || null;
+            }
+        } catch {}
+        const syncedTimestamp = getMonotonicChatTimestamp(lastChatTs);
+
+        const quotedOption = await this.resolveQuotedMessageOption(sessionId, quotedMessageId, instance);
+        const sendOptions: any = { skipAntiSpam: true, timestamp: syncedTimestamp };
+        if (mentions.length > 0) {
+            sendOptions.mentions = mentions;
+        }
+        if (quotedOption) {
+            sendOptions.quoted = quotedOption;
+        }
+
+        const sendResult = await instance.socket.sendMessage(jid, content, sendOptions as any);
 
         const keyId = sendResult?.key?.id;
-        const ext = type === 'voice' ? 'ogg' : type === 'audio' ? 'mp3' : type === 'image' ? 'jpg' : type === 'video' ? 'mp4' : 'bin';
+        let ext = type === 'voice' ? 'ogg' : type === 'audio' ? 'mp3' : type === 'image' ? 'jpg' : type === 'video' ? 'mp4' : 'bin';
+        if (type === 'voice' || type === 'audio') {
+            const lowerMime = (mimetype || '').toLowerCase();
+            if (lowerMime.includes('webm') || (buffer.length >= 4 && buffer[0] === 0x1a && buffer[1] === 0x45 && buffer[2] === 0xdf && buffer[3] === 0xa3)) {
+                ext = 'webm';
+            } else if (lowerMime.includes('ogg') || lowerMime.includes('opus') || (buffer.length >= 4 && buffer.subarray(0, 4).toString('ascii') === 'OggS')) {
+                ext = 'ogg';
+            } else if (lowerMime.includes('mp4') || lowerMime.includes('m4a') || lowerMime.includes('aac')) {
+                ext = 'm4a';
+            } else if (lowerMime.includes('wav')) {
+                ext = 'wav';
+            } else if (lowerMime.includes('mpeg') || lowerMime.includes('mp3')) {
+                ext = 'mp3';
+            }
+        }
         const savedFilename = `${sessionId}-${keyId || Date.now()}.${ext}`;
-        let fileUrl = `/api/media/${savedFilename}`;
-        if (buffer.length <= 1024 * 1024 && (type === 'voice' || type === 'audio' || type === 'image' || type === 'sticker')) {
-            const mimeClean = (mimetype || (type === 'voice' ? 'audio/ogg' : type === 'audio' ? 'audio/mpeg' : type === 'sticker' ? 'image/webp' : 'image/jpeg')).split(';')[0].trim();
-            fileUrl = `data:${mimeClean};base64,${buffer.toString('base64')}`;
+        const fileUrl = `/api/media/${savedFilename}`;
+        if (keyId) {
+            registerLocalSentMedia(keyId, fileUrl);
         }
         if (sendResult) {
             (sendResult as any).mediaUrl = fileUrl;
+            (sendResult as any).syncedTimestampMs = syncedTimestamp.getTime();
+        }
+
+        // Persist sent media to disk and database immediately before returning so /api/media/... is 100% ready
+        try {
+            if (keyId) {
+                const savedFilePath = path.join(mediaDir, savedFilename);
+                await mkdir(path.dirname(savedFilePath), { recursive: true });
+                await writeFile(savedFilePath, buffer);
+
+                if (dbSessionId) {
+                    const savedRow = await prisma.message.upsert({
+                        where: {
+                            sessionId_keyId: {
+                                sessionId: dbSessionId,
+                                keyId
+                            }
+                        },
+                        update: {
+                            mediaUrl: fileUrl,
+                            status: "SENT",
+                            timestamp: syncedTimestamp,
+                            ...(caption ? { content: caption } : {})
+                        },
+                        create: {
+                            sessionId: dbSessionId,
+                            remoteJid: normalizeJid(jid),
+                            fromMe: true,
+                            keyId,
+                            type: (type === 'voice' || type === 'audio') ? 'AUDIO' : type === 'image' ? 'IMAGE' : type === 'video' ? 'VIDEO' : 'DOCUMENT',
+                            content: caption || "",
+                            mediaUrl: fileUrl,
+                            status: "SENT",
+                            timestamp: syncedTimestamp
+                        }
+                    });
+                    if (instance.io) {
+                        instance.io.to(sessionId).emit("message.update", [{
+                            ...savedRow,
+                            timestamp: savedRow.timestamp instanceof Date ? savedRow.timestamp.toISOString() : savedRow.timestamp
+                        }]);
+                    }
+                }
+            }
+        } catch (saveErr) {
+            logger.error("ChatService", "Failed to persist sent media", saveErr);
         }
 
         // Instant Real-time emit: notify frontend that media message is SENT immediately (< 10ms)
@@ -911,57 +1365,6 @@ export class ChatService {
                 status: "SENT"
             });
         }
-
-        // Persist sent media to disk and database in background (non-blocking)
-        void (async () => {
-            try {
-                if (keyId) {
-                    const savedFilePath = path.join(mediaDir, savedFilename);
-                    await mkdir(path.dirname(savedFilePath), { recursive: true });
-                    await writeFile(savedFilePath, buffer);
-
-                    let dbSessionId = sessionDbIdCache.get(sessionId);
-                    if (!dbSessionId) {
-                        const sessionRecord = await prisma.session.findFirst({
-                            where: { OR: [{ sessionId }, { id: sessionId }] },
-                            select: { id: true }
-                        });
-                        if (sessionRecord) {
-                            dbSessionId = sessionRecord.id;
-                            sessionDbIdCache.set(sessionId, dbSessionId);
-                        }
-                    }
-
-                    if (dbSessionId) {
-                        await prisma.message.upsert({
-                            where: {
-                                sessionId_keyId: {
-                                    sessionId: dbSessionId,
-                                    keyId
-                                }
-                            },
-                            update: {
-                                mediaUrl: fileUrl,
-                                status: "SENT"
-                            },
-                            create: {
-                                sessionId: dbSessionId,
-                                remoteJid: jid,
-                                fromMe: true,
-                                keyId,
-                                type: (type === 'voice' || type === 'audio') ? 'AUDIO' : type === 'image' ? 'IMAGE' : type === 'video' ? 'VIDEO' : 'DOCUMENT',
-                                content: caption || "",
-                                mediaUrl: fileUrl,
-                                status: "SENT",
-                                timestamp: new Date()
-                            }
-                        });
-                    }
-                }
-            } catch (saveErr) {
-                logger.error("ChatService", "Failed to persist sent media in background", saveErr);
-            }
-        })();
 
         // Fire webhook for sent media message (non-blocking)
         try {

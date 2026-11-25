@@ -2,6 +2,12 @@ import { loadEnvConfig } from "@next/env";
 // Load environment variables before any other imports/logic
 loadEnvConfig(process.cwd());
 
+// Allow dynamic host detection (localhost + Cloudflare Tunnel / external domain) in NextAuth
+if (process.env.AUTH_TRUST_HOST === "true") {
+  delete process.env.NEXTAUTH_URL;
+  delete process.env.AUTH_URL;
+}
+
 import { createServer } from "http";
 import { parse } from "url";
 import next from "next";
@@ -12,7 +18,9 @@ import { logger } from "../lib/logger";
 import pkg from "../../package.json";
 
 const dev = process.env.NODE_ENV !== "production";
-const hostname = process.env.HOSTNAME || "0.0.0.0";
+const rawHostname = process.env.HOSTNAME || "0.0.0.0";
+// On Windows, binding to "localhost" only binds to IPv6 ::1 and breaks IPv4 127.0.0.1 (Cloudflare Tunnel 502)
+const hostname = rawHostname === "localhost" ? "0.0.0.0" : rawHostname;
 const port = parseInt(process.env.PORT || "3030", 10);
 
 if (!process.env.AUTH_SECRET) {
@@ -27,10 +35,19 @@ app.prepare().then(() => {
   const server = createServer(async (req, res) => {
     try {
       if (!req.url) return;
+      if (req.headers.host && !req.headers["x-forwarded-host"]) {
+        req.headers["x-forwarded-host"] = req.headers.host;
+      }
       const parsedUrl = parse(req.url, true);
       await handle(req, res, parsedUrl);
     } catch (err) {
       logger.error("Server", "Error handling", req.url, err);
+      if (req.url && req.url.startsWith("/api/")) {
+        res.statusCode = 500;
+        res.setHeader("Content-Type", "application/json; charset=utf-8");
+        res.end(JSON.stringify({ error: "Internal Server Error" }));
+        return;
+      }
       res.statusCode = 500;
       res.end("internal server error");
     }
@@ -49,47 +66,55 @@ app.prepare().then(() => {
   // Optional: Global instance for Baileys to emit events
   (global as any).io = io;
 
-  // Initialize WhatsApp Manager
-  waManager.setup(io);
-  waManager.loadSessions().catch(e => logger.error("Server", "loadSessions error:", e));
-
-  // Disparos que ficaram "em andamento" por causa de um reinício viram "interrompido"
-  import("../modules/whatsapp/broadcast-runner")
-    .then(m => m.markStaleBroadcasts())
-    .catch(e => logger.error("Server", "markStaleBroadcasts error:", e));
-
-  // Garante coluna de agendamento no banco existente (idempotente)
-  import("../modules/whatsapp/broadcast-runner")
-    .then(m => m.ensureScheduledColumn())
-    .catch(e => logger.error("Server", "ensureScheduledColumn error:", e));
-
-  // Processa disparos agendados a cada 30 s
-  import("../modules/whatsapp/broadcast-runner")
-    .then(m => m.startBroadcastScheduler())
-    .catch(e => logger.error("Server", "startBroadcastScheduler error:", e));
-
-  // Backup diário do banco (mantém os 7 últimos)
-  import("../modules/backup/backup")
-    .then(m => m.startBackups())
-    .catch(e => logger.error("Server", "startBackups error:", e));
-
-  // Limpeza de mídia antiga (180 dias, configurável em MEDIA_RETENTION_DAYS)
-  import("../modules/maintenance/cleanup")
-    .then(m => m.startCleanup())
-    .catch(e => logger.error("Server", "startCleanup error:", e));
-
-  // Start Scheduler
-  import("../modules/whatsapp/scheduler")
-    .then(m => m.startScheduler())
-    .catch(e => logger.error("Server", "startScheduler error:", e));
-
   // Cloudflare 520 Fix: increase keep-alive timeout so Node doesn't kill idle connections that Cloudflare expects to reuse
   // See: https://github.com/vercel/next.js/issues/48962
   server.keepAliveTimeout = 120 * 1000; // 120 seconds
   server.headersTimeout = 120 * 1000; // 120 seconds
 
+  server.on("error", (err: any) => {
+    if (err.code === "EADDRINUSE") {
+      logger.error("Server", `Port ${port} is already in use by another process. Exiting duplicate instance immediately.`);
+      process.exit(1);
+    }
+    logger.error("Server", "Server HTTP error:", err);
+  });
+
   server.listen(port, hostname, () => {
     logger.banner(pkg.name.toUpperCase(), pkg.version, port);
+
+    // Initialize WhatsApp Manager only AFTER port 3000 is securely acquired
+    waManager.setup(io);
+    waManager.loadSessions().catch(e => logger.error("Server", "loadSessions error:", e));
+
+    // Disparos que ficaram "em andamento" por causa de um reinício viram "interrompido"
+    import("../modules/whatsapp/broadcast-runner")
+      .then(m => m.markStaleBroadcasts())
+      .catch(e => logger.error("Server", "markStaleBroadcasts error:", e));
+
+    // Garante coluna de agendamento no banco existente (idempotente)
+    import("../modules/whatsapp/broadcast-runner")
+      .then(m => m.ensureScheduledColumn())
+      .catch(e => logger.error("Server", "ensureScheduledColumn error:", e));
+
+    // Processa disparos agendados a cada 30 s
+    import("../modules/whatsapp/broadcast-runner")
+      .then(m => m.startBroadcastScheduler())
+      .catch(e => logger.error("Server", "startBroadcastScheduler error:", e));
+
+    // Backup diário do banco (mantém os 7 últimos)
+    import("../modules/backup/backup")
+      .then(m => m.startBackups())
+      .catch(e => logger.error("Server", "startBackups error:", e));
+
+    // Limpeza de mídia antiga (180 dias, configurável em MEDIA_RETENTION_DAYS)
+    import("../modules/maintenance/cleanup")
+      .then(m => m.startCleanup())
+      .catch(e => logger.error("Server", "startCleanup error:", e));
+
+    // Start Scheduler
+    import("../modules/whatsapp/scheduler")
+      .then(m => m.startScheduler())
+      .catch(e => logger.error("Server", "startScheduler error:", e));
   });
 
   // Graceful shutdown on SIGTERM / SIGINT

@@ -21,6 +21,7 @@ export function useSocket() {
 
 export function SocketProvider({ children }: { children: React.ReactNode }) {
     const socketRef = useRef<Socket | null>(null);
+    const activeSessions = useRef(new Set<string>());
     const [ready, setReady] = useState(false);
 
     useEffect(() => {
@@ -32,6 +33,10 @@ export function SocketProvider({ children }: { children: React.ReactNode }) {
 
         socket.on("connect", () => {
             setReady(true);
+            // Re-join all active sessions automatically on connect / reconnect
+            activeSessions.current.forEach((sessId) => {
+                socket.emit("join-session", sessId);
+            });
         });
 
         socket.on("disconnect", () => {
@@ -49,15 +54,19 @@ export function SocketProvider({ children }: { children: React.ReactNode }) {
     const getSocket = () => socketRef.current;
 
     const joinSession = (sessionId: string) => {
+        if (!sessionId) return;
+        activeSessions.current.add(sessionId);
         const s = socketRef.current;
-        if (s?.connected && sessionId) {
+        if (s?.connected) {
             s.emit("join-session", sessionId);
         }
     };
 
     const leaveSession = (sessionId: string) => {
+        if (!sessionId) return;
+        activeSessions.current.delete(sessionId);
         const s = socketRef.current;
-        if (s?.connected && sessionId) {
+        if (s?.connected) {
             s.emit("leave-session", sessionId);
         }
     };

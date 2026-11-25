@@ -18,6 +18,24 @@ export default function ErrorPage({
   useEffect(() => {
     setMounted(true);
     console.error('Application runtime error boundary caught:', error);
+
+    const msg = error?.message || '';
+    const isStaleBuildOrRsc =
+      msg.includes('Server Components render') ||
+      msg.includes('Failed to find Server Action') ||
+      msg.includes('ChunkLoadError') ||
+      msg.includes('Loading chunk');
+
+    if (isStaleBuildOrRsc && typeof window !== 'undefined') {
+      try {
+        const lastReload = Number(sessionStorage.getItem('zapflow_rsc_reload_ts') || '0');
+        if (Date.now() - lastReload > 15000) {
+          sessionStorage.setItem('zapflow_rsc_reload_ts', String(Date.now()));
+          window.location.reload();
+          return;
+        }
+      } catch {}
+    }
   }, [error]);
 
   if (!mounted) {
@@ -55,7 +73,13 @@ export default function ErrorPage({
         {/* Actions */}
         <div className="relative w-full flex flex-col sm:flex-row gap-4 mb-6" suppressHydrationWarning>
           <Button
-            onClick={() => reset()}
+            onClick={() => {
+              if (error?.message?.includes('Server Components render') && typeof window !== 'undefined') {
+                window.location.reload();
+              } else {
+                reset();
+              }
+            }}
             variant="outline"
             className="w-full flex-1 flex items-center justify-center gap-2 h-12 border-destructive/20 hover:bg-destructive/10 text-destructive hover:text-destructive rounded-xl transition-all shadow-sm"
           >

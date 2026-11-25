@@ -67,7 +67,7 @@ export async function PATCH(
         // Update active instance if exists
         const instance = waManager.getInstance(sessionId);
         if (instance) {
-            // In a real app we might update internal instance state
+            instance.config = config || {};
         }
 
         return NextResponse.json({ status: true, message: "Session settings updated successfully", data: updated });

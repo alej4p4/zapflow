@@ -6,6 +6,8 @@ import { readFile } from "fs/promises";
 import { existsSync } from "fs";
 import { mediaDir } from "@/lib/paths";
 import cronParser from "cron-parser";
+import { getSyncedNow } from "@/lib/wa-clock";
+import { processScheduledInstagramPosts } from "@/modules/instagram/publisher";
 
 /** Evita disparo duplo se dois ticks do agendador se sobrepuserem. */
 const inFlight = new Set<string>();
@@ -45,7 +47,7 @@ async function buildContent(msg: any): Promise<any> {
 
 const checkScheduledMessages = async () => {
     try {
-        const now = new Date();
+        const now = getSyncedNow();
         logger.debug("Scheduler", `Checando mensagens devidas antes de ${now.toISOString()}...`);
 
         const pendingMessages = await prisma.scheduledMessage.findMany({
@@ -71,6 +73,19 @@ const checkScheduledMessages = async () => {
                 // Obter a instância usando sessionId string da sessão vinculada
                 const sessionKey = msg.session?.sessionId || msg.sessionId;
                 const instance = waManager.getInstance(sessionKey);
+
+                // Safeguard: se a mensagem não for recorrente e estiver atrasada há mais de 48h com a sessão offline,
+                // marca como FAILED para não disparar mensagens antigas fora de contexto no futuro.
+                const hoursOverdue = (now.getTime() - new Date(msg.sendAt).getTime()) / (1000 * 60 * 60);
+                if (!msg.cronExpression && hoursOverdue > 48) {
+                    logger.warn("Scheduler", `Msg ${msg.id} expirada (>48h atrasada e sessão offline). Marcando como FAILED.`);
+                    await prisma.scheduledMessage.update({
+                        where: { id: msg.id },
+                        data: { status: "FAILED" }
+                    });
+                    continue;
+                }
+
                 if (!instance?.socket) {
                     logger.warn("Scheduler", `Sessão ${sessionKey} desconectada: msg ${msg.id} continua pendente`);
                     continue;
@@ -161,7 +176,11 @@ export function startScheduler() {
 
     // Executa imediatamente ao iniciar
     checkScheduledMessages();
+    void processScheduledInstagramPosts();
 
     // Depois roda a cada 30 segundos
-    schedulerInterval = setInterval(checkScheduledMessages, 30 * 1000);
+    schedulerInterval = setInterval(() => {
+        checkScheduledMessages();
+        void processScheduledInstagramPosts();
+    }, 30 * 1000);
 }

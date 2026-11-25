@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import { NextResponse, NextRequest } from "next/server";
 import { getAuthenticatedUser, canAccessSession } from "@/lib/api-auth";
+import { waManager } from "@/modules/whatsapp/manager";
 
 export async function GET(
     request: NextRequest,
@@ -41,7 +42,7 @@ export async function GET(
             enableSticker: true,
             enablePing: true,
             enableUptime: true,
-            botName: "BarraSoftware Bot",
+            botName: "ZapFlow Bot",
             removeBgApiKey: null,
             enableVideoSticker: true,
             maxStickerDuration: 10,
@@ -93,6 +94,7 @@ export async function POST(
             create: {
                 sessionId: session.id,
                 enabled: body.enabled ?? true,
+                botName: body.botName || "ZapFlow Bot",
                 botMode: body.botMode || 'OWNER',
                 botAllowedJids: body.botAllowedJids || [],
                 botBlockedJids: body.botBlockedJids || [],
@@ -117,6 +119,7 @@ export async function POST(
                 alwaysOnline: body.alwaysOnline ?? false,
             },
             update: {
+                ...(typeof body.enabled === "boolean" ? { enabled: body.enabled } : {}),
                 botMode: body.botMode,
                 botAllowedJids: body.botAllowedJids,
                 botBlockedJids: body.botBlockedJids,
@@ -141,6 +144,14 @@ export async function POST(
                 alwaysOnline: body.alwaysOnline,
             }
         });
+
+        // Apply presence update immediately to active socket without requiring reconnect
+        try {
+            const instance = waManager.getInstance(sessionId);
+            if (instance?.socket && typeof body.alwaysOnline === "boolean") {
+                await instance.socket.sendPresenceUpdate(body.alwaysOnline ? "available" : "unavailable");
+            }
+        } catch {}
 
         return NextResponse.json({ status: true, message: "Bot config updated successfully", data: config });
     } catch (error) {

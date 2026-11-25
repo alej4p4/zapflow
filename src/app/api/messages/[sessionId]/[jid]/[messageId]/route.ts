@@ -22,6 +22,9 @@ export async function DELETE(
         }
 
         const decodedJid = decodeURIComponent(jid);
+        const { searchParams } = new URL(request.url);
+        const forEveryone = searchParams.get("everyone") !== "false";
+
         const session = await prisma.session.findUnique({
             where: { sessionId },
             select: { id: true }
@@ -35,7 +38,7 @@ export async function DELETE(
             : null;
 
         const instance = waManager.getInstance(sessionId);
-        if (instance?.socket && (!existingMsg || existingMsg.fromMe)) {
+        if (forEveryone && instance?.socket && (!existingMsg || existingMsg.fromMe)) {
             try {
                 await instance.socket.sendMessage(decodedJid, {
                     delete: {

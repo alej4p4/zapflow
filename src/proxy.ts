@@ -2,6 +2,12 @@ import { auth } from "@/lib/auth";
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 
+function getExternalUrl(path: string, request: NextRequest): URL {
+    const proto = request.headers.get("x-forwarded-proto") || request.nextUrl.protocol.replace(":", "") || "http";
+    const host = request.headers.get("x-forwarded-host") || request.headers.get("host") || request.nextUrl.host;
+    return new URL(path, `${proto}://${host}`);
+}
+
 export async function proxy(request: NextRequest) {
     const { pathname } = request.nextUrl;
 
@@ -27,8 +33,8 @@ export async function proxy(request: NextRequest) {
 
     // API routes: Check for API key or session
     if (pathname.startsWith("/api/")) {
-        // Skip auth endpoints
-        if (pathname.startsWith("/api/auth") || pathname.startsWith("/api/test")) {
+        // Skip auth endpoints and public Instagram post media fetches by Meta
+        if (pathname.startsWith("/api/auth") || pathname.startsWith("/api/test") || pathname.startsWith("/api/media/ig-")) {
             return NextResponse.next();
         }
 
@@ -53,7 +59,7 @@ export async function proxy(request: NextRequest) {
         const session = await auth();
 
         if (!session?.user) {
-            const loginUrl = new URL("/auth/login", request.url);
+            const loginUrl = getExternalUrl("/auth/login", request);
             loginUrl.searchParams.set("callbackUrl", pathname);
             return NextResponse.redirect(loginUrl);
         }
@@ -65,7 +71,7 @@ export async function proxy(request: NextRequest) {
     if (pathname === "/") {
         const session = await auth();
         if (session?.user) {
-            return NextResponse.redirect(new URL("/dashboard", request.url));
+            return NextResponse.redirect(getExternalUrl("/dashboard", request));
         }
         return NextResponse.next();
     }
@@ -74,7 +80,7 @@ export async function proxy(request: NextRequest) {
     if (isPublicRoute) {
         const session = await auth();
         if (session?.user && (pathname.startsWith("/auth/login") || pathname.startsWith("/auth/register"))) {
-            return NextResponse.redirect(new URL("/dashboard", request.url));
+            return NextResponse.redirect(getExternalUrl("/dashboard", request));
         }
         return NextResponse.next();
     }
@@ -82,7 +88,7 @@ export async function proxy(request: NextRequest) {
     // Default: require auth for everything else
     const session = await auth();
     if (!session?.user) {
-        const loginUrl = new URL("/auth/login", request.url);
+        const loginUrl = getExternalUrl("/auth/login", request);
         loginUrl.searchParams.set("callbackUrl", pathname);
         return NextResponse.redirect(loginUrl);
     }

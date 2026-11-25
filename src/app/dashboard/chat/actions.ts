@@ -9,6 +9,7 @@ import { mediaDir } from "@/lib/paths";
 import { readFile } from "fs/promises";
 import { existsSync } from "fs";
 import path from "path";
+import { formatPhoneNumber } from "@/lib/phone";
 import { callFreeLLMWithFallback, type CustomFreeLLMKeys } from "@/lib/free-llm";
 
 const CHAT_PAGE_SIZE = parseInt(process.env.NEXT_PUBLIC_CHAT_PAGE_SIZE || "300", 10);
@@ -20,45 +21,52 @@ export async function getChatsStatus(
     before?: string,
     search?: string
 ) {
-    const user = await getAuthenticatedUserForAction();
-    if (!user) throw new Error("Unauthorized");
+    try {
+        const user = await getAuthenticatedUserForAction();
+        if (!user) return [];
 
-    const canAccess = await canAccessSession(user.id, user.role, sessionId);
-    if (!canAccess) throw new Error("Forbidden");
+        const canAccess = await canAccessSession(user.id, user.role, sessionId);
+        if (!canAccess) return [];
 
-    const session = await prisma.session.findFirst({
-        where: { OR: [{ sessionId }, { id: sessionId }] },
-        select: { id: true }
-    });
+        const session = await prisma.session.findFirst({
+            where: { OR: [{ sessionId }, { id: sessionId }] },
+            select: { id: true }
+        });
 
-    if (!session) throw new Error("Session not found");
+        if (!session) return [];
 
-    return await ChatService.getChatsList(session.id, limit, before, search);
+        return await ChatService.getChatsList(session.id, limit, before, search);
+    } catch (err) {
+        console.error("[actions.getChatsStatus] error:", err);
+        return [];
+    }
 }
 
 // Search contacts from the WhatsApp address book (e.g. searching "Alexandre")
 export async function searchWhatsAppContacts(sessionId: string, query: string) {
-    const user = await getAuthenticatedUserForAction();
-    if (!user) throw new Error("Unauthorized");
+    try {
+        const user = await getAuthenticatedUserForAction();
+        if (!user) return [];
 
-    const canAccess = await canAccessSession(user.id, user.role, sessionId);
-    if (!canAccess) throw new Error("Forbidden");
+        const canAccess = await canAccessSession(user.id, user.role, sessionId);
+        if (!canAccess) return [];
 
-    const session = await prisma.session.findFirst({
-        where: { OR: [{ sessionId }, { id: sessionId }] },
-        select: { id: true }
-    });
-    if (!session) return [];
+        const session = await prisma.session.findFirst({
+            where: { OR: [{ sessionId }, { id: sessionId }] },
+            select: { id: true }
+        });
+        if (!session) return [];
 
     const q = query.trim();
     if (!q || q.length < 2) return [];
 
     const digits = q.replace(/\D/g, "");
+    const isNumericQuery = digits.length >= 4 && !/[a-zA-Z]/.test(q);
 
     try {
         const [rawContacts, rawGroups] = (await Promise.all([
             prisma.$queryRaw`
-                SELECT jid, name, notify, "profilePic"
+                SELECT jid, name, notify, "profilePic", "remoteJidAlt", lid
                 FROM "Contact"
                 WHERE "sessionId" = ${session.id}
                   AND (
@@ -66,9 +74,12 @@ export async function searchWhatsAppContacts(sessionId: string, query: string) {
                     OR unaccent(coalesce(notify, '')) ILIKE '%' || unaccent(${q}) || '%'
                     OR unaccent(coalesce("verifiedName", '')) ILIKE '%' || unaccent(${q}) || '%'
                     OR jid ILIKE '%' || ${q} || '%'
-                    OR (${digits.length >= 4} AND jid ILIKE '%' || ${digits} || '%')
+                    OR (${isNumericQuery} AND (
+                        jid ILIKE '%' || ${digits} || '%'
+                        OR coalesce("remoteJidAlt", '') ILIKE '%' || ${digits} || '%'
+                    ))
                   )
-                LIMIT 30
+                LIMIT 50
             `,
             prisma.$queryRaw`
                 SELECT jid, subject as name, subject as notify, null as "profilePic"
@@ -79,14 +90,39 @@ export async function searchWhatsAppContacts(sessionId: string, query: string) {
             `
         ])) as [any[], any[]];
 
-        const combined = [
-            ...rawContacts.map(c => ({
-                jid: c.jid,
-                name: c.name || c.notify || c.jid.split("@")[0],
+        const seenJids = new Set<string>();
+        const formattedContacts: any[] = [];
+
+        for (const c of rawContacts) {
+            // Canonicalize LID contacts to standard phone number
+            let canonicalJid: string = c.jid;
+            if (c.jid.endsWith('@lid') && c.remoteJidAlt?.endsWith('@s.whatsapp.net')) {
+                canonicalJid = c.remoteJidAlt;
+            } else if (c.jid.endsWith('@lid')) {
+                // Anonymous or orphan LID with no name and no phone alternative is omitted
+                if (!c.name && !c.notify) continue;
+            }
+
+            if (seenJids.has(canonicalJid)) continue;
+            seenJids.add(canonicalJid);
+
+            // Avoid raw 14-16 digit LID numbers as the contact display name
+            const rawDigits = (c.name || "").replace(/\D/g, "");
+            const isLidDigits = rawDigits.length >= 14 && rawDigits.length <= 16 && !rawDigits.startsWith("55");
+            const safeName = isLidDigits ? null : c.name;
+            const displayName = safeName || c.notify || formatPhoneNumber(canonicalJid.split("@")[0]);
+
+            formattedContacts.push({
+                jid: canonicalJid,
+                name: displayName,
                 notify: c.notify,
                 profilePic: (c.profilePic && c.profilePic.startsWith("http")) ? c.profilePic : null,
                 isContact: true
-            })),
+            });
+        }
+
+        const combined = [
+            ...formattedContacts,
             ...rawGroups.map(g => ({
                 jid: g.jid,
                 name: g.name || "Grupo",
@@ -105,116 +141,165 @@ export async function searchWhatsAppContacts(sessionId: string, query: string) {
                     { notify: { contains: q, mode: "insensitive" } },
                     { verifiedName: { contains: q, mode: "insensitive" } },
                     { jid: { contains: q, mode: "insensitive" } },
-                    ...(digits.length >= 4 ? [{ jid: { contains: digits } }] : [])
+                    ...(digits.length >= 4 ? [
+                        { jid: { contains: digits } },
+                        { remoteJidAlt: { contains: digits } }
+                    ] : [])
                 ]
             },
-            take: 30,
+            take: 50,
             select: {
                 jid: true,
+                lid: true,
+                remoteJidAlt: true,
                 name: true,
                 notify: true,
                 profilePic: true
             }
         });
 
-        return contacts.map(c => ({
-            jid: c.jid,
-            name: c.name || c.notify || c.jid.split("@")[0],
-            notify: c.notify,
-            profilePic: (c.profilePic && c.profilePic.startsWith("http")) ? c.profilePic : null,
-            isContact: true
-        }));
+        const seenJids = new Set<string>();
+        const results: any[] = [];
+        for (const c of contacts) {
+            let canonicalJid: string = c.jid;
+            if (c.jid.endsWith('@lid') && c.remoteJidAlt?.endsWith('@s.whatsapp.net')) {
+                canonicalJid = c.remoteJidAlt;
+            } else if (c.jid.endsWith('@lid')) {
+                if (!c.name && !c.notify) continue;
+            }
+
+            if (seenJids.has(canonicalJid)) continue;
+            seenJids.add(canonicalJid);
+
+            const rawDigits = (c.name || "").replace(/\D/g, "");
+            const isLidDigits = rawDigits.length >= 14 && rawDigits.length <= 16 && !rawDigits.startsWith("55");
+            const safeName = isLidDigits ? null : c.name;
+
+            results.push({
+                jid: canonicalJid,
+                name: safeName || c.notify || formatPhoneNumber(canonicalJid.split("@")[0]),
+                notify: c.notify,
+                profilePic: (c.profilePic && c.profilePic.startsWith("http")) ? c.profilePic : null,
+                isContact: true
+            });
+        }
+
+        return results;
+    }
+    } catch {
+        return [];
     }
 }
 
 // Global Message Search across all chats in database
 export async function searchGlobalMessages(sessionId: string, query: string) {
-    const user = await getAuthenticatedUserForAction();
-    if (!user) throw new Error("Unauthorized");
-
-    const canAccess = await canAccessSession(user.id, user.role, sessionId);
-    if (!canAccess) throw new Error("Forbidden");
-
-    const session = await prisma.session.findFirst({
-        where: { OR: [{ sessionId }, { id: sessionId }] },
-        select: { id: true }
-    });
-    if (!session) return [];
-
-    const q = query.trim();
-    if (!q || q.length < 2) return [];
-
     try {
-        const rawMessages: any[] = await prisma.$queryRaw`
-            SELECT m.id, m."keyId", m."remoteJid", m."fromMe", m.content, m.timestamp, m.type, m."pushName",
-                   c.name as "contactName", c.notify as "contactNotify", c."profilePic" as "contactPic"
-            FROM "Message" m
-            LEFT JOIN "Contact" c ON c."sessionId" = m."sessionId" AND (c.jid = m."remoteJid" OR c.lid = m."remoteJid")
-            WHERE m."sessionId" = ${session.id}
-              AND (
-                unaccent(coalesce(m.content, '')) ILIKE '%' || unaccent(${q}) || '%'
-                OR unaccent(coalesce(m."pushName", '')) ILIKE '%' || unaccent(${q}) || '%'
-                OR unaccent(coalesce(c.name, '')) ILIKE '%' || unaccent(${q}) || '%'
-                OR unaccent(coalesce(c.notify, '')) ILIKE '%' || unaccent(${q}) || '%'
-              )
-            ORDER BY m.timestamp DESC
-            LIMIT 40
-        `;
-        return rawMessages.map(m => {
-            const contactName = m.contactName || m.contactNotify || m.pushName || m.remoteJid.replace("@s.whatsapp.net", "").replace("@g.us", "");
-            return {
-                id: m.id,
-                keyId: m.keyId,
-                jid: m.remoteJid,
-                fromMe: m.fromMe,
-                content: m.content || "",
-                timestamp: m.timestamp instanceof Date ? m.timestamp.toISOString() : String(m.timestamp),
-                type: m.type,
-                contactName,
-                profilePic: (m.contactPic && m.contactPic.startsWith("http")) ? m.contactPic : null
-            };
+        const user = await getAuthenticatedUserForAction();
+        if (!user) return [];
+
+        const canAccess = await canAccessSession(user.id, user.role, sessionId);
+        if (!canAccess) return [];
+
+        const session = await prisma.session.findFirst({
+            where: { OR: [{ sessionId }, { id: sessionId }] },
+            select: { id: true }
         });
-    } catch {
-        const messages = await prisma.message.findMany({
-            where: {
-                sessionId: session.id,
-                content: { contains: q, mode: "insensitive" }
-            },
-            orderBy: { timestamp: "desc" },
-            take: 40,
-            select: {
-                id: true,
-                keyId: true,
-                remoteJid: true,
-                fromMe: true,
-                content: true,
-                timestamp: true,
-                type: true,
-                pushName: true,
-                contract: {
-                    select: {
-                        name: true,
-                        notify: true,
-                        profilePic: true
+        if (!session) return [];
+
+        const q = query.trim();
+        if (!q || q.length < 2) return [];
+
+        try {
+            const rawMessages: any[] = await prisma.$queryRaw`
+                SELECT m.id, m."keyId", m."remoteJid", m."fromMe", m.content, m.timestamp, m.type, m."pushName",
+                       c.name as "contactName", c.notify as "contactNotify", c."profilePic" as "contactPic",
+                       g.subject as "groupSubject"
+                FROM "Message" m
+                LEFT JOIN "Contact" c ON c."sessionId" = m."sessionId" AND (c.jid = m."remoteJid" OR c.lid = m."remoteJid")
+                LEFT JOIN "Group" g ON g."sessionId" = m."sessionId" AND g.jid = m."remoteJid"
+                WHERE m."sessionId" = ${session.id}
+                  AND unaccent(coalesce(m.content, '')) ILIKE '%' || unaccent(${q}) || '%'
+                ORDER BY m.timestamp DESC
+                LIMIT 40
+            `;
+            return rawMessages.map(m => {
+                const isGroup = String(m.remoteJid || "").endsWith("@g.us");
+                const contactName = isGroup
+                    ? (m.groupSubject || m.contactName || m.contactNotify || m.remoteJid.replace("@g.us", ""))
+                    : (m.contactName || m.contactNotify || m.pushName || m.remoteJid.replace("@s.whatsapp.net", "").replace("@g.us", ""));
+                return {
+                    id: m.id,
+                    keyId: m.keyId,
+                    jid: m.remoteJid,
+                    fromMe: m.fromMe,
+                    content: m.content || "",
+                    timestamp: m.timestamp instanceof Date ? m.timestamp.toISOString() : String(m.timestamp),
+                    type: m.type,
+                    contactName,
+                    senderName: isGroup && !m.fromMe ? (m.pushName || null) : null,
+                    profilePic: (m.contactPic && m.contactPic.startsWith("http")) ? m.contactPic : null
+                };
+            });
+        } catch {
+            const messages = await prisma.message.findMany({
+                where: {
+                    sessionId: session.id,
+                    content: { contains: q, mode: "insensitive" }
+                },
+                orderBy: { timestamp: "desc" },
+                take: 40,
+                select: {
+                    id: true,
+                    keyId: true,
+                    remoteJid: true,
+                    fromMe: true,
+                    content: true,
+                    timestamp: true,
+                    type: true,
+                    pushName: true,
+                    contract: {
+                        select: {
+                            name: true,
+                            notify: true,
+                            profilePic: true
+                        }
                     }
                 }
-            }
-        });
+            });
 
-        return messages.map(m => {
-            const contactName = m.contract?.name || m.contract?.notify || m.pushName || m.remoteJid.replace("@s.whatsapp.net", "").replace("@g.us", "");
-            return {
-                id: m.id,
-                keyId: m.keyId,
-                jid: m.remoteJid,
-                fromMe: m.fromMe,
-                content: m.content || "",
-                timestamp: m.timestamp.toISOString(),
-                type: m.type,
-                contactName,
-                profilePic: (m.contract?.profilePic && m.contract.profilePic.startsWith("http")) ? m.contract.profilePic : null
-            };
-        });
+            const groupJids = Array.from(new Set(messages.map(m => m.remoteJid).filter(j => j.endsWith("@g.us"))));
+            const groupMap = new Map<string, string>();
+            if (groupJids.length > 0) {
+                const groups = await prisma.group.findMany({
+                    where: { sessionId: session.id, jid: { in: groupJids } },
+                    select: { jid: true, subject: true }
+                });
+                for (const g of groups) {
+                    if (g.subject) groupMap.set(g.jid, g.subject);
+                }
+            }
+
+            return messages.map(m => {
+                const isGroup = m.remoteJid.endsWith("@g.us");
+                const contactName = isGroup
+                    ? (groupMap.get(m.remoteJid) || m.contract?.name || m.contract?.notify || m.remoteJid.replace("@g.us", ""))
+                    : (m.contract?.name || m.contract?.notify || m.pushName || m.remoteJid.replace("@s.whatsapp.net", "").replace("@g.us", ""));
+                return {
+                    id: m.id,
+                    keyId: m.keyId,
+                    jid: m.remoteJid,
+                    fromMe: m.fromMe,
+                    content: m.content || "",
+                    timestamp: m.timestamp.toISOString(),
+                    type: m.type,
+                    contactName,
+                    senderName: isGroup && !m.fromMe ? (m.pushName || null) : null,
+                    profilePic: (m.contract?.profilePic && m.contract.profilePic.startsWith("http")) ? m.contract.profilePic : null
+                };
+            });
+        }
+    } catch {
+        return [];
     }
 }
 
@@ -225,107 +310,129 @@ export async function getChatMessages(
     limit = 50,
     before?: string
 ) {
-    const user = await getAuthenticatedUserForAction();
-    if (!user) throw new Error("Unauthorized");
+    try {
+        const user = await getAuthenticatedUserForAction();
+        if (!user) return { messages: [], hasMore: false, contactMap: {}, participantNames: [], participantsList: [] };
 
-    const canAccess = await canAccessSession(user.id, user.role, sessionId);
-    if (!canAccess) throw new Error("Forbidden");
+        const canAccess = await canAccessSession(user.id, user.role, sessionId);
+        if (!canAccess) return { messages: [], hasMore: false, contactMap: {}, participantNames: [], participantsList: [] };
 
-    const session = await prisma.session.findFirst({
-        where: { OR: [{ sessionId }, { id: sessionId }] },
-        select: { id: true }
-    });
+        const session = await prisma.session.findFirst({
+            where: { OR: [{ sessionId }, { id: sessionId }] },
+            select: { id: true }
+        });
 
-    if (!session) throw new Error("Session not found");
+        if (!session) return { messages: [], hasMore: false, contactMap: {}, participantNames: [], participantsList: [] };
 
-    const { messages, hasMore, contactMap, participantNames, participantsList } = await ChatService.getMessages(session.id, jid, limit, before);
+        const { messages, hasMore, contactMap, participantNames, participantsList } = await ChatService.getMessages(session.id, jid, limit, before);
 
-    return {
-        messages: messages.map((msg: any) => ({
-            ...msg,
-            timestamp: msg.timestamp instanceof Date
-                ? msg.timestamp.toISOString()
-                : String(msg.timestamp)
-        })),
-        hasMore,
-        contactMap: contactMap || {},
-        participantNames: participantNames || [],
-        participantsList: participantsList || []
-    };
+        return {
+            messages: messages.map((msg: any) => ({
+                ...msg,
+                timestamp: msg.timestamp instanceof Date
+                    ? msg.timestamp.toISOString()
+                    : String(msg.timestamp)
+            })),
+            hasMore,
+            contactMap: contactMap || {},
+            participantNames: participantNames || [],
+            participantsList: participantsList || []
+        };
+    } catch (err) {
+        console.error("[actions.getChatMessages] error:", err);
+        return { messages: [], hasMore: false, contactMap: {}, participantNames: [], participantsList: [] };
+    }
 }
 
 // Fetch messages around a target keyId for instant search jump
 export async function getChatMessagesAround(sessionId: string, jid: string, keyId: string) {
-    const user = await getAuthenticatedUserForAction();
-    if (!user) throw new Error("Unauthorized");
+    try {
+        const user = await getAuthenticatedUserForAction();
+        if (!user) return { messages: [], hasMore: false, contactMap: {}, participantNames: [], participantsList: [] };
 
-    const canAccess = await canAccessSession(user.id, user.role, sessionId);
-    if (!canAccess) throw new Error("Forbidden");
+        const canAccess = await canAccessSession(user.id, user.role, sessionId);
+        if (!canAccess) return { messages: [], hasMore: false, contactMap: {}, participantNames: [], participantsList: [] };
 
-    const session = await prisma.session.findFirst({
-        where: { OR: [{ sessionId }, { id: sessionId }] },
-        select: { id: true }
-    });
+        const session = await prisma.session.findFirst({
+            where: { OR: [{ sessionId }, { id: sessionId }] },
+            select: { id: true }
+        });
 
-    if (!session) throw new Error("Session not found");
+        if (!session) return { messages: [], hasMore: false, contactMap: {}, participantNames: [], participantsList: [] };
 
-    const { messages, hasMore, contactMap, participantNames, participantsList } = await ChatService.getMessagesAround(session.id, jid, keyId);
+        const { messages, hasMore, contactMap, participantNames, participantsList } = await ChatService.getMessagesAround(session.id, jid, keyId);
 
-    return {
-        messages: messages.map((msg: any) => ({
-            ...msg,
-            timestamp: msg.timestamp instanceof Date
-                ? msg.timestamp.toISOString()
-                : String(msg.timestamp)
-        })),
-        hasMore,
-        contactMap: contactMap || {},
-        participantNames: participantNames || [],
-        participantsList: participantsList || []
-    };
+        return {
+            messages: messages.map((msg: any) => ({
+                ...msg,
+                timestamp: msg.timestamp instanceof Date
+                    ? msg.timestamp.toISOString()
+                    : String(msg.timestamp)
+            })),
+            hasMore,
+            contactMap: contactMap || {},
+            participantNames: participantNames || [],
+            participantsList: participantsList || []
+        };
+    } catch (err) {
+        console.error("[actions.getChatMessagesAround] error:", err);
+        return { messages: [], hasMore: false, contactMap: {}, participantNames: [], participantsList: [] };
+    }
 }
 
 // Send a basic text message
-export async function sendChatMessage(sessionId: string, jid: string, text: string, quotedMessageId?: string, mentions?: string[]) {
-    const user = await getAuthenticatedUserForAction();
-    if (!user) throw new Error("Unauthorized");
-
-    const canAccess = await canAccessSession(user.id, user.role, sessionId);
-    if (!canAccess) throw new Error("Forbidden");
-
+export async function sendChatMessage(sessionId: string, jid: string, text: string, quotedMessageId?: string, mentions?: string[]): Promise<{ success: boolean; keyId?: string; timestamp?: number; error?: string }> {
     try {
+        const user = await getAuthenticatedUserForAction();
+        if (!user) return { success: false, error: "Sessão expirada. Atualize a página." };
+
+        const canAccess = await canAccessSession(user.id, user.role, sessionId);
+        if (!canAccess) return { success: false, error: "Acesso negado a esta sessão." };
+
         const result = await ChatService.sendTextMessage(sessionId, jid, { text }, mentions, quotedMessageId);
         return {
             success: true,
-            keyId: result?.key?.id,
-            timestamp: result?.messageTimestamp
+            keyId: result?.key?.id || undefined,
+            timestamp: (result as any)?.syncedTimestampMs || (result?.messageTimestamp
                 ? (typeof result.messageTimestamp === "number" ? result.messageTimestamp * 1000 : Number(result.messageTimestamp) * 1000)
-                : Date.now()
+                : Date.now())
         };
     } catch (error: any) {
-        throw new Error(`Failed to send message: ${error.message}`);
+        return { success: false, error: error?.message || "Falha ao enviar mensagem" };
     }
 }
 
 // Upload and Send Media
-export async function sendMediaMessage(formData: FormData) {
-    const user = await getAuthenticatedUserForAction();
-    if (!user) throw new Error("Unauthorized");
-
-    const sessionId = formData.get("sessionId") as string;
-    const jid = formData.get("jid") as string;
-    const file = formData.get("file") as File;
-    const type = formData.get("type") as string;
-    const caption = formData.get("caption") as string || "";
-
-    if (!sessionId || !jid || !file || !type) {
-        throw new Error("Missing required fields");
-    }
-
-    const canAccess = await canAccessSession(user.id, user.role, sessionId);
-    if (!canAccess) throw new Error("Forbidden");
-
+export async function sendMediaMessage(formData: FormData): Promise<{ success: boolean; keyId?: string; mediaUrl?: string; timestamp?: number; error?: string }> {
     try {
+        const user = await getAuthenticatedUserForAction();
+        if (!user) return { success: false, error: "Sessão expirada. Atualize a página." };
+
+        const sessionId = formData.get("sessionId") as string;
+        const jid = formData.get("jid") as string;
+        const file = formData.get("file") as File;
+        const type = formData.get("type") as string;
+        const caption = formData.get("caption") as string || "";
+        const viewOnce = formData.get("viewOnce") === "true";
+        const quoteId = (formData.get("quoteId") as string) || (formData.get("quotedMessageId") as string) || undefined;
+        const rawMentions = formData.get("mentions") as string | null;
+        let mentions: string[] | undefined = undefined;
+        if (rawMentions) {
+            try {
+                const parsed = JSON.parse(rawMentions);
+                if (Array.isArray(parsed) && parsed.length > 0) {
+                    mentions = parsed;
+                }
+            } catch {}
+        }
+
+        if (!sessionId || !jid || !file || !type) {
+            return { success: false, error: "Campos obrigatórios ausentes no envio de mídia" };
+        }
+
+        const canAccess = await canAccessSession(user.id, user.role, sessionId);
+        if (!canAccess) return { success: false, error: "Acesso negado a esta sessão" };
+
         const buffer = Buffer.from(await file.arrayBuffer());
 
         const sendResult = await ChatService.sendMediaMessage(
@@ -335,17 +442,21 @@ export async function sendMediaMessage(formData: FormData) {
             type,
             file.type,
             file.name,
-            caption
+            caption,
+            viewOnce,
+            quoteId,
+            mentions
         );
 
         return {
             success: true,
-            keyId: sendResult?.key?.id,
-            mediaUrl: (sendResult as any)?.mediaUrl
+            keyId: sendResult?.key?.id || undefined,
+            mediaUrl: (sendResult as any)?.mediaUrl,
+            timestamp: (sendResult as any)?.syncedTimestampMs
         };
     } catch (error: any) {
         console.error("Media send error:", error);
-        throw new Error(`Failed to send media: ${error.message}`);
+        return { success: false, error: error?.message || "Falha ao enviar mídia" };
     }
 }
 
@@ -368,102 +479,107 @@ export async function forwardChatMessage(
     sessionId: string,
     targetJids: string[],
     msg: { content?: string; type: string; mediaUrl?: string }
-) {
-    const user = await getAuthenticatedUserForAction();
-    if (!user) throw new Error("Unauthorized");
+): Promise<{ success: boolean; count?: number; error?: string }> {
+    try {
+        const user = await getAuthenticatedUserForAction();
+        if (!user) return { success: false, error: "Sessão expirada. Atualize a página." };
 
-    const canAccess = await canAccessSession(user.id, user.role, sessionId);
-    if (!canAccess) throw new Error("Forbidden");
+        const canAccess = await canAccessSession(user.id, user.role, sessionId);
+        if (!canAccess) return { success: false, error: "Acesso negado a esta sessão." };
 
-    if (!targetJids || targetJids.length === 0) {
-        throw new Error("Selecione pelo menos um destinatário");
-    }
+        if (!targetJids || targetJids.length === 0) {
+            return { success: false, error: "Selecione pelo menos um destinatário" };
+        }
 
-    const msgType = (msg.type || "TEXT").toUpperCase();
-    const isMedia = msgType !== "TEXT" && !!msg.mediaUrl;
+        const msgType = (msg.type || "TEXT").toUpperCase();
+        const isMedia = msgType !== "TEXT" && !!msg.mediaUrl;
 
-    let mediaBuffer: Buffer | null = null;
-    let mimeType = "application/octet-stream";
-    let fileName = msg.content || `arquivo-${Date.now()}`;
+        let mediaBuffer: Buffer | null = null;
+        let mimeType = "application/octet-stream";
+        let fileName = msg.content || `arquivo-${Date.now()}`;
 
-    if (isMedia && msg.mediaUrl) {
-        try {
-            if (msg.mediaUrl.startsWith("data:")) {
-                const match = msg.mediaUrl.match(/^data:([^;]+);base64,(.+)$/);
-                if (match) {
-                    mimeType = match[1];
-                    mediaBuffer = Buffer.from(match[2], "base64");
+        if (isMedia && msg.mediaUrl) {
+            try {
+                if (msg.mediaUrl.startsWith("data:")) {
+                    const match = msg.mediaUrl.match(/^data:([^;]+);base64,(.+)$/);
+                    if (match) {
+                        mimeType = match[1];
+                        mediaBuffer = Buffer.from(match[2], "base64");
+                    }
+                } else if (msg.mediaUrl.startsWith("/api/media/") || msg.mediaUrl.startsWith("/media/")) {
+                    const baseName = path.basename(msg.mediaUrl);
+                    const fullPath = path.join(mediaDir, baseName);
+                    mediaBuffer = await readFile(fullPath);
+                    const ext = path.extname(baseName).toLowerCase().replace(".", "");
+                    const extMimeMap: Record<string, string> = {
+                        jpg: "image/jpeg",
+                        jpeg: "image/jpeg",
+                        png: "image/png",
+                        webp: "image/webp",
+                        mp4: "video/mp4",
+                        mp3: "audio/mp3",
+                        ogg: "audio/ogg; codecs=opus",
+                        webm: "audio/webm; codecs=opus",
+                        pdf: "application/pdf",
+                        xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        xls: "application/vnd.ms-excel",
+                        csv: "text/csv",
+                        doc: "application/msword",
+                        docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                    };
+                    mimeType = extMimeMap[ext] || "application/octet-stream";
+                    if (!msg.content) fileName = baseName;
+                } else if (msg.mediaUrl.startsWith("http")) {
+                    const res = await fetch(msg.mediaUrl);
+                    if (res.ok) {
+                        mimeType = res.headers.get("content-type") || mimeType;
+                        mediaBuffer = Buffer.from(await res.arrayBuffer());
+                    }
                 }
-            } else if (msg.mediaUrl.startsWith("/api/media/") || msg.mediaUrl.startsWith("/media/")) {
-                const baseName = path.basename(msg.mediaUrl);
-                const fullPath = path.join(mediaDir, baseName);
-                mediaBuffer = await readFile(fullPath);
-                const ext = path.extname(baseName).toLowerCase().replace(".", "");
-                const extMimeMap: Record<string, string> = {
-                    jpg: "image/jpeg",
-                    jpeg: "image/jpeg",
-                    png: "image/png",
-                    webp: "image/webp",
-                    mp4: "video/mp4",
-                    mp3: "audio/mp3",
-                    ogg: "audio/ogg; codecs=opus",
-                    pdf: "application/pdf",
-                    xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    xls: "application/vnd.ms-excel",
-                    csv: "text/csv",
-                    doc: "application/msword",
-                    docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-                };
-                mimeType = extMimeMap[ext] || "application/octet-stream";
-                if (!msg.content) fileName = baseName;
-            } else if (msg.mediaUrl.startsWith("http")) {
-                const res = await fetch(msg.mediaUrl);
-                if (res.ok) {
-                    mimeType = res.headers.get("content-type") || mimeType;
-                    mediaBuffer = Buffer.from(await res.arrayBuffer());
-                }
+            } catch (err) {
+                console.error("Error loading media buffer for forward:", err);
             }
-        } catch (err) {
-            console.error("Error loading media buffer for forward:", err);
         }
-    }
 
-    const mappedSendType =
-        msgType === "IMAGE" ? "image" :
-        msgType === "VIDEO" ? "video" :
-        msgType === "AUDIO" ? "audio" :
-        msgType === "STICKER" ? "sticker" : "document";
+        const mappedSendType =
+            msgType === "IMAGE" ? "image" :
+            msgType === "VIDEO" ? "video" :
+            msgType === "AUDIO" ? "audio" :
+            msgType === "STICKER" ? "sticker" : "document";
 
-    for (const targetJid of targetJids) {
-        if (mediaBuffer) {
-            await ChatService.sendMediaMessage(
-                sessionId,
-                targetJid,
-                mediaBuffer,
-                mappedSendType,
-                mimeType,
-                fileName,
-                msgType === "DOCUMENT" ? "" : (msg.content || "")
-            );
-        } else {
-            await ChatService.sendTextMessage(sessionId, targetJid, { text: msg.content || "" });
+        for (const targetJid of targetJids) {
+            if (mediaBuffer) {
+                await ChatService.sendMediaMessage(
+                    sessionId,
+                    targetJid,
+                    mediaBuffer,
+                    mappedSendType,
+                    mimeType,
+                    fileName,
+                    msgType === "DOCUMENT" ? "" : (msg.content || "")
+                );
+            } else {
+                await ChatService.sendTextMessage(sessionId, targetJid, { text: msg.content || "" });
+            }
         }
-    }
 
-    return { success: true, count: targetJids.length };
+        return { success: true, count: targetJids.length };
+    } catch (e: any) {
+        return { success: false, error: e?.message || "Erro ao encaminhar mensagem" };
+    }
 }
 
 // React to chat message
-export async function reactToChatMessage(sessionId: string, jid: string, messageId: string, emoji: string, fromMe?: boolean, participant?: string) {
-    const user = await getAuthenticatedUserForAction();
-    if (!user) throw new Error("Unauthorized");
-
-    const canAccess = await canAccessSession(user.id, user.role, sessionId);
-    if (!canAccess) throw new Error("Forbidden");
-
+export async function reactToChatMessage(sessionId: string, jid: string, messageId: string, emoji: string, fromMe?: boolean, participant?: string): Promise<{ success: boolean; error?: string }> {
     try {
+        const user = await getAuthenticatedUserForAction();
+        if (!user) return { success: false, error: "Sessão expirada. Atualize a página." };
+
+        const canAccess = await canAccessSession(user.id, user.role, sessionId);
+        if (!canAccess) return { success: false, error: "Acesso negado a esta sessão." };
+
         const instance = waManager.getInstance(sessionId);
-        if (!instance?.socket) throw new Error("WhatsApp session not connected");
+        if (!instance?.socket) return { success: false, error: "Sessão do WhatsApp desconectada" };
 
         const isGroup = jid.endsWith("@g.us");
         await instance.socket.sendMessage(jid, {
@@ -479,7 +595,7 @@ export async function reactToChatMessage(sessionId: string, jid: string, message
         }, { skipAntiSpam: true } as any);
         return { success: true };
     } catch (e: any) {
-        throw new Error(`Failed to send reaction: ${e.message}`);
+        return { success: false, error: e?.message || "Falha ao reagir à mensagem" };
     }
 }
 
@@ -489,36 +605,40 @@ export async function sendContactCardMessage(
     jid: string,
     contactName: string,
     contactPhone: string
-) {
-    const user = await getAuthenticatedUserForAction();
-    if (!user) throw new Error("Unauthorized");
+): Promise<{ success: boolean; keyId?: string; error?: string }> {
+    try {
+        const user = await getAuthenticatedUserForAction();
+        if (!user) return { success: false, error: "Sessão expirada. Atualize a página." };
 
-    const canAccess = await canAccessSession(user.id, user.role, sessionId);
-    if (!canAccess) throw new Error("Forbidden");
+        const canAccess = await canAccessSession(user.id, user.role, sessionId);
+        if (!canAccess) return { success: false, error: "Acesso negado a esta sessão." };
 
-    const cleanPhone = contactPhone.replace(/\D/g, "");
-    if (!cleanPhone) throw new Error("Número de telefone inválido");
+        const cleanPhone = contactPhone.replace(/\D/g, "");
+        if (!cleanPhone) return { success: false, error: "Número de telefone inválido" };
 
-    const safeName = (contactName || cleanPhone).trim();
-    const vcard = [
-        "BEGIN:VCARD",
-        "VERSION:3.0",
-        `FN:${safeName}`,
-        `TEL;type=CELL;type=VOICE;waid=${cleanPhone}:+${cleanPhone}`,
-        "END:VCARD"
-    ].join("\n");
+        const safeName = (contactName || cleanPhone).trim();
+        const vcard = [
+            "BEGIN:VCARD",
+            "VERSION:3.0",
+            `FN:${safeName}`,
+            `TEL;type=CELL;type=VOICE;waid=${cleanPhone}:+${cleanPhone}`,
+            "END:VCARD"
+        ].join("\n");
 
-    const result = await ChatService.sendTextMessage(sessionId, jid, {
-        contacts: {
-            displayName: safeName,
-            contacts: [{ vcard }]
-        }
-    });
+        const result = await ChatService.sendTextMessage(sessionId, jid, {
+            contacts: {
+                displayName: safeName,
+                contacts: [{ vcard }]
+            }
+        });
 
-    return {
-        success: true,
-        keyId: result?.key?.id
-    };
+        return {
+            success: true,
+            keyId: result?.key?.id || undefined
+        };
+    } catch (e: any) {
+        return { success: false, error: e?.message || "Erro ao enviar cartão de contato" };
+    }
 }
 
 // Send a WhatsApp Location Pin (#C22)
@@ -529,26 +649,30 @@ export async function sendLocationPinMessage(
     longitude: number,
     name?: string,
     address?: string
-) {
-    const user = await getAuthenticatedUserForAction();
-    if (!user) throw new Error("Unauthorized");
+): Promise<{ success: boolean; keyId?: string; error?: string }> {
+    try {
+        const user = await getAuthenticatedUserForAction();
+        if (!user) return { success: false, error: "Sessão expirada. Atualize a página." };
 
-    const canAccess = await canAccessSession(user.id, user.role, sessionId);
-    if (!canAccess) throw new Error("Forbidden");
+        const canAccess = await canAccessSession(user.id, user.role, sessionId);
+        if (!canAccess) return { success: false, error: "Acesso negado a esta sessão." };
 
-    const result = await ChatService.sendTextMessage(sessionId, jid, {
-        location: {
-            degreesLatitude: latitude,
-            degreesLongitude: longitude,
-            name: name?.trim() || undefined,
-            address: address?.trim() || undefined
-        }
-    });
+        const result = await ChatService.sendTextMessage(sessionId, jid, {
+            location: {
+                degreesLatitude: latitude,
+                degreesLongitude: longitude,
+                name: name?.trim() || undefined,
+                address: address?.trim() || undefined
+            }
+        });
 
-    return {
-        success: true,
-        keyId: result?.key?.id
-    };
+        return {
+            success: true,
+            keyId: result?.key?.id || undefined
+        };
+    } catch (e: any) {
+        return { success: false, error: e?.message || "Erro ao enviar localização" };
+    }
 }
 
 // Send a WhatsApp Native Poll (#C23)
@@ -558,31 +682,35 @@ export async function sendPollMessage(
     question: string,
     options: string[],
     selectableCount = 1
-) {
-    const user = await getAuthenticatedUserForAction();
-    if (!user) throw new Error("Unauthorized");
+): Promise<{ success: boolean; keyId?: string; error?: string }> {
+    try {
+        const user = await getAuthenticatedUserForAction();
+        if (!user) return { success: false, error: "Sessão expirada. Atualize a página." };
 
-    const canAccess = await canAccessSession(user.id, user.role, sessionId);
-    if (!canAccess) throw new Error("Forbidden");
+        const canAccess = await canAccessSession(user.id, user.role, sessionId);
+        if (!canAccess) return { success: false, error: "Acesso negado a esta sessão." };
 
-    const cleanQuestion = question.trim();
-    const cleanOptions = options.map(o => o.trim()).filter(Boolean);
-    if (!cleanQuestion || cleanOptions.length < 2) {
-        throw new Error("Informe a pergunta e pelo menos 2 opções para a enquete");
-    }
-
-    const result = await ChatService.sendTextMessage(sessionId, jid, {
-        poll: {
-            name: cleanQuestion,
-            values: cleanOptions,
-            selectableCount: Math.max(1, Math.min(selectableCount, cleanOptions.length))
+        const cleanQuestion = question.trim();
+        const cleanOptions = options.map(o => o.trim()).filter(Boolean);
+        if (!cleanQuestion || cleanOptions.length < 2) {
+            return { success: false, error: "Informe a pergunta e pelo menos 2 opções para a enquete" };
         }
-    });
 
-    return {
-        success: true,
-        keyId: result?.key?.id
-    };
+        const result = await ChatService.sendTextMessage(sessionId, jid, {
+            poll: {
+                name: cleanQuestion,
+                values: cleanOptions,
+                selectableCount: Math.max(1, Math.min(selectableCount, cleanOptions.length))
+            }
+        });
+
+        return {
+            success: true,
+            keyId: result?.key?.id || undefined
+        };
+    } catch (e: any) {
+        return { success: false, error: e?.message || "Erro ao enviar enquete" };
+    }
 }
 
 // Schedule a message directly from the Chat Window (#C25)
@@ -591,38 +719,42 @@ export async function scheduleDirectChatMessage(
     jid: string,
     content: string,
     sendAtIso: string
-) {
-    const user = await getAuthenticatedUserForAction();
-    if (!user) throw new Error("Unauthorized");
+): Promise<{ success: boolean; id?: string; error?: string }> {
+    try {
+        const user = await getAuthenticatedUserForAction();
+        if (!user) return { success: false, error: "Sessão expirada. Atualize a página." };
 
-    const canAccess = await canAccessSession(user.id, user.role, sessionId);
-    if (!canAccess) throw new Error("Forbidden");
+        const canAccess = await canAccessSession(user.id, user.role, sessionId);
+        if (!canAccess) return { success: false, error: "Acesso negado a esta sessão." };
 
-    const session = await prisma.session.findFirst({
-        where: { OR: [{ sessionId }, { id: sessionId }] },
-        select: { id: true }
-    });
-    if (!session) throw new Error("Sessão não encontrada");
+        const session = await prisma.session.findFirst({
+            where: { OR: [{ sessionId }, { id: sessionId }] },
+            select: { id: true }
+        });
+        if (!session) return { success: false, error: "Sessão não encontrada" };
 
-    const sendAtDate = new Date(sendAtIso);
-    if (isNaN(sendAtDate.getTime()) || sendAtDate.getTime() <= Date.now()) {
-        throw new Error("Escolha uma data e horário futuros para o agendamento");
-    }
-
-    const scheduled = await prisma.scheduledMessage.create({
-        data: {
-            sessionId: session.id,
-            jid,
-            content: content.trim(),
-            sendAt: sendAtDate,
-            status: "PENDING"
+        const sendAtDate = new Date(sendAtIso);
+        if (isNaN(sendAtDate.getTime()) || sendAtDate.getTime() <= Date.now()) {
+            return { success: false, error: "Escolha uma data e horário futuros para o agendamento" };
         }
-    });
 
-    return {
-        success: true,
-        id: scheduled.id
-    };
+        const scheduled = await prisma.scheduledMessage.create({
+            data: {
+                sessionId: session.id,
+                jid,
+                content: content.trim(),
+                sendAt: sendAtDate,
+                status: "PENDING"
+            }
+        });
+
+        return {
+            success: true,
+            id: scheduled.id
+        };
+    } catch (e: any) {
+        return { success: false, error: e?.message || "Falha ao agendar mensagem" };
+    }
 }
 
 // Free LLM AI Assistant for Chat (#C29 - Powered by free-llm-apis router)
@@ -650,9 +782,6 @@ export async function runChatAIAssistant(
     model: string;
     isLocalFallback?: boolean;
 }> {
-    const user = await getAuthenticatedUserForAction();
-    if (!user) throw new Error("Unauthorized");
-
     const cleanInput = (inputText || "").trim();
     const formattedHistory = recentMessages
         .slice(-15)
@@ -785,122 +914,138 @@ export async function transcribeChatAudioMessage(
     audioUrl: string,
     customKeys?: CustomFreeLLMKeys,
     audioBase64?: string
-): Promise<{ text: string; provider: string }> {
-    const user = await getAuthenticatedUserForAction();
-    if (!user) throw new Error("Unauthorized");
+): Promise<{ text: string; provider: string; error?: string }> {
+    try {
+        const user = await getAuthenticatedUserForAction();
+        if (!user) {
+            return { text: "", provider: "", error: "Sessão expirada. Atualize a página (F5)." };
+        }
 
-    const groqKey = customKeys?.groqApiKey?.trim() || process.env.GROQ_API_KEY?.trim();
-    const openaiKey = customKeys?.openaiApiKey?.trim() || process.env.OPENAI_API_KEY?.trim();
+        const groqKey = customKeys?.groqApiKey?.trim() || process.env.GROQ_API_KEY?.trim();
+        const openaiKey = customKeys?.openaiApiKey?.trim() || process.env.OPENAI_API_KEY?.trim();
 
-    if (!groqKey && !openaiKey) {
-        throw new Error(
-            "Para transcrever áudios com Whisper IA, informe sua chave gratuita da Groq no botão ✨ IA -> Configurar Chaves (obtenha grátis em console.groq.com)."
-        );
-    }
+        if (!groqKey && !openaiKey) {
+            return {
+                text: "",
+                provider: "",
+                error: "Para transcrever áudios com Whisper IA, informe sua chave gratuita da Groq no botão ✨ IA -> Configurar Chaves (obtenha grátis em console.groq.com)."
+            };
+        }
 
-    // Resolve audio buffer from client base64, /api/media/{filename}, or external URL
-    let audioBuffer: Buffer | null = null;
-    let fileName = "audio.ogg";
+        // Resolve audio buffer from client base64, /api/media/{filename}, or external URL
+        let audioBuffer: Buffer | null = null;
+        let fileName = "audio.ogg";
 
-    if (audioBase64) {
-        try {
-            const clean = audioBase64.replace(/^data:[^;]+;base64,/, "");
-            audioBuffer = Buffer.from(clean, "base64");
-            fileName = "voice-note.ogg";
-        } catch {}
-    }
+        if (audioBase64) {
+            try {
+                const clean = audioBase64.replace(/^data:[^;]+;base64,/, "");
+                audioBuffer = Buffer.from(clean, "base64");
+                fileName = "voice-note.ogg";
+            } catch {}
+        }
 
-    if (!audioBuffer && audioUrl.includes("/api/media/")) {
-        const rawFilename = decodeURIComponent(audioUrl.split("/api/media/").pop()?.split("?")[0] || "");
-        if (rawFilename && !rawFilename.includes("..")) {
-            fileName = rawFilename;
-            let candidatePath = path.join(mediaDir, rawFilename);
-            if (!existsSync(candidatePath)) {
-                const base = rawFilename.replace(/\.[^.]+$/, "");
-                for (const ext of [".ogg", ".opus", ".mp3", ".m4a", ".wav", ".mp4", ".bin"]) {
-                    const alt = path.join(mediaDir, `${base}${ext}`);
-                    if (existsSync(alt)) {
-                        candidatePath = alt;
-                        fileName = `${base}${ext === ".bin" ? ".ogg" : ext}`;
-                        break;
+        if (!audioBuffer && audioUrl.includes("/api/media/")) {
+            const rawFilename = decodeURIComponent(audioUrl.split("/api/media/").pop()?.split("?")[0] || "");
+            if (rawFilename && !rawFilename.includes("..")) {
+                fileName = rawFilename;
+                let candidatePath = path.join(mediaDir, rawFilename);
+                if (!existsSync(candidatePath)) {
+                    const base = rawFilename.replace(/\.[^.]+$/, "");
+                    for (const ext of [".ogg", ".opus", ".webm", ".mp3", ".m4a", ".wav", ".mp4", ".bin"]) {
+                        const alt = path.join(mediaDir, `${base}${ext}`);
+                        if (existsSync(alt)) {
+                            candidatePath = alt;
+                            fileName = `${base}${ext === ".bin" ? ".ogg" : ext}`;
+                            break;
+                        }
+                    }
+                }
+                if (existsSync(candidatePath)) {
+                    audioBuffer = await readFile(candidatePath);
+                } else {
+                    // Check if the message row in the DB has a base64 Data URL or mediaUrl
+                    const rawKeyId = rawFilename.replace(/\.[^.]+$/, "").split("-").pop();
+                    if (rawKeyId) {
+                        try {
+                            const dbMsg = await prisma.message.findFirst({
+                                where: { keyId: rawKeyId },
+                                select: { mediaUrl: true }
+                            });
+                            if (dbMsg?.mediaUrl && dbMsg.mediaUrl.startsWith("data:")) {
+                                const clean = dbMsg.mediaUrl.replace(/^data:[^;]+;base64,/, "");
+                                audioBuffer = Buffer.from(clean, "base64");
+                            }
+                        } catch {}
                     }
                 }
             }
-            if (existsSync(candidatePath)) {
-                audioBuffer = await readFile(candidatePath);
-            } else {
-                // Check if the message row in the DB has a base64 Data URL or mediaUrl
-                const rawKeyId = rawFilename.replace(/\.[^.]+$/, "").split("-").pop();
-                if (rawKeyId) {
-                    try {
-                        const dbMsg = await prisma.message.findFirst({
-                            where: { keyId: rawKeyId },
-                            select: { mediaUrl: true }
-                        });
-                        if (dbMsg?.mediaUrl && dbMsg.mediaUrl.startsWith("data:")) {
-                            const clean = dbMsg.mediaUrl.replace(/^data:[^;]+;base64,/, "");
-                            audioBuffer = Buffer.from(clean, "base64");
-                        }
-                    } catch {}
-                }
-            }
         }
+
+        if (!audioBuffer && audioUrl.startsWith("data:")) {
+            try {
+                const clean = audioUrl.replace(/^data:[^;]+;base64,/, "");
+                audioBuffer = Buffer.from(clean, "base64");
+            } catch {}
+        }
+
+        if (!audioBuffer && (audioUrl.startsWith("http://") || audioUrl.startsWith("https://"))) {
+            try {
+                const resp = await fetch(audioUrl);
+                if (resp.ok) {
+                    audioBuffer = Buffer.from(await resp.arrayBuffer());
+                }
+            } catch {}
+        }
+
+        if (!audioBuffer) {
+            return { text: "", provider: "", error: "Arquivo de áudio não encontrado no servidor para transcrição." };
+        }
+
+        const formData = new FormData();
+        const uint8 = new Uint8Array(audioBuffer);
+        const blob = new Blob([uint8], { type: "audio/ogg" });
+        formData.append("file", blob, fileName.endsWith(".bin") ? "audio.ogg" : fileName);
+        formData.append("model", groqKey ? "whisper-large-v3-turbo" : "whisper-1");
+        formData.append("language", "pt");
+        formData.append("response_format", "json");
+
+        const endpoint = groqKey
+            ? "https://api.groq.com/openai/v1/audio/transcriptions"
+            : "https://api.openai.com/v1/audio/transcriptions";
+
+        const res = await fetch(endpoint, {
+            method: "POST",
+            headers: {
+                Authorization: `Bearer ${groqKey || openaiKey}`
+            },
+            body: formData
+        });
+
+        if (!res.ok) {
+            const errText = await res.text().catch(() => "");
+            return {
+                text: "",
+                provider: "",
+                error: `Falha na transcrição Groq Whisper (HTTP ${res.status}): ${errText.slice(0, 120)}`
+            };
+        }
+
+        const data = await res.json();
+        const text = (data?.text || "").trim();
+        if (!text) {
+            return { text: "", provider: "", error: "Não foi possível identificar fala audível nesta gravação." };
+        }
+
+        return {
+            text,
+            provider: "Groq Whisper Large V3 Turbo (Free)"
+        };
+    } catch (e: any) {
+        return {
+            text: "",
+            provider: "",
+            error: e?.message || "Erro ao transcrever áudio"
+        };
     }
-
-    if (!audioBuffer && audioUrl.startsWith("data:")) {
-        try {
-            const clean = audioUrl.replace(/^data:[^;]+;base64,/, "");
-            audioBuffer = Buffer.from(clean, "base64");
-        } catch {}
-    }
-
-    if (!audioBuffer && (audioUrl.startsWith("http://") || audioUrl.startsWith("https://"))) {
-        try {
-            const resp = await fetch(audioUrl);
-            if (resp.ok) {
-                audioBuffer = Buffer.from(await resp.arrayBuffer());
-            }
-        } catch {}
-    }
-
-    if (!audioBuffer) {
-        throw new Error("Arquivo de áudio não encontrado no servidor para transcrição.");
-    }
-
-    const formData = new FormData();
-    const uint8 = new Uint8Array(audioBuffer);
-    const blob = new Blob([uint8], { type: "audio/ogg" });
-    formData.append("file", blob, fileName.endsWith(".bin") ? "audio.ogg" : fileName);
-    formData.append("model", groqKey ? "whisper-large-v3-turbo" : "whisper-1");
-    formData.append("language", "pt");
-    formData.append("response_format", "json");
-
-    const endpoint = groqKey
-        ? "https://api.groq.com/openai/v1/audio/transcriptions"
-        : "https://api.openai.com/v1/audio/transcriptions";
-
-    const res = await fetch(endpoint, {
-        method: "POST",
-        headers: {
-            Authorization: `Bearer ${groqKey || openaiKey}`
-        },
-        body: formData
-    });
-
-    if (!res.ok) {
-        const errText = await res.text().catch(() => "");
-        throw new Error(`Falha na transcrição Groq Whisper (HTTP ${res.status}): ${errText.slice(0, 120)}`);
-    }
-
-    const data = await res.json();
-    const text = (data?.text || "").trim();
-    if (!text) {
-        throw new Error("Não foi possível identificar fala audível nesta gravação.");
-    }
-
-    return {
-        text,
-        provider: "Groq Whisper Large V3 Turbo (Free)"
-    };
 }
 

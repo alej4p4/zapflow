@@ -230,11 +230,15 @@ export default function SchedulerPage() {
             }
         }
 
-        let jid = newJid;
+        let jid = newJid.trim();
         if (!jid.includes("@")) {
-            if (newJidType === "group") jid += "@g.us";
-            else if (newJidType === "newsletter") jid += "@newsletter";
-            else jid += "@s.whatsapp.net";
+            const digits = jid.replace(/\D/g, "");
+            if (newJidType === "group") jid = `${digits || jid}@g.us`;
+            else if (newJidType === "newsletter") jid = `${digits || jid}@newsletter`;
+            else {
+                const withCountry = (digits.length === 10 || digits.length === 11) && !digits.startsWith("55") ? `55${digits}` : digits;
+                jid = `${withCountry || jid}@s.whatsapp.net`;
+            }
         }
 
         const cronData = buildCronData(isRecurring, recurrenceType, recurringMinutes, recurringHours, recurringDays, customCron, finalSendAt);
@@ -296,11 +300,15 @@ export default function SchedulerPage() {
             }
         }
 
-        let jid = editJid;
+        let jid = editJid.trim();
         if (!jid.includes("@")) {
-            if (editJidType === "group") jid += "@g.us";
-            else if (editJidType === "newsletter") jid += "@newsletter";
-            else jid += "@s.whatsapp.net";
+            const digits = jid.replace(/\D/g, "");
+            if (editJidType === "group") jid = `${digits || jid}@g.us`;
+            else if (editJidType === "newsletter") jid = `${digits || jid}@newsletter`;
+            else {
+                const withCountry = (digits.length === 10 || digits.length === 11) && !digits.startsWith("55") ? `55${digits}` : digits;
+                jid = `${withCountry || jid}@s.whatsapp.net`;
+            }
         }
 
         const cronData = buildCronData(editIsRecurring, editRecurrenceType, editRecurringMinutes, editRecurringHours, editRecurringDays, editCustomCron, finalSendAt);
@@ -420,17 +428,17 @@ export default function SchedulerPage() {
                             <div className="space-y-2">
                                 <Label>Selecione os dias</Label>
                                 <div className="flex flex-wrap gap-4">
-                                    {['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].map((d, i) => (
+                                    {['Dom','Seg','Ter','Qua','Qui','Sex','Sáb'].map((d, i) => (
                                         <div key={d} className="flex items-center space-x-2">
                                             <Checkbox 
-                                                id={`d-${d}-${type}`} 
+                                                id={`d-${i}-${type}`} 
                                                 checked={days.includes(i)}
                                                 onCheckedChange={(c) => {
                                                     if (c) setDays([...days, i]);
                                                     else setDays(days.filter(x => x !== i));
                                                 }}
                                             />
-                                            <Label htmlFor={`d-${d}-${type}`}>{d}</Label>
+                                            <Label htmlFor={`d-${i}-${type}`}>{d}</Label>
                                         </div>
                                     ))}
                                 </div>
@@ -451,7 +459,7 @@ export default function SchedulerPage() {
                     
                     {type !== "days" && (
                         <p className="text-xs text-muted-foreground mt-2">
-                            The schedule will be evaluated starting from the current time.
+                            O agendamento será calculado a partir do horário atual.
                         </p>
                     )}
                 </div>
@@ -465,20 +473,20 @@ export default function SchedulerPage() {
                 <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
                     <div>
                         <h1 className="text-xl sm:text-2xl font-bold flex items-center gap-2">
-                            <CalendarClock className="h-5 w-5 sm:h-6 sm:w-6" /> Scheduler
+                            <CalendarClock className="h-5 w-5 sm:h-6 sm:w-6" /> Agendador de Mensagens
                         </h1>
                         <p className="text-sm text-muted-foreground">
-                            {selectedSessionId ? "Schedule messages for active session." : "Select a session from the top bar."}
+                            {selectedSessionId ? "Agende mensagens únicas ou recorrentes para a sessão ativa." : "Selecione uma sessão na barra superior."}
                         </p>
                     </div>
 
                     <div className="flex items-center gap-2 w-full sm:w-auto">
                         <Button variant="outline" size="sm" className="flex-1 sm:flex-none" onClick={() => selectedSessionId && fetchMessages(selectedSessionId, activeTab)} disabled={loading || !selectedSessionId}>
                             <RefreshCw className={`h-4 w-4 mr-1 sm:mr-2 ${loading ? 'animate-spin' : ''}`} />
-                            Refresh
+                            Atualizar
                         </Button>
                         <Button size="sm" className="flex-1 sm:flex-none" onClick={() => setShowForm(!showForm)} disabled={!selectedSessionId}>
-                            <Plus className="h-4 w-4 mr-1 sm:mr-2" /> Schedule
+                            <Plus className="h-4 w-4 mr-1 sm:mr-2" /> Novo Agendamento
                         </Button>
                     </div>
                 </div>
@@ -512,7 +520,7 @@ export default function SchedulerPage() {
                                         </div>
                                     </RadioGroup>
                                 </div>
-                                <Input value={newJid} onChange={e => setNewJid(e.target.value)} placeholder={newJidType === 'group' ? "120363... (Group ID)" : newJidType === 'newsletter' ? "120363... (Channel ID)" : "62812345678"} />
+                                <Input value={newJid} onChange={e => setNewJid(e.target.value)} placeholder={newJidType === 'group' ? "120363... (ID do Grupo)" : newJidType === 'newsletter' ? "120363... (ID do Canal)" : "5566999999999"} />
                             </div>
                             
                             {renderRecurrenceForm(
@@ -572,11 +580,11 @@ export default function SchedulerPage() {
                                                     {msg.jid.split('@')[0]}
                                                     {msg.jid.includes("@g.us") ? <span className="text-xs px-2 py-0.5 rounded font-normal bg-purple-100 text-purple-800">Grupo</span> : null}
                                                     {msg.jid.includes("@newsletter") ? <span className="text-xs px-2 py-0.5 rounded font-normal bg-orange-100 text-orange-800">Canal</span> : null}
-                                                    <span className="text-xs px-2 py-0.5 rounded font-normal bg-yellow-100 text-yellow-800">{msg.status}</span>
+                                                    <span className="text-xs px-2 py-0.5 rounded font-normal bg-yellow-100 text-yellow-800">{msg.status === "PENDING" ? "Pendente" : msg.status}</span>
                                                     {msg.cronExpression && <span className="text-xs px-2 py-0.5 rounded font-normal bg-blue-100 text-blue-800">Recorrente</span>}
                                                 </div>
-                                                <div className="text-sm font-medium mt-1">{msg.content || "[Media Only]"}</div>
-                                                <div className="text-xs text-muted-foreground mt-1">Next Run: {moment(msg.sendAt).tz(systemTimezone).format('YYYY-MM-DD HH:mm:ss')}</div>
+                                                <div className="text-sm font-medium mt-1">{msg.content || "[Somente Mídia]"}</div>
+                                                <div className="text-xs text-muted-foreground mt-1">Próximo envio: {moment(msg.sendAt).tz(systemTimezone).format('DD/MM/YYYY HH:mm:ss')}</div>
                                             </div>
                                             <div className="flex gap-2">
                                                 <Button variant="ghost" size="sm" onClick={() => handleEdit(msg)}>Editar</Button>
@@ -601,8 +609,8 @@ export default function SchedulerPage() {
                                                     {msg.jid.includes("@newsletter") ? <span className="text-xs px-2 py-0.5 rounded font-normal bg-orange-100 text-orange-800">Canal</span> : null}
                                                     {msg.status === 'SENT' ? <span className="text-xs px-2 py-0.5 rounded font-normal bg-green-100 text-green-800 flex items-center gap-1"><CheckCircle2 className="w-3 h-3"/> Enviada</span> : <span className="text-xs px-2 py-0.5 rounded font-normal bg-red-100 text-red-800 flex items-center gap-1"><XCircle className="w-3 h-3"/> Falhou</span>}
                                                 </div>
-                                                <div className="text-sm font-medium mt-1">{msg.content || "[Media Only]"}</div>
-                                                <div className="text-xs text-muted-foreground mt-1">Processed: {moment(msg.sendAt).tz(systemTimezone).format('YYYY-MM-DD HH:mm:ss')}</div>
+                                                <div className="text-sm font-medium mt-1">{msg.content || "[Somente Mídia]"}</div>
+                                                <div className="text-xs text-muted-foreground mt-1">Processada em: {moment(msg.sendAt).tz(systemTimezone).format('DD/MM/YYYY HH:mm:ss')}</div>
                                             </div>
                                             <div className="flex gap-2">
                                                 <Button variant="ghost" size="icon" onClick={() => setDeleteId(msg.id)} className="text-red-500 hover:bg-red-50"><Trash2 className="w-4 h-4" /></Button>
@@ -652,7 +660,7 @@ export default function SchedulerPage() {
                                         </div>
                                     </RadioGroup>
                                 </div>
-                                <Input value={editJid} onChange={e => setEditJid(e.target.value)} placeholder={editJidType === 'group' ? "120363... (Group ID)" : editJidType === 'newsletter' ? "120363... (Channel ID)" : "62812345678"} />
+                                <Input value={editJid} onChange={e => setEditJid(e.target.value)} placeholder={editJidType === 'group' ? "120363... (ID do Grupo)" : editJidType === 'newsletter' ? "120363... (ID do Canal)" : "5566999999999"} />
                             </div>
                             
                             {renderRecurrenceForm(

@@ -253,11 +253,9 @@ export async function getAccessibleSessions(userId: string, userRole: string, in
 /**
  * Generate a new API key
  */
+import crypto from "crypto";
+
 export function generateApiKey(): string {
-    const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
-    let result = "wag_"; // Prefix for easy identification
-    for (let i = 0; i < 32; i++) {
-        result += chars.charAt(Math.floor(Math.random() * chars.length));
-    }
-    return result;
+    const token = crypto.randomBytes(24).toString("hex");
+    return `wag_${token}`;
 }

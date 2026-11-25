@@ -120,20 +120,19 @@ export async function DELETE(
     request: NextRequest,
     { params }: { params: Promise<{ id: string }> }
 ) {
-    const user = await getAuthenticatedUser(request);
-
-    // Only SUPERADMIN can delete users
-    if (!user || !isAdmin(user.role)) {
-        return NextResponse.json({ status: false, message: "Unauthorized", error: "Unauthorized" }, { status: 403 });
-    }
-
-    const { id } = await params;
-
-    if (id === user.id) {
-        return NextResponse.json({ status: false, message: "Cannot delete yourself", error: "Você não pode excluir sua própria conta" }, { status: 400 });
-    }
-
     try {
+        const user = await getAuthenticatedUser(request);
+
+        // Only SUPERADMIN can delete users
+        if (!user || !isAdmin(user.role)) {
+            return NextResponse.json({ status: false, message: "Unauthorized", error: "Unauthorized" }, { status: 403 });
+        }
+
+        const { id } = await params;
+
+        if (id === user.id) {
+            return NextResponse.json({ status: false, message: "Cannot delete yourself", error: "Você não pode excluir sua própria conta" }, { status: 400 });
+        }
         const targetUser = await prisma.user.findUnique({
             where: { id },
             include: { sessions: true }
@@ -155,7 +154,7 @@ export async function DELETE(
             }
         }
 
-        // Clean up any active WhatsApp sessions in memory & socket manager before deleting user
+        // Clean up any active WhatsApp sessions owned by this user before deleting
         if (targetUser.sessions && targetUser.sessions.length > 0) {
             for (const sess of targetUser.sessions) {
                 try {

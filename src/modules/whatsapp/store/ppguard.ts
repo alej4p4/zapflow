@@ -2,6 +2,8 @@ import type { WASocket } from "@whiskeysockets/baileys";
 import { logger } from "@/lib/logger";
 
 export async function bindPpGuard(sock: WASocket, sessionId: string) {
+    if ((sock as any)._ppGuardBound) return;
+    (sock as any)._ppGuardBound = true;
     sock.ev.on('contacts.update', async (updates) => {
         for (const update of updates) {
             if (update.imgUrl) {

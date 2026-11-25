@@ -39,7 +39,7 @@ export default function SettingsPage() {
     const isSuperAdmin = (authSession?.user as any)?.role === "SUPERADMIN";
 
     const [systemConfig, setSystemConfig] = useState({
-        appName: "BarraSoftware",
+        appName: "ZapFlow",
         logoUrl: "",
         faviconUrl: "/favicon.ico",
         timezone: "America/Sao_Paulo"
@@ -70,7 +70,7 @@ export default function SettingsPage() {
                 const data = responseData?.data;
                 if (data && !responseData.error) {
                     setSystemConfig({
-                        appName: data.appName || "BarraSoftware",
+                        appName: data.appName || "ZapFlow",
                         logoUrl: data.logoUrl || "",
                         faviconUrl: data.faviconUrl || "/favicon.ico",
                         timezone: data.timezone || "America/Sao_Paulo"
@@ -156,7 +156,7 @@ export default function SettingsPage() {
                     <CardContent className="space-y-2 text-xs text-muted-foreground">
                         <div className="flex items-center justify-between p-2 rounded-lg bg-muted/40">
                             <span className="font-medium text-foreground">Nome:</span>
-                            <span className="font-semibold text-primary">{systemConfig.appName || "BarraSoftware"}</span>
+                            <span className="font-semibold text-primary">{systemConfig.appName || "ZapFlow"}</span>
                         </div>
                         <div className="flex items-center justify-between p-2 rounded-lg bg-muted/40">
                             <span className="font-medium text-foreground">Fuso Horário:</span>
@@ -372,7 +372,7 @@ export default function SettingsPage() {
                                 <input
                                     id="app-name"
                                     className={inputClass}
-                                    placeholder="BarraSoftware"
+                                    placeholder="ZapFlow"
                                     value={systemConfig.appName}
                                     onChange={(e) => setSystemConfig(prev => ({ ...prev, appName: e.target.value }))}
                                     disabled={!isSuperAdmin}

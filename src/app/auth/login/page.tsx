@@ -20,8 +20,7 @@ import { Bot, ArrowRight, Loader2 } from "lucide-react";
 import Link from 'next/link';
 
 const formSchema = z.object({
-  // Aceita domínios internos (ex.: .local) e remove espaços colados junto do e-mail.
-  email: z.string().trim().regex(/^[^\s@]+@[^\s@]+$/, "Digite um endereço de e-mail válido"),
+  email: z.string().trim().min(1, "Digite seu e-mail ou usuário"),
   password: z.string().min(1, "A senha é obrigatória"),
 });
 
@@ -86,7 +85,7 @@ function LoginForm() {
             <Bot className="h-8 w-8" />
           </div>
           <h1 className="text-3xl font-bold tracking-tight text-foreground">Bem-vindo de volta</h1>
-          <p className="text-muted-foreground mt-2">Entre na sua conta BarraSoftware</p>
+          <p className="text-muted-foreground mt-2">Entre na sua conta ZapFlow</p>
         </div>
 
         <div className="glass-panel rounded-3xl p-8 shadow-2xl shadow-black/5 dark:shadow-black/40">
@@ -103,10 +102,10 @@ function LoginForm() {
                 name="email"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel className="text-foreground/80">E-mail</FormLabel>
+                    <FormLabel className="text-foreground/80">E-mail ou Usuário</FormLabel>
                     <FormControl>
                       <Input
-                        placeholder="name@example.com"
+                        placeholder=""
                         className="h-12 px-4 rounded-xl bg-background/50 border-white/20 dark:border-white/10 focus-visible:ring-primary/50 transition-all font-medium"
                         {...field}
                       />

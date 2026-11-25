@@ -141,7 +141,7 @@ async function sendWebhookRequest(url: string, payload: WebhookPayload, secret?:
 
     const headers: Record<string, string> = {
         "Content-Type": "application/json",
-        "User-Agent": "BarraSoftware-Webhook/1.0"
+        "User-Agent": "ZapFlow-Webhook/1.0"
     };
 
     // Add HMAC signature if secret is provided
@@ -280,7 +280,7 @@ export async function testWebhook(webhookId: string, url: string, secret?: strin
         sessionId: "test",
         timestamp: new Date().toISOString(),
         data: {
-            message: "This is a test webhook from BarraSoftware",
+            message: "This is a test webhook from ZapFlow",
             timestamp: new Date().toISOString()
         }
     };
@@ -288,7 +288,7 @@ export async function testWebhook(webhookId: string, url: string, secret?: strin
     const body = JSON.stringify(testPayload, jsonReplacer);
     const headers: Record<string, string> = {
         "Content-Type": "application/json",
-        "User-Agent": "BarraSoftware-Webhook/1.0"
+        "User-Agent": "ZapFlow-Webhook/1.0"
     };
 
     if (secret) {
@@ -506,17 +506,36 @@ export async function downloadAndSaveMedia(message: WAMessage, sessionId: string
             imageMessage: 'jpg',
             videoMessage: 'mp4',
             audioMessage: 'mp3',
-            documentMessage: 'bin',
+            documentMessage: 'pdf',
             stickerMessage: 'webp'
         };
 
         let ext = extMap[messageType] || 'bin';
 
+        // Check if document has fileName or title with extension
+        if (mediaObj?.fileName) {
+            const m = String(mediaObj.fileName).match(/\.([a-zA-Z0-9]{2,5})$/);
+            if (m) ext = m[1].toLowerCase();
+        } else if (mediaObj?.title) {
+            const m = String(mediaObj.title).match(/\.([a-zA-Z0-9]{2,5})$/);
+            if (m) ext = m[1].toLowerCase();
+        }
+
         // Try to get extension from mimetype if available
         const mime = mediaObj?.mimetype;
-        if (mime) {
+        if (mime && (ext === 'bin' || ext === 'pdf')) {
             const mimeExt = mime.split('/')[1]?.split(';')[0];
-            if (mimeExt) ext = mimeExt;
+            if (mimeExt && mimeExt !== 'octet-stream' && mimeExt !== 'binary') {
+                ext = mimeExt === 'jpeg' ? 'jpg' : mimeExt;
+            }
+        }
+
+        // Sniff buffer magic bytes
+        if (buffer && buffer.length >= 5) {
+            // PDF: %PDF-
+            if (buffer[0] === 0x25 && buffer[1] === 0x50 && buffer[2] === 0x44 && buffer[3] === 0x46 && buffer[4] === 0x2d) {
+                ext = 'pdf';
+            }
         }
 
         const filename = `${sessionId}-${message.key.id}.${ext}`;
@@ -549,19 +568,7 @@ export async function downloadAndSaveMedia(message: WAMessage, sessionId: string
             }
         }
 
-        // Return persistent data URL for images, stickers and audio under 1MB to guarantee 0ms rendering, instant playback, and zero 404s
-        if ((messageType === 'imageMessage' || messageType === 'stickerMessage' || messageType === 'audioMessage') && buffer.length <= 1024 * 1024) {
-            const mimeType = mime ? mime.split(';')[0].trim() : (
-                messageType === 'audioMessage'
-                    ? (ext === 'mp3' ? 'audio/mpeg' : ext === 'mp4' || ext === 'm4a' ? 'audio/mp4' : 'audio/ogg')
-                    : (ext === 'webp' ? 'image/webp' : 'image/jpeg')
-            );
-            const dataUrl = `data:${mimeType};base64,${buffer.toString('base64')}`;
-            logger.success("Media", `Persisted ${messageType} to database Data URL (${Math.round(buffer.length / 1024)} KB).`);
-            return dataUrl;
-        }
-
-        // Return URL path using API route for reliable serving
+        // Always save media to disk and return URL path to avoid bloating PostgreSQL with Base64 strings
         const fileUrl = `/api/media/${filename}`;
         logger.success("Media", `Success. URL: ${fileUrl}`);
         return fileUrl;

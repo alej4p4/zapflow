@@ -50,6 +50,7 @@ model User {
   webhooks  Webhook[]
   notifications Notification[]
   sessionAccesses SessionAccess[]
+  instagramAccounts InstagramAccount[]
 }
 
 model Session {
@@ -234,7 +235,7 @@ model Webhook {
   @@index([sessionId])
 }
 
-// Webhook delivery logs — tracks every webhook request attempt
+// Webhook delivery logs â€” tracks every webhook request attempt
 model WebhookLog {
   id                 String   @id @default(cuid())
   webhookId          String
@@ -268,7 +269,7 @@ model BotConfig {
   enabled       Boolean  @default(true)
   
   // Bot Command Access
-  botName       String   @default("BarraSoftware Bot")
+  botName       String   @default("ZapFlow Bot")
   botMode       AccessMode @default(OWNER)
   botAllowedJids Json?     // Array of JIDs ["628123@s.whatsapp.net"]
   botBlockedJids Json?     // Array of JIDs ["628123@s.whatsapp.net"] for BLACKLIST mode
@@ -306,7 +307,7 @@ model BotConfig {
 
 model SystemConfig {
   id                 String   @id @default("default") // Singleton ID
-  appName            String   @default("BarraSoftware")
+  appName            String   @default("ZapFlow")
   logoUrl            String?
   faviconUrl         String?
   timezone           String   @default("America/Sao_Paulo")
@@ -362,7 +363,7 @@ model Notification {
   @@index([userId, read])
 }
 
-// Shared session access — allows session owners to grant access to other users
+// Shared session access â€” allows session owners to grant access to other users
 model SessionAccess {
   id        String   @id @default(cuid())
   sessionId String
@@ -410,4 +411,44 @@ model BroadcastRecipient {
   broadcastLog    BroadcastLog @relation(fields: [broadcastLogId], references: [id], onDelete: Cascade)
 
   @@index([broadcastLogId])
+}
+
+
+model InstagramAccount {
+  id            String   @id @default(cuid())
+  userId        String
+  username      String
+  igUserId      String
+  accessToken   String   @db.Text
+  publicBaseUrl String?
+  isActive      Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  posts         InstagramScheduledPost[]
+
+  @@index([userId])
+  @@unique([userId, igUserId])
+}
+
+model InstagramScheduledPost {
+  id          String   @id @default(cuid())
+  accountId   String
+  mediaType   String   @default("IMAGE") // IMAGE, REELS, STORIES
+  mediaUrl    String   @db.Text
+  caption     String?  @db.Text
+  scheduledAt DateTime
+  repeatDaily Boolean  @default(false)
+  status      String   @default("PENDING") // PENDING, PUBLISHING, PUBLISHED, FAILED
+  igMediaId   String?
+  error       String?  @db.Text
+  publishedAt DateTime?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  account     InstagramAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@index([accountId])
+  @@index([status, scheduledAt])
 }

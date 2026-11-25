@@ -33,7 +33,7 @@ export const viewport: Viewport = {
 };
 
 export async function generateMetadata(): Promise<Metadata> {
-  let appName = "BarraSoftware";
+  let appName = "ZapFlow";
   try {
     const config = await getSystemConfigCached();
     if (config?.appName) appName = config.appName;

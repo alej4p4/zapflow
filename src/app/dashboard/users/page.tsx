@@ -544,21 +544,23 @@ export default function UsersPage() {
                                     )}
                                 </div>
                             </CardContent>
-                            <CardFooter className="pt-2 border-t border-border/40 flex justify-between gap-2">
+                            <CardFooter className="pt-2 border-t border-border/40 flex items-center gap-2">
                                 <Button
                                     size="sm"
                                     variant="outline"
-                                    className="w-full gap-1.5"
+                                    className="flex-1 min-w-0 gap-1.5"
                                     onClick={() => handleOpenEdit(user)}
                                 >
-                                    <Edit className="h-3.5 w-3.5" /> Editar permissões
+                                    <Edit className="h-3.5 w-3.5 shrink-0" />
+                                    <span className="truncate">Editar permissões</span>
                                 </Button>
                                 {user.id !== session?.user?.id && (
                                     <Button
                                         size="sm"
                                         variant="ghost"
-                                        className="text-destructive hover:bg-destructive/10 px-2.5"
+                                        className="shrink-0 text-destructive hover:bg-destructive/10 px-2.5"
                                         onClick={() => setDeleteId(user.id)}
+                                        title="Excluir usuário"
                                     >
                                         <Trash2 className="h-4 w-4" />
                                     </Button>

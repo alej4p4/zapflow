@@ -1,21 +1,21 @@
 import Link from "next/link";
-import { ArrowRight, Bot, Github, Zap, Shield, Globe, MessageSquare, Clock, Code, ChevronRight } from "lucide-react";
+import { ArrowRight, Bot, Zap, Shield, Globe, MessageSquare, Clock, Code, ChevronRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import fs from "fs";
 import path from "path";
 
 export const metadata = {
-  title: "BarraSoftware | Gateway profissional do WhatsApp",
+  title: "ZapFlow | Gateway profissional do WhatsApp",
   description: "Painel autogerenciado para administrar sessões, agendamentos e respostas automáticas do WhatsApp.",
   openGraph: {
-    title: "BarraSoftware | Gateway profissional do WhatsApp",
+    title: "ZapFlow | Gateway profissional do WhatsApp",
     description: "Gateway autogerenciado do WhatsApp com suporte a vários dispositivos, respostas automáticas e integração por API.",
     type: "website",
     url: process.env.NEXT_PUBLIC_APP_URL || "https://wa-akg.app",
   },
   twitter: {
     card: "summary_large_image",
-    title: "BarraSoftware | Gateway profissional do WhatsApp",
+    title: "ZapFlow | Gateway profissional do WhatsApp",
     description: "Gateway autogerenciado do WhatsApp com suporte a vários dispositivos, respostas automáticas e integração por API.",
   },
 };
@@ -40,15 +40,11 @@ export default function Home() {
               <Bot className="h-5 w-5 md:h-6 md:w-6" />
               <div className="absolute inset-0 rounded-full bg-primary blur-md -z-10 opacity-50 animate-pulse-glow" />
             </div>
-            <span className="text-foreground tracking-tight hidden sm:inline-block">BarraSoftware</span>
+            <span className="text-foreground tracking-tight hidden sm:inline-block">ZapFlow</span>
           </div>
 
           <nav className="hidden md:flex items-center gap-8">
             <Link href="#features" className="text-sm font-medium text-muted-foreground hover:text-foreground transition-colors">Recursos</Link>
-            <Link href="/docs" className="text-sm font-medium text-muted-foreground hover:text-foreground transition-colors">API e documentação</Link>
-            <Link href="https://github.com/BarraSoftware" target="_blank" rel="noopener noreferrer" className="flex items-center gap-2 text-sm font-medium text-muted-foreground hover:text-foreground transition-colors">
-              <Github className="h-4 w-4" /> GitHub
-            </Link>
           </nav>
 
           <div className="flex items-center gap-3">
@@ -180,15 +176,14 @@ export default function Home() {
               <div className="p-2 rounded-xl bg-primary/10">
                 <Bot className="h-6 w-6 text-primary" />
               </div>
-              <span className="text-xl font-bold text-foreground">BarraSoftware</span>
+              <span className="text-xl font-bold text-foreground">ZapFlow</span>
             </div>
             <div className="flex gap-8 text-sm font-medium">
               <Link href="/privacy" className="text-muted-foreground hover:text-foreground transition-colors">Privacidade</Link>
               <Link href="/terms" className="text-muted-foreground hover:text-foreground transition-colors">Termos</Link>
-              <Link href="https://github.com/BarraSoftware" target="_blank" rel="noopener noreferrer" className="text-muted-foreground hover:text-foreground transition-colors">GitHub</Link>
             </div>
             <p className="text-sm text-muted-foreground">
-              © {new Date().getFullYear()} BarraSoftware. Licenciado sob MIT.
+              © {new Date().getFullYear()} ZapFlow. Licenciado sob MIT.
             </p>
           </div>
         </div>

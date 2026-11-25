@@ -90,10 +90,10 @@ export function ChatLayoutClient({ sessionId, initialJid }: ChatLayoutClientProp
 
     return (
         // Outer: flex row, full height, overflow hidden — containment chain root
-        <div className="flex h-full bg-background overflow-hidden min-h-0 border-t border-border/20">
+        <div className="flex h-full w-full bg-background overflow-hidden min-h-0 border-t border-border/20">
             {/* Chat List Panel - Standard WhatsApp Web Width */}
-            <div className={`w-full lg:w-[380px] xl:w-[420px] border-r border-border/30 overflow-hidden shrink-0 flex flex-col
-                ${selectedChat ? "hidden lg:flex" : "flex"}`}
+            <div className={`w-full md:w-[380px] lg:w-[410px] xl:w-[420px] border-r border-border/30 overflow-hidden shrink-0 flex flex-col
+                ${selectedChat ? "hidden md:flex" : "flex"}`}
             >
                 {/* Inner flex-col: header fixed + virtuoso fills rest */}
                 <ChatList
@@ -105,7 +105,7 @@ export function ChatLayoutClient({ sessionId, initialJid }: ChatLayoutClientProp
 
             {/* Chat Window Panel */}
             <div className={`flex-1 overflow-hidden flex flex-col min-w-0
-                ${!selectedChat ? "hidden lg:flex" : "flex"}`}
+                ${!selectedChat ? "hidden md:flex" : "flex"}`}
             >
                 {selectedChat ? (
                     <ChatWindow
@@ -122,7 +122,7 @@ export function ChatLayoutClient({ sessionId, initialJid }: ChatLayoutClientProp
                                 <MessageCircle className="h-10 w-10" />
                             </div>
                             <h2 className="text-2xl font-light text-[#41525d] dark:text-[#e9edef]">
-                                BarraSoftware WhatsApp Web
+                                ZapFlow WhatsApp Web
                             </h2>
                             <p className="text-sm text-[#667781] dark:text-[#8696a0] leading-relaxed">
                                 Envie e receba mensagens com velocidade em tempo real. Selecione uma conversa ou grupo na lista à esquerda para começar.

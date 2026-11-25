@@ -30,7 +30,8 @@ import {
     MessageCircleReply,
     Contact,
     UserPlus,
-    Columns3
+    Columns3,
+    Instagram
 } from "lucide-react";
 import { useSidebar } from "./sidebar-context";
 import {
@@ -86,6 +87,7 @@ const navGroups: NavGroup[] = [
             { href: "/dashboard/autoreply", label: "Respostas automáticas", icon: MessageCircleReply },
             { href: "/dashboard/profile", label: "Perfil do bot", icon: UserCircle },
             { href: "/dashboard/scheduler", label: "Agendamentos", icon: CalendarClock },
+            { href: "/dashboard/instagram", label: "Instagram Posts", icon: Instagram },
             { href: "/dashboard/webhooks", label: "Webhooks e API", icon: Webhook },
         ],
     },

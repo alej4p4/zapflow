@@ -6,15 +6,21 @@ import { getAuthenticatedUser, canAccessSession } from "@/lib/api-auth";
 import { toWhatsAppJid, normalizeSearch } from "@/lib/phone";
 import { z } from "zod";
 
+const broadcastMediaSchema = z.object({
+    base64: z.string(),
+    filename: z.string(),
+    mimetype: z.string(),
+    type: z.enum(["image", "video", "document", "audio"])
+});
+
 const broadcastBodySchema = z.object({
     recipients: z.array(z.string()),
     message: z.string().optional().default(""),
-    media: z.object({
-        base64: z.string(),
-        filename: z.string(),
-        mimetype: z.string(),
-        type: z.enum(["image", "video", "document", "audio"])
-    }).optional(),
+    media: broadcastMediaSchema.optional(),
+    messages: z.array(z.object({
+        message: z.string().optional().default(""),
+        media: broadcastMediaSchema.optional(),
+    })).optional(),
     delay: z.number().optional(),
     scheduledAt: z.string().optional(),
     mode: z.enum(["now", "datetime", "programmed"]).optional(),
@@ -41,9 +47,13 @@ export async function POST(
             return NextResponse.json({ error: parseResult.error.flatten() }, { status: 400 });
         }
 
-        const { message, media, delay, scheduledAt, mode, programmedTimes, scheduledDateTimes, repeatDaily } = parseResult.data;
+        const { message, media, messages, delay, scheduledAt, mode, programmedTimes, scheduledDateTimes, repeatDaily } = parseResult.data;
 
-        if (!message?.trim() && !media) {
+        const validSequence = Array.isArray(messages)
+            ? messages.filter(item => Boolean(item.message?.trim() || item.media))
+            : [];
+
+        if (!message?.trim() && !media && validSequence.length === 0) {
             return NextResponse.json({ status: false, message: "A mensagem ou mídia deve ser informada", error: "Empty message and media" }, { status: 400 });
         }
 
@@ -69,7 +79,7 @@ export async function POST(
                         select: { jid: true, subject: true }
                     }),
                     prisma.contact.findMany({
-                        where: { sessionId },
+                        where: { sessionId: sessionRecord.id },
                         select: { jid: true, name: true, notify: true, verifiedName: true, remoteJidAlt: true }
                     })
                 ]);
@@ -111,10 +121,17 @@ export async function POST(
         }
 
         // Converte mensagem e anexo em formato estruturado transparente
-        const messageToStore = media ? JSON.stringify({
-            caption: message || "",
-            media
-        }) : (message || "");
+        const messageToStore = validSequence.length > 0
+            ? JSON.stringify({
+                sequence: validSequence.map(item => ({
+                    caption: item.message || "",
+                    ...(item.media ? { media: item.media } : {})
+                }))
+            })
+            : (media ? JSON.stringify({
+                caption: message || "",
+                media
+            }) : (message || ""));
 
         // Modo Horários Programados (ex.: 12:00, 15:00, 18:00)
         if (mode === "programmed" && programmedTimes && programmedTimes.length > 0) {
@@ -236,26 +253,7 @@ export async function GET(
             }
         });
 
-        if (activeLog) {
-            return NextResponse.json({
-                status: true,
-                hasActive: true,
-                broadcast: {
-                    id: activeLog.id,
-                    status: activeLog.status,
-                    total: activeLog.total,
-                    sent: activeLog.sent,
-                    failed: activeLog.failed,
-                    message: activeLog.message,
-                    delay: activeLog.delay,
-                    startedAt: activeLog.startedAt.toISOString(),
-                    errors: activeLog.recipients.map(r => ({ jid: r.jid, error: r.error || "Falha no envio" }))
-                }
-            });
-        }
-
-        // 2. Retorna o último disparo recente (se houver)
-        const latestLog = await prisma.broadcastLog.findFirst({
+        const targetLog = activeLog || await prisma.broadcastLog.findFirst({
             where: { sessionId },
             orderBy: { startedAt: "desc" },
             include: {
@@ -267,21 +265,45 @@ export async function GET(
             }
         });
 
+        if (!targetLog) {
+            return NextResponse.json({ status: true, hasActive: false, broadcast: null });
+        }
+
+        const [allRecipients, scheduledDaily] = await Promise.all([
+            prisma.broadcastRecipient.findMany({
+                where: { broadcastLogId: targetLog.id },
+                select: { jid: true }
+            }),
+            prisma.broadcastLog.findMany({
+                where: { sessionId, repeatDaily: true, status: "scheduled", timeSlot: { not: null } },
+                orderBy: { timeSlot: "asc" },
+                select: { timeSlot: true }
+            })
+        ]);
+
+        const programmedSlots = Array.from(
+            new Set(scheduledDaily.map(s => s.timeSlot).filter((t): t is string => Boolean(t)))
+        );
+
         return NextResponse.json({
             status: true,
-            hasActive: false,
-            broadcast: latestLog ? {
-                id: latestLog.id,
-                status: latestLog.status,
-                total: latestLog.total,
-                sent: latestLog.sent,
-                failed: latestLog.failed,
-                message: latestLog.message,
-                delay: latestLog.delay,
-                startedAt: latestLog.startedAt.toISOString(),
-                completedAt: latestLog.completedAt?.toISOString() || null,
-                errors: latestLog.recipients.map(r => ({ jid: r.jid, error: r.error || "Falha no envio" }))
-            } : null
+            hasActive: Boolean(activeLog),
+            broadcast: {
+                id: targetLog.id,
+                status: targetLog.status,
+                total: targetLog.total,
+                sent: targetLog.sent,
+                failed: targetLog.failed,
+                message: targetLog.message,
+                delay: targetLog.delay,
+                repeatDaily: targetLog.repeatDaily,
+                timeSlot: targetLog.timeSlot,
+                programmedSlots: programmedSlots.length > 0 ? programmedSlots : (targetLog.timeSlot ? [targetLog.timeSlot] : []),
+                recipientJids: allRecipients.map(r => r.jid),
+                startedAt: targetLog.startedAt.toISOString(),
+                completedAt: targetLog.completedAt?.toISOString() || null,
+                errors: targetLog.recipients.map(r => ({ jid: r.jid, error: r.error || "Falha no envio" }))
+            }
         });
     } catch (e) {
         console.error("Broadcast GET status error", e);

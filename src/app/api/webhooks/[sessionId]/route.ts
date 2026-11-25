@@ -6,20 +6,19 @@ export async function GET(
     request: NextRequest,
     { params }: { params: Promise<{ sessionId: string }> }
 ) {
-    const user = await getAuthenticatedUser(request);
-    if (!user) {
-        return NextResponse.json({ status: false, message: "Unauthorized", error: "Unauthorized" }, { status: 401 });
-    }
-
-    const { sessionId } = await params;
-
-    // Verify access to session
-    const hasAccess = await canAccessSession(user.id, user.role, sessionId);
-    if (!hasAccess) {
-        return NextResponse.json({ status: false, message: "Forbidden - Cannot access this session", error: "Forbidden - Cannot access this session" }, { status: 403 });
-    }
-
     try {
+        const user = await getAuthenticatedUser(request);
+        if (!user) {
+            return NextResponse.json({ status: false, message: "Unauthorized", error: "Unauthorized" }, { status: 401 });
+        }
+
+        const { sessionId } = await params;
+
+        // Verify access to session
+        const hasAccess = await canAccessSession(user.id, user.role, sessionId);
+        if (!hasAccess) {
+            return NextResponse.json({ status: false, message: "Forbidden - Cannot access this session", error: "Forbidden - Cannot access this session" }, { status: 403 });
+        }
         // Resolve session string ID to internal ID if needed, or just look up webhooks
         // We need the internal ID to query the Webhook table
         const session = await prisma.session.findUnique({
@@ -55,19 +54,18 @@ export async function POST(
     request: NextRequest,
     { params }: { params: Promise<{ sessionId: string }> }
 ) {
-    const user = await getAuthenticatedUser(request);
-    if (!user) {
-        return NextResponse.json({ status: false, message: "Unauthorized", error: "Unauthorized" }, { status: 401 });
-    }
-
-    const { sessionId } = await params;
-
-    const hasAccess = await canAccessSession(user.id, user.role, sessionId);
-    if (!hasAccess) {
-        return NextResponse.json({ status: false, message: "Forbidden - Cannot access this session", error: "Forbidden - Cannot access this session" }, { status: 403 });
-    }
-
     try {
+        const user = await getAuthenticatedUser(request);
+        if (!user) {
+            return NextResponse.json({ status: false, message: "Unauthorized", error: "Unauthorized" }, { status: 401 });
+        }
+
+        const { sessionId } = await params;
+
+        const hasAccess = await canAccessSession(user.id, user.role, sessionId);
+        if (!hasAccess) {
+            return NextResponse.json({ status: false, message: "Forbidden - Cannot access this session", error: "Forbidden - Cannot access this session" }, { status: 403 });
+        }
         const body = await request.json();
         const { name, url, secret, events } = body;
 

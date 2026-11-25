@@ -91,7 +91,7 @@ const PRESET_PROFILES: PresetProfile[] = [
         icon: Building2,
         recommendedFor: "Lojas, empresas, escritórios e equipes de vendas.",
         config: {
-            botName: "BarraSoftware Atendimento",
+            botName: "ZapFlow Atendimento",
             prefix: "#",
             enableSticker: false,
             enableVideoSticker: false,
@@ -123,7 +123,7 @@ const PRESET_PROFILES: PresetProfile[] = [
         icon: Bot,
         recommendedFor: "Triagem de clientes, suporte nível 1 e consultas automáticas.",
         config: {
-            botName: "BarraSoftware Bot 24h",
+            botName: "ZapFlow Bot 24h",
             prefix: "#",
             enableSticker: false,
             enableVideoSticker: false,
@@ -155,7 +155,7 @@ const PRESET_PROFILES: PresetProfile[] = [
         icon: ShieldCheck,
         recommendedFor: "Campanhas de marketing, disparos em massa e prospecção ativa.",
         config: {
-            botName: "BarraSoftware CRM Seguro",
+            botName: "ZapFlow CRM Seguro",
             prefix: "#",
             enableSticker: false,
             enableVideoSticker: false,
@@ -187,7 +187,7 @@ const PRESET_PROFILES: PresetProfile[] = [
         icon: Sparkles,
         recommendedFor: "Grupos do WhatsApp, comunidades e entretenimento.",
         config: {
-            botName: "BarraSoftware Figurinhas",
+            botName: "ZapFlow Figurinhas",
             prefix: "#",
             enableSticker: true,
             enableVideoSticker: true,
@@ -240,7 +240,8 @@ export default function BotSettingsPage() {
     const { sessionId } = useSessionProvider();
 
     const [botConfig, setBotConfig] = useState({
-        botName: "BarraSoftware Bot",
+        enabled: true,
+        botName: "ZapFlow Bot",
         prefix: "#",
         enableSticker: true,
         enableVideoSticker: true,
@@ -293,7 +294,8 @@ export default function BotSettingsPage() {
             const pData = privRes?.data?.config;
 
             const loadedBot = {
-                botName: bData?.botName || "BarraSoftware Bot",
+                enabled: bData?.enabled ?? true,
+                botName: bData?.botName || "ZapFlow Bot",
                 prefix: bData?.prefix || "#",
                 enableSticker: bData?.enableSticker ?? true,
                 enableVideoSticker: bData?.enableVideoSticker ?? true,
@@ -442,7 +444,7 @@ export default function BotSettingsPage() {
             .replace(/\{nome\}/gi, "Carlos")
             .replace(/\{primeiro_nome\}/gi, "Carlos")
             .replace(/\{saudacao\}/gi, greeting)
-            .replace(/\{empresa\}/gi, botConfig.botName || "BarraSoftware");
+            .replace(/\{empresa\}/gi, botConfig.botName || "ZapFlow");
     }, [botConfig.welcomeMessage, botConfig.botName]);
 
     // Anti-Spam Safety Level Gauge
@@ -504,7 +506,20 @@ export default function BotSettingsPage() {
                         </div>
                     </div>
 
-                    <div className="flex items-center gap-2.5 w-full sm:w-auto">
+                    <div className="flex flex-wrap items-center gap-2.5 w-full sm:w-auto">
+                        <div className={`flex items-center gap-2 px-3 py-1.5 rounded-xl border text-xs font-medium transition-colors ${botConfig.enabled ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-700 dark:text-emerald-400" : "bg-muted/60 border-border text-muted-foreground"}`}>
+                            <Switch
+                                id="bot-master-enabled"
+                                checked={botConfig.enabled}
+                                onCheckedChange={(c) => {
+                                    setBotConfig(prev => ({ ...prev, enabled: c }));
+                                    setHasUnsavedChanges(true);
+                                }}
+                            />
+                            <Label htmlFor="bot-master-enabled" className="text-xs font-semibold cursor-pointer">
+                                {botConfig.enabled ? "Bot Ativo" : "Bot Pausado"}
+                            </Label>
+                        </div>
                         {hasUnsavedChanges && (
                             <Button
                                 variant="ghost"
@@ -637,7 +652,7 @@ export default function BotSettingsPage() {
                                             <div className="sm:col-span-2 space-y-1.5">
                                                 <Label className="text-xs font-medium">Nome do Bot</Label>
                                                 <Input
-                                                    placeholder="BarraSoftware Bot"
+                                                    placeholder="ZapFlow Bot"
                                                     value={botConfig.botName}
                                                     onChange={e => {
                                                         setBotConfig(prev => ({ ...prev, botName: e.target.value }));
@@ -719,6 +734,8 @@ export default function BotSettingsPage() {
                                             <div className="flex flex-wrap gap-1.5">
                                                 {[
                                                     { tag: "{nome}", desc: "Primeiro nome do contato" },
+                                                    { tag: "{primeiro_nome}", desc: "Primeiro nome do contato" },
+                                                    { tag: "{nome_completo}", desc: "Nome completo do contato" },
                                                     { tag: "{saudacao}", desc: "Bom dia / Boa tarde / Boa noite" },
                                                     { tag: "{empresa}", desc: "Nome da empresa / bot" },
                                                 ].map((item, idx) => (
@@ -734,6 +751,26 @@ export default function BotSettingsPage() {
                                                 ))}
                                             </div>
                                         </div>
+
+                                        {/* Live Preview of Welcome Message */}
+                                        {botConfig.welcomeMessage?.trim() && (
+                                            <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/5 p-3 space-y-1.5">
+                                                <div className="flex items-center justify-between text-[11px] text-emerald-700 dark:text-emerald-400 font-semibold">
+                                                    <span className="flex items-center gap-1.5">
+                                                        <Eye className="h-3.5 w-3.5" />
+                                                        Pré-visualização para o cliente (cooldown de 24h)
+                                                    </span>
+                                                </div>
+                                                <p className="text-xs whitespace-pre-wrap leading-relaxed text-foreground/90">
+                                                    {botConfig.welcomeMessage
+                                                        .replace(/\{saudacao\}/gi, new Date().getHours() < 12 ? "Bom dia" : new Date().getHours() < 18 ? "Boa tarde" : "Boa noite")
+                                                        .replace(/\{nome\}/gi, "Maria")
+                                                        .replace(/\{primeiro_nome\}/gi, "Maria")
+                                                        .replace(/\{nome_completo\}/gi, "Maria Silva")
+                                                        .replace(/\{empresa\}/gi, botConfig.botName || "ZapFlow")}
+                                                </p>
+                                            </div>
+                                        )}
                                     </CardContent>
                                 </Card>
                             </div>
@@ -753,7 +790,7 @@ export default function BotSettingsPage() {
                                         </div>
                                         <div className="min-w-0 flex-1">
                                             <p className="text-xs font-semibold truncate leading-tight">
-                                                {botConfig.botName || "BarraSoftware Bot"}
+                                                {botConfig.botName || "ZapFlow Bot"}
                                             </p>
                                             <p className="text-[10px] text-white/80 leading-tight">
                                                 online

@@ -10,6 +10,8 @@ import { getSystemConfigCached } from "@/lib/system-config-cache";
 import { Toaster } from "sonner";
 import pkg from "../../../package.json";
 
+export const dynamic = "force-dynamic";
+
 export default async function DashboardLayout({
     children,
 }: {
@@ -28,7 +30,7 @@ export default async function DashboardLayout({
     } catch (e) {
         console.error("DashboardLayout config error:", e);
     }
-    const appName = systemConfig?.appName || "BarraSoftware";
+    const appName = systemConfig?.appName || "ZapFlow";
     const registrationEnabled = systemConfig?.enableRegistration ?? false;
 
     return (

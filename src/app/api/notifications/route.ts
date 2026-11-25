@@ -20,17 +20,15 @@ export async function GET(req: Request) {
 }
 
 export async function POST(req: Request) {
-    const session = await auth();
-    if (!session?.user?.id) return NextResponse.json({ status: false, message: "Unauthorized", error: "Unauthorized" }, { status: 401 });
-
-    // Only SUPERADMIN can send global notifications
-    // But system might trigger it too. For now check role.
-    const user = await prisma.user.findUnique({ where: { id: session.user.id } });
-    if (user?.role !== "SUPERADMIN") {
-        return NextResponse.json({ status: false, message: "Forbidden: Only Superadmin can send notifications", error: "Forbidden" }, { status: 403 });
-    }
-
     try {
+        const session = await auth();
+        if (!session?.user?.id) return NextResponse.json({ status: false, message: "Unauthorized", error: "Unauthorized" }, { status: 401 });
+
+        // Only SUPERADMIN can send global notifications
+        const user = await prisma.user.findUnique({ where: { id: session.user.id } });
+        if (user?.role !== "SUPERADMIN") {
+            return NextResponse.json({ status: false, message: "Forbidden: Only Superadmin can send notifications", error: "Forbidden" }, { status: 403 });
+        }
         const { title, message, type, href, targetUserId, broadcast } = await req.json();
 
         if (broadcast) {

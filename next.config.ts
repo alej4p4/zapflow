@@ -2,7 +2,7 @@ import type { NextConfig } from "next";
 import path from "path";
 
 const nextConfig: NextConfig = {
-  serverExternalPackages: ["sharp", "bcryptjs"],
+  serverExternalPackages: ["sharp", "bcryptjs", "ffmpeg-static"],
   experimental: {
     serverActions: {
       bodySizeLimit: "25mb",
