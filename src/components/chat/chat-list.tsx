@@ -938,13 +938,15 @@ export function ChatList({ sessionId, onSelectChat, selectedJid }: ChatListProps
         });
     };
 
-    // Automatically prefetch top 15 chats into cache for instantaneous 0ms opening
+    // Automatically prefetch top 3 most recent chats into cache for instantaneous opening
     useEffect(() => {
         if (!sessionId || chats.length === 0) return;
         const timer = setTimeout(() => {
-            const topChats = chats.filter(c => !!c.lastMessage).slice(0, 30);
-            topChats.forEach(c => prefetchChatMessages(sessionId, c.jid));
-        }, 150);
+            const topChats = chats.filter(c => !!c.lastMessage).slice(0, 3);
+            topChats.forEach((c, idx) => {
+                setTimeout(() => prefetchChatMessages(sessionId, c.jid), idx * 250);
+            });
+        }, 500);
         return () => clearTimeout(timer);
     }, [sessionId, chats.length]);
 

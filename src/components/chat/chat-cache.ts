@@ -52,33 +52,47 @@ export async function fetchOrGetChatMessages(
     sessionId: string,
     jid: string,
     limit = 50,
-    before?: string
+    before?: string,
+    forceFresh = false
 ): Promise<{ messages: Message[]; hasMore: boolean; contactMap?: Record<string, string>; participantNames?: string[]; participantsList?: GroupParticipant[] }> {
     const cacheKey = `${sessionId}:${jid}`;
 
-    if (!before && inFlightRequests.has(cacheKey)) {
+    if (!before && !forceFresh && inFlightRequests.has(cacheKey)) {
         return inFlightRequests.get(cacheKey)!;
     }
 
     const promise = (async () => {
         try {
             const data: any = await getChatMessages(sessionId, jid, limit, before);
-            const messages: Message[] = data.messages || [];
-            const hasMore: boolean = Boolean(data.hasMore);
-            const contactMap: Record<string, string> = data.contactMap || {};
-            const participantNames: string[] = data.participantNames || [];
-            const participantsList: GroupParticipant[] = data.participantsList || [];
+            const messages: Message[] = data?.messages || [];
+            const hasMore: boolean = Boolean(data?.hasMore);
+            const contactMap: Record<string, string> = data?.contactMap || {};
+            const participantNames: string[] = data?.participantNames || [];
+            const participantsList: GroupParticipant[] = data?.participantsList || [];
 
-            if (!before && messages) {
-                chatCache.set(cacheKey, {
-                    messages,
-                    hasMore,
-                    oldestTimestamp: messages.length > 0 ? messages[0].timestamp : null,
-                    cachedAt: Date.now(),
-                    contactMap,
-                    participantNames,
-                    participantsList
-                });
+            if (!before) {
+                if (messages.length > 0) {
+                    chatCache.set(cacheKey, {
+                        messages,
+                        hasMore,
+                        oldestTimestamp: messages[0].timestamp,
+                        cachedAt: Date.now(),
+                        contactMap,
+                        participantNames,
+                        participantsList
+                    });
+                } else if (!chatCache.has(cacheKey)) {
+                    // Only cache empty if there wasn't a previous cached conversation
+                    chatCache.set(cacheKey, {
+                        messages: [],
+                        hasMore: false,
+                        oldestTimestamp: null,
+                        cachedAt: Date.now(),
+                        contactMap,
+                        participantNames,
+                        participantsList
+                    });
+                }
             } else if (before && chatCache.has(cacheKey)) {
                 const existing = chatCache.get(cacheKey)!;
                 existing.contactMap = { ...(existing.contactMap || {}), ...contactMap };

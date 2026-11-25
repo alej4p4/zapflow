@@ -4149,6 +4149,7 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
     const { getSocket, joinSession } = useSocket();
     const getDateLabel = useDateLabel();
     const isGroup = jid.endsWith("@g.us");
+    const alternateJidsRef = useRef<Set<string>>(new Set());
 
     const scrollToBottom = useCallback((smooth = false) => {
         if (!smooth && scrollRef.current) {
@@ -4158,12 +4159,12 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
         bottomRef.current?.scrollIntoView({ behavior: smooth ? "smooth" : "auto", block: "end" });
     }, []);
 
-    const fetchMessages = useCallback(async (before?: string, silent = false) => {
+    const fetchMessages = useCallback(async (before?: string, silent = false, forceFresh = false) => {
         try {
             if (!before && !silent) setLoading(true);
             else if (before) setLoadingMore(true);
 
-            const data = await fetchOrGetChatMessages(sessionId, jid, PAGE_LIMIT, before);
+            const data = await fetchOrGetChatMessages(sessionId, jid, PAGE_LIMIT, before, forceFresh);
             if (data.contactMap && Object.keys(data.contactMap).length > 0) {
                 setContactMap(prev => ({ ...prev, ...data.contactMap }));
             }
@@ -4174,10 +4175,22 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
                 setParticipantsList(data.participantsList);
             }
             if (!before) {
-                setMessages(data.messages || []);
-                setAutoScroll(true);
+                if (data.messages && data.messages.length > 0) {
+                    setMessages(data.messages);
+                    for (const m of data.messages) {
+                        if (m.remoteJid) alternateJidsRef.current.add(m.remoteJid.toLowerCase());
+                        if (m.senderJid) alternateJidsRef.current.add(m.senderJid.toLowerCase());
+                    }
+                    setAutoScroll(true);
+                } else if (!silent) {
+                    setMessages([]);
+                }
             } else if (data.messages?.length > 0) {
                 setMessages(prev => [...(data.messages || []), ...prev]);
+                for (const m of data.messages) {
+                    if (m.remoteJid) alternateJidsRef.current.add(m.remoteJid.toLowerCase());
+                    if (m.senderJid) alternateJidsRef.current.add(m.senderJid.toLowerCase());
+                }
             }
             setHasMore(data.hasMore);
             if (data.messages?.length > 0) {
@@ -4195,11 +4208,19 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
     useEffect(() => {
         const cacheKey = `${sessionId}:${jid}`;
         const cached = chatCache.get(cacheKey);
+        const normTarget = jid.replace("@c.us", "@s.whatsapp.net").toLowerCase();
+        const isGroupChat = normTarget.endsWith("@g.us");
+        const bareTarget = isGroupChat ? "" : normTarget.split("@")[0].replace(/\D/g, "");
 
-        if (cached && cached.messages.length > 0) {
+        alternateJidsRef.current = new Set([normTarget, jid.toLowerCase()]);
+        if (bareTarget) alternateJidsRef.current.add(bareTarget);
+
+        if (cached && cached.messages && cached.messages.length > 0) {
             // INSTANT DISPLAY: Immediately show cached conversation in 0ms!
-            const normTarget = jid.replace("@c.us", "@s.whatsapp.net").toLowerCase();
-            const isGroupChat = normTarget.endsWith("@g.us");
+            for (const m of cached.messages) {
+                if (m.remoteJid) alternateJidsRef.current.add(m.remoteJid.toLowerCase());
+                if (m.senderJid) alternateJidsRef.current.add(m.senderJid.toLowerCase());
+            }
             const cleanCachedMessages = cached.messages.filter(m => {
                 const rJid = (m.remoteJid || (m as any).jid || "").trim().replace("@c.us", "@s.whatsapp.net").toLowerCase();
                 if (!rJid) return true;
@@ -4216,7 +4237,7 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
             setLoading(false);
             setAutoScroll(true);
             // Silently check for fresh messages in background without wiping screen
-            fetchMessages(undefined, true);
+            fetchMessages(undefined, true, false);
         } else {
             setMessages([]);
             setContactMap({});
@@ -4225,7 +4246,7 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
             setOldestTimestamp(null);
             setHasMore(false);
             setLoading(true);
-            fetchMessages();
+            fetchMessages(undefined, false, true);
         }
     }, [sessionId, jid, fetchMessages]);
 
@@ -4248,7 +4269,7 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
 
                 const relevant = newMessages.filter(m => {
                     if (!m) return false;
-                    const rawMsgJid = (m.remoteJid || (m as any).jid || "").trim();
+                    const rawMsgJid = (m.remoteJid || (m as any).jid || "").trim().toLowerCase();
                     if (!rawMsgJid) return false;
                     const cleanMsg = norm(rawMsgJid);
 
@@ -4271,9 +4292,46 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
                         return true;
                     }
 
+                    // Match known alternate JIDs (e.g. LID vs phone)
+                    if (alternateJidsRef.current.has(cleanMsg) || alternateJidsRef.current.has(rawMsgJid)) {
+                        return true;
+                    }
+
+                    // Match senderJid for 1-on-1 contacts
+                    const rawSender = (m.senderJid || (m as any).participant || "").trim().toLowerCase();
+                    if (rawSender) {
+                        const cleanSender = norm(rawSender);
+                        if (cleanSender === currentTargetJid || alternateJidsRef.current.has(cleanSender)) {
+                            return true;
+                        }
+                        const bareSender = cleanSender.split("@")[0].replace(/\D/g, "");
+                        if (bareSender && bareTarget && bareSender === bareTarget) {
+                            return true;
+                        }
+                    }
+
+                    // Match remoteJidAlt if present
+                    const rawAlt = ((m as any).remoteJidAlt || "").trim().toLowerCase();
+                    if (rawAlt) {
+                        const cleanAlt = norm(rawAlt);
+                        if (cleanAlt === currentTargetJid || alternateJidsRef.current.has(cleanAlt)) {
+                            return true;
+                        }
+                        const bareAlt = cleanAlt.split("@")[0].replace(/\D/g, "");
+                        if (bareAlt && bareTarget && bareAlt === bareTarget) {
+                            return true;
+                        }
+                    }
+
                     return false;
                 });
                 if (relevant.length === 0) return prev;
+
+                // Register any newly seen relevant JIDs
+                for (const rm of relevant) {
+                    if (rm.remoteJid) alternateJidsRef.current.add(rm.remoteJid.toLowerCase());
+                    if (rm.senderJid) alternateJidsRef.current.add(rm.senderJid.toLowerCase());
+                }
 
                 // Play chime and desktop notification if there are incoming messages from someone else (unless muted #C26)
                 const incomingFromOthers = relevant.filter(m => !m.fromMe && !m.keyId.startsWith("temp-"));
