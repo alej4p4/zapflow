@@ -214,6 +214,40 @@ async function executeBroadcast(logId: string): Promise<void> {
 
     let stopReason: "cancelled" | "completed" = "completed";
 
+    // Pre-resolve database Session ID & batch load recipient contacts once outside the loop
+    const contactsMap = new Map<string, { name: string; firstName: string }>();
+    try {
+        const sessRow = await prisma.session.findUnique({
+            where: { sessionId: log.sessionId },
+            select: { id: true }
+        });
+        const dbSessionId = sessRow?.id || log.sessionId;
+
+        const allTargetJids = log.recipients.map(r => r.jid.trim());
+        const cleanNumbers = allTargetJids.map(j => j.split("@")[0].replace(/\D/g, "")).filter(Boolean);
+
+        const contacts = await prisma.contact.findMany({
+            where: {
+                sessionId: dbSessionId,
+                OR: [
+                    { jid: { in: allTargetJids } },
+                    { jid: { in: cleanNumbers.map(n => `${n}@s.whatsapp.net`) } }
+                ]
+            },
+            select: { jid: true, name: true, notify: true }
+        });
+
+        for (const c of contacts) {
+            const cName = (c.name || c.notify || "").trim();
+            const fName = cName.split(" ")[0] || "";
+            contactsMap.set(c.jid, { name: cName, firstName: fName });
+            const bare = c.jid.split("@")[0].replace(/\D/g, "");
+            if (bare) contactsMap.set(bare, { name: cName, firstName: fName });
+        }
+    } catch (e) {
+        logger.error("Broadcast", "Erro ao pré-carregar contatos para disparo:", e);
+    }
+
     try {
         for (const recipient of log.recipients) {
             if (recipient.status === "sent") continue;
@@ -229,32 +263,12 @@ async function executeBroadcast(logId: string): Promise<void> {
                     target = `${withCountry}@s.whatsapp.net`;
                 }
 
-                // Lookup contact name for dynamic variables
-                let contactName = "";
-                let firstName = "";
+                // Instant lookup from memory map (0ms)
                 const cleanNumber = target.split("@")[0].replace(/\D/g, "");
                 const phoneFormatted = cleanNumber ? `+${cleanNumber}` : "";
-
-                try {
-                    const sessRow = await prisma.session.findUnique({
-                        where: { sessionId: log.sessionId },
-                        select: { id: true }
-                    });
-                    const contact = await prisma.contact.findFirst({
-                        where: {
-                            sessionId: sessRow?.id || log.sessionId,
-                            OR: [
-                                { jid: target },
-                                { jid: `${cleanNumber}@s.whatsapp.net` }
-                            ]
-                        },
-                        select: { name: true, notify: true }
-                    });
-                    if (contact) {
-                        contactName = (contact.name || contact.notify || "").trim();
-                        firstName = contactName.split(" ")[0] || "";
-                    }
-                } catch {}
+                const foundContact = contactsMap.get(target) || contactsMap.get(cleanNumber);
+                const contactName = foundContact?.name || "";
+                const firstName = foundContact?.firstName || "";
 
                 // Saudação dinâmica baseada no horário (Brasil)
                 const currentHour = new Date().getHours();
