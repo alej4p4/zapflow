@@ -9,7 +9,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardFooter, CardDescription }
 import { useRouter } from 'next/navigation';
 import { toast } from "sonner";
 import { Label } from '@/components/ui/label';
-import { Smartphone, Plus, Trash2, Settings, RefreshCw, Power, UserPlus, MessageSquare, ExternalLink } from 'lucide-react';
+import { Smartphone, Plus, Trash2, Settings, RefreshCw, Power, UserPlus, MessageSquare, ExternalLink, Play } from 'lucide-react';
 import { setCookie } from '@/lib/client-cookie';
 import { useSession } from './session-provider';
 import { Badge } from '@/components/ui/badge';
@@ -276,7 +276,7 @@ export function SessionManager({ user }: { user: any }) {
                                             </TableCell>
                                             <TableCell className="py-3 text-right px-5">
                                                 <div className="flex items-center justify-end gap-2">
-                                                    {session.status === 'CONNECTED' && (
+                                                    {session.status === 'CONNECTED' ? (
                                                         <Button 
                                                             size="sm" 
                                                             className="h-8 px-2.5 text-xs rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-medium transition-colors gap-1.5 shadow-xs cursor-pointer"
@@ -286,6 +286,29 @@ export function SessionManager({ user }: { user: any }) {
                                                             }}
                                                         >
                                                             <MessageSquare className="h-3.5 w-3.5" /> Abrir Conversas
+                                                        </Button>
+                                                    ) : (
+                                                        <Button 
+                                                            size="sm" 
+                                                            className="h-8 px-2.5 text-xs rounded-lg bg-[#00a884] hover:bg-[#00a884]/90 text-white font-medium transition-colors gap-1.5 shadow-xs cursor-pointer"
+                                                            onClick={async () => {
+                                                                try {
+                                                                    toast.loading(`Conectando ${session.name}...`, { id: `conn-${session.sessionId}` });
+                                                                    const res = await fetch(`/api/sessions/${session.sessionId}/start`, { method: "POST" });
+                                                                    if (res.ok) {
+                                                                        toast.success("Comando de conexão enviado! Aguarde alguns instantes...", { id: `conn-${session.sessionId}` });
+                                                                        setTimeout(() => fetchSessions(), 2000);
+                                                                    } else {
+                                                                        toast.info("Reiniciando instância...", { id: `conn-${session.sessionId}` });
+                                                                        await fetch(`/api/sessions/${session.sessionId}/restart`, { method: "POST" });
+                                                                        setTimeout(() => fetchSessions(), 2500);
+                                                                    }
+                                                                } catch {
+                                                                    router.push(`/dashboard/sessions/${session.sessionId}`);
+                                                                }
+                                                            }}
+                                                        >
+                                                            <Play className="h-3.5 w-3.5" /> Conectar
                                                         </Button>
                                                     )}
                                                     <Button 

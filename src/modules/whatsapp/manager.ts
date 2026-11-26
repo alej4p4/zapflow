@@ -44,29 +44,31 @@ export class WhatsAppManager {
             }
         }
 
-        let started = 0;
-        for (const session of sessions) {
-            // Only auto-init sessions that were CONNECTED before (have auth creds)
+        const promises = sessions.map(async (session) => {
+            // Only auto-init sessions that have auth credentials saved
             const authCount = await prisma.authState.count({
                 where: { sessionId: session.sessionId }
             }).catch(() => 0);
 
             if (authCount === 0) {
-                // No credentials — session was created but never connected
-                // Set to STOPPED so it doesn't spam reconnect
                 await prisma.session.update({
                     where: { sessionId: session.sessionId },
                     data: { status: "STOPPED" }
                 }).catch(() => {});
-                continue;
+                return null;
             }
 
-            const instance = new WhatsAppInstance(session.sessionId, session.userId, this.io);
+            const instance = new WhatsAppInstance(session.sessionId, session.userId, this.io!);
             instance.onRemovedFromManager = () => this.removeInstance(session.sessionId);
             this.sessions.set(session.sessionId, instance);
-            await instance.init();
-            started++;
-        }
+            await instance.init().catch(err => {
+                logger.error("Manager", `Error initializing session ${session.sessionId}:`, err);
+            });
+            return session.sessionId;
+        });
+
+        const results = await Promise.allSettled(promises);
+        const started = results.filter(r => r.status === "fulfilled" && r.value !== null).length;
         logger.success("Manager", `Loaded ${started} sessions (${sessions.length - started} idle skipped).`);
     }
 

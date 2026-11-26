@@ -85,8 +85,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
                 }
             }
         } catch (error) {
-            console.error(error);
-            toast.error("Não foi possível carregar as sessões");
+            console.warn("[SessionProvider] fetchSessions temporary network error:", error);
         } finally {
             setLoading(false);
         }

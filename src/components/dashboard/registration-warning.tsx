@@ -4,6 +4,8 @@ import { useEffect, useRef, useState, useCallback } from "react";
 import { toast } from "sonner";
 import { ShieldAlert, WifiOff, RefreshCw, X, Volume2 } from "lucide-react";
 import { useSession } from "@/components/dashboard/session-provider";
+import { useRouter } from "next/navigation";
+import { cn } from "@/lib/utils";
 import Link from "next/link";
 
 interface RegistrationWarningProps {
@@ -38,8 +40,10 @@ function playDisconnectAlertSound() {
 
 export function RegistrationWarning({ role, registrationEnabled }: RegistrationWarningProps) {
     const { sessions, sessionId, refreshSessions } = useSession();
+    const router = useRouter();
     const prevStatusMapRef = useRef<Record<string, string>>({});
     const [disconnectedSession, setDisconnectedSession] = useState<{ sessionId: string; name: string; status: string } | null>(null);
+    const [isReconnecting, setIsReconnecting] = useState(false);
     const [dismissedForSession, setDismissedForSession] = useState<Record<string, boolean>>(() => {
         if (typeof window === "undefined") return {};
         try {
@@ -176,13 +180,34 @@ export function RegistrationWarning({ role, registrationEnabled }: RegistrationW
                 >
                     <Volume2 className="h-3.5 w-3.5" />
                 </button>
-                <Link
-                    href="/dashboard/sessions"
-                    className="inline-flex items-center gap-1.5 rounded-lg bg-white text-red-700 hover:bg-red-50 px-3 py-1.5 text-xs font-semibold shadow-sm transition-colors"
+                <button
+                    type="button"
+                    disabled={isReconnecting}
+                    onClick={async () => {
+                        setIsReconnecting(true);
+                        try {
+                            toast.loading(`Reconectando sessão ${disconnectedSession.name || disconnectedSession.sessionId}...`, { id: "reconnect-session" });
+                            const res = await fetch(`/api/sessions/${disconnectedSession.sessionId}/start`, { method: "POST" });
+                            if (res.ok) {
+                                toast.success("Comando de reconexão enviado!", { id: "reconnect-session" });
+                                setTimeout(() => refreshSessions(), 1500);
+                            } else {
+                                toast.error("Tentando reinício completo...", { id: "reconnect-session" });
+                                await fetch(`/api/sessions/${disconnectedSession.sessionId}/restart`, { method: "POST" });
+                                setTimeout(() => refreshSessions(), 2000);
+                            }
+                        } catch {
+                            toast.dismiss("reconnect-session");
+                            router.push(`/dashboard/sessions/${disconnectedSession.sessionId}`);
+                        } finally {
+                            setIsReconnecting(false);
+                        }
+                    }}
+                    className="inline-flex items-center gap-1.5 rounded-lg bg-white text-red-700 hover:bg-red-50 px-3 py-1.5 text-xs font-semibold shadow-sm transition-colors cursor-pointer disabled:opacity-60"
                 >
-                    <RefreshCw className="h-3.5 w-3.5" />
-                    Reconectar
-                </Link>
+                    <RefreshCw className={cn("h-3.5 w-3.5", isReconnecting && "animate-spin")} />
+                    {isReconnecting ? "Reconectando..." : "Reconectar"}
+                </button>
                 <button
                     type="button"
                     onClick={() => handleDismiss(disconnectedSession.sessionId)}
