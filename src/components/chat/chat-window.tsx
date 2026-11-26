@@ -2183,6 +2183,21 @@ function persistChatDraft(sessionId: string | undefined, jid: string, text: stri
     } catch {}
 }
 
+export function clearChatInputBar(sessionId?: string, jid?: string) {
+    if (typeof window !== "undefined") {
+        window.dispatchEvent(new CustomEvent("zapflow:clear-chat-input"));
+        window.dispatchEvent(new CustomEvent("zapflow:set-chat-input", { detail: { text: "" } }));
+        if (sessionId && jid) {
+            persistChatDraft(sessionId, jid, "");
+        }
+        const chatInputEl = document.querySelector("textarea[placeholder*='mensagem']") as HTMLTextAreaElement | null;
+        if (chatInputEl) {
+            chatInputEl.value = "";
+            chatInputEl.style.height = "auto";
+        }
+    }
+}
+
 // ─── Isolated Chat Input Bar (Local state = 120 FPS typing with zero message re-renders) ───
 function ChatInputBar({
     onSend,
@@ -2244,7 +2259,7 @@ function ChatInputBar({
         return m[0] === dismissedLinkUrl ? null : m[0];
     }, [input, dismissedLinkUrl]);
 
-    // Allow external AI Assistant modal to inject text directly into the input bar (#C29)
+    // Allow external callers / modals to set or clear text in the input bar
     useEffect(() => {
         const handleSetInput = (e: Event) => {
             const { text } = (e as CustomEvent<{ text: string }>).detail || {};
@@ -2253,15 +2268,36 @@ function ChatInputBar({
                 persistChatDraft(sessionId, jid, text);
                 setTimeout(() => {
                     if (inputRef.current) {
-                        inputRef.current.focus();
-                        inputRef.current.style.height = "auto";
-                        inputRef.current.style.height = Math.min(inputRef.current.scrollHeight, 120) + "px";
+                        if (!text) {
+                            inputRef.current.value = "";
+                            inputRef.current.style.height = "auto";
+                        } else {
+                            inputRef.current.focus();
+                            inputRef.current.style.height = "auto";
+                            inputRef.current.style.height = Math.min(inputRef.current.scrollHeight, 120) + "px";
+                        }
                     }
-                }, 20);
+                }, 10);
             }
         };
+
+        const handleClearInput = () => {
+            setInput("");
+            persistChatDraft(sessionId, jid, "");
+            setTimeout(() => {
+                if (inputRef.current) {
+                    inputRef.current.value = "";
+                    inputRef.current.style.height = "auto";
+                }
+            }, 10);
+        };
+
         window.addEventListener("zapflow:set-chat-input", handleSetInput);
-        return () => window.removeEventListener("zapflow:set-chat-input", handleSetInput);
+        window.addEventListener("zapflow:clear-chat-input", handleClearInput);
+        return () => {
+            window.removeEventListener("zapflow:set-chat-input", handleSetInput);
+            window.removeEventListener("zapflow:clear-chat-input", handleClearInput);
+        };
     }, [sessionId, jid]);
 
     const handleInlineAIRewrite = async (mode: ChatAIAssistantMode) => {
@@ -3492,7 +3528,13 @@ function ChatInputBar({
                                 if (pastedFiles.length > 0) {
                                     e.preventDefault();
                                     const currentCaption = input.trim();
-                                    if (currentCaption) setInput("");
+                                    setInput("");
+                                    persistChatDraft(sessionId, jid, "");
+                                    if (inputRef.current) {
+                                        inputRef.current.value = "";
+                                        inputRef.current.style.height = "auto";
+                                    }
+                                    clearChatInputBar(sessionId, jid);
                                     onPasteFile(pastedFiles.length === 1 ? pastedFiles[0] : pastedFiles, currentCaption || undefined);
                                 }
                             }}
@@ -4718,6 +4760,7 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
 
 
     const processFileUpload = async (file: File, explicitType?: string, caption?: string) => {
+        clearChatInputBar(sessionId, jid);
         const formData = new FormData();
         formData.append("file", file);
         let type = explicitType;
@@ -4837,10 +4880,7 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
                 e.stopPropagation();
                 const chatInputEl = document.querySelector("textarea[placeholder*='mensagem']") as HTMLTextAreaElement | null;
                 const currentCaption = chatInputEl?.value?.trim();
-                if (currentCaption && chatInputEl) {
-                    chatInputEl.value = "";
-                    chatInputEl.dispatchEvent(new Event("input", { bubbles: true }));
-                }
+                clearChatInputBar(sessionId, jid);
                 initiateFilesPreview(filesToProcess, undefined, currentCaption || undefined);
             }
         };
@@ -4946,7 +4986,10 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
             if (!blob) return;
             const file = new File([blob], `CAMERA-${Date.now()}.jpg`, { type: "image/jpeg" });
             handleCloseCamera();
-            initiateFilePreview(file, "image");
+            const chatInputEl = document.querySelector("textarea[placeholder*='mensagem']") as HTMLTextAreaElement | null;
+            const currentCaption = chatInputEl?.value?.trim();
+            clearChatInputBar(sessionId, jid);
+            initiateFilePreview(file, "image", currentCaption || undefined);
         }, "image/jpeg", 0.92);
     };
 
@@ -5002,6 +5045,9 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
         const itemsToSend = [...previewFiles];
         setPreviewFiles([]);
         setActivePreviewIdx(0);
+
+        // Instantly clear the bottom chat input bar and saved drafts
+        clearChatInputBar(sessionId, jid);
 
         const currentReply = replyingTo;
         setReplyingTo(null);
@@ -5085,7 +5131,10 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
     const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
         const files = e.target.files;
         if (!files || files.length === 0) return;
-        initiateFilesPreview(files, uploadType);
+        const chatInputEl = document.querySelector("textarea[placeholder*='mensagem']") as HTMLTextAreaElement | null;
+        const currentCaption = chatInputEl?.value?.trim();
+        clearChatInputBar(sessionId, jid);
+        initiateFilesPreview(files, uploadType, currentCaption || undefined);
         if (fileInputRef.current) fileInputRef.current.value = "";
     };
 
