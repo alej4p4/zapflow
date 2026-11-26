@@ -115,7 +115,7 @@ import {
 } from "@/app/dashboard/chat/actions";
 import type { CustomFreeLLMKeys } from "@/lib/free-llm";
 import { useSocket } from "./socket-context";
-import { chatCache, fetchOrGetChatMessages, type Message, type GroupParticipant } from "./chat-cache";
+import { chatCache, fetchOrGetChatMessages, registerGlobalContacts, type Message, type GroupParticipant } from "./chat-cache";
 
 interface ChatWindowProps {
     sessionId: string;
@@ -3588,6 +3588,26 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
     const [oldestTimestamp, setOldestTimestamp] = useState<string | null>(() => initialCached?.oldestTimestamp || null);
     const [autoScroll, setAutoScroll] = useState(true);
     const [newMsgBadge, setNewMsgBadge] = useState(false);
+
+    // Keep globalContactMap synchronized across conversations for instant mention resolution
+    useEffect(() => {
+        if (contactMap && Object.keys(contactMap).length > 0) {
+            registerGlobalContacts(contactMap);
+        }
+    }, [contactMap]);
+
+    useEffect(() => {
+        if (participantsList && participantsList.length > 0) {
+            const map: Record<string, string> = {};
+            for (const p of participantsList) {
+                if (p.name && !/^\+?[\d\s\-\(\)]+$/.test(p.name.trim())) {
+                    if (p.id) map[p.id] = p.name;
+                    if (p.phoneNumber) map[p.phoneNumber] = p.name;
+                }
+            }
+            registerGlobalContacts(map);
+        }
+    }, [participantsList]);
 
     // Delete & Edit confirmation (#C8)
     const [deleteConfirmMsg, setDeleteConfirmMsg] = useState<Message | null>(null);

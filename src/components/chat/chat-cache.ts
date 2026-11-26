@@ -44,6 +44,21 @@ export interface CachedChat {
     participantsList?: GroupParticipant[];
 }
 
+// Global in-memory map of known participant / contact names for mentions across all conversations
+export const globalContactMap = new Map<string, string>();
+
+export function registerGlobalContacts(map?: Record<string, string> | Map<string, string> | null) {
+    if (!map) return;
+    const entries = map instanceof Map ? map.entries() : Object.entries(map);
+    for (const [k, v] of entries) {
+        if (k && v && !/^\+?[\d\s\-\(\)]+$/.test(v.trim())) {
+            globalContactMap.set(k, v);
+            const bare = k.split("@")[0].replace(/\D/g, "");
+            if (bare) globalContactMap.set(bare, v);
+        }
+    }
+}
+
 // In-memory cache keyed by "sessionId:jid"
 export const chatCache = new Map<string, CachedChat>();
 const inFlightRequests = new Map<string, Promise<{ messages: Message[]; hasMore: boolean; contactMap?: Record<string, string>; participantNames?: string[]; participantsList?: GroupParticipant[] }>>();
@@ -69,6 +84,19 @@ export async function fetchOrGetChatMessages(
             const contactMap: Record<string, string> = data?.contactMap || {};
             const participantNames: string[] = data?.participantNames || [];
             const participantsList: GroupParticipant[] = data?.participantsList || [];
+
+            registerGlobalContacts(contactMap);
+            for (const p of participantsList) {
+                if (p.name && !/^\+?[\d\s\-\(\)]+$/.test(p.name.trim())) {
+                    if (p.id) globalContactMap.set(p.id, p.name);
+                    const bare = p.id.split("@")[0].replace(/\D/g, "");
+                    if (bare) globalContactMap.set(bare, p.name);
+                    if (p.phoneNumber) {
+                        const pBare = p.phoneNumber.split("@")[0].replace(/\D/g, "");
+                        if (pBare) globalContactMap.set(pBare, p.name);
+                    }
+                }
+            }
 
             if (!before) {
                 if (messages.length > 0) {

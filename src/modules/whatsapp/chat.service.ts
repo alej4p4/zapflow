@@ -134,27 +134,44 @@ export class ChatService {
         const lidJids = jids.filter(j => j.endsWith('@lid'));
         const bareLidNums = lidJids.map(j => j.split('@')[0]);
 
+        // Scan messages for mentions (@digits) to resolve in previews
+        const mentionDigits = new Set<string>();
+        for (const msg of rawLastMessages) {
+            if (msg.content && msg.content.includes('@')) {
+                const matches = msg.content.matchAll(/@(\d{8,25})/g);
+                for (const m of matches) {
+                    mentionDigits.add(m[1]);
+                }
+            }
+        }
+        const mentionList = Array.from(mentionDigits);
+        const allLidNumsToQuery = Array.from(new Set([...bareLidNums, ...mentionList]));
+        const allLidJidsToQuery = allLidNumsToQuery.map(n => `${n}@lid`);
+        const allPhoneJidsToQuery = Array.from(new Set([
+            ...jids.filter(j => j.endsWith('@s.whatsapp.net')),
+            ...mentionList.map(n => `${n}@s.whatsapp.net`)
+        ]));
+
         const [contactsForMessages, authLidMappings, allGroups, directoryContacts] = await Promise.all([
-            jids.length > 0
+            (jids.length > 0 || mentionList.length > 0)
                 ? prisma.contact.findMany({
                       where: {
                           sessionId: dbSessionId,
                           OR: [
-                              { jid: { in: jids } },
-                              ...(lidJids.length > 0 ? [
-                                  { lid: { in: lidJids } },
-                                  { lid: { in: bareLidNums.map(n => `${n}@lid`) } },
-                                  { remoteJidAlt: { in: jids } }
+                              { jid: { in: [...jids, ...allPhoneJidsToQuery] } },
+                              ...(allLidJidsToQuery.length > 0 ? [
+                                  { lid: { in: allLidJidsToQuery } },
+                                  { remoteJidAlt: { in: [...jids, ...allPhoneJidsToQuery] } }
                               ] : [])
                           ]
                       },
                       select: { jid: true, lid: true, remoteJidAlt: true, name: true, notify: true, verifiedName: true, profilePic: true }
                   })
                 : Promise.resolve([]),
-            bareLidNums.length > 0
+            allLidNumsToQuery.length > 0
                 ? prisma.authState.findMany({
                       where: {
-                          key: { in: bareLidNums.map(n => `lid-mapping-${n}_reverse`) }
+                          key: { in: allLidNumsToQuery.map(n => `lid-mapping-${n}_reverse`) }
                       },
                       select: { key: true, value: true }
                   })
@@ -255,7 +272,10 @@ export class ChatService {
             const phoneJid = c.jid.endsWith('@s.whatsapp.net') ? c.jid : (c.remoteJidAlt?.endsWith('@s.whatsapp.net') ? c.remoteJidAlt : null);
             const entry = { name: displayName, notify: c.notify, profilePic: pic, phoneJid };
 
-            if (c.jid) setEntry(c.jid, entry);
+            if (c.jid) {
+                setEntry(c.jid, entry);
+                setEntry(c.jid.split('@')[0], entry);
+            }
             if (c.lid) {
                 setEntry(c.lid, entry);
                 setEntry(c.lid.split('@')[0], entry);
@@ -263,6 +283,19 @@ export class ChatService {
             }
             if (c.remoteJidAlt) {
                 setEntry(c.remoteJidAlt, entry);
+                setEntry(c.remoteJidAlt.split('@')[0], entry);
+            }
+        }
+
+        // Connect auth reverse mappings (LID -> Phone) to infoMap entries
+        for (const [lidKey, phoneNum] of lidToPhoneAuth.entries()) {
+            const phoneJid = `${phoneNum}@s.whatsapp.net`;
+            const phoneInfo = infoMap.get(phoneJid) || infoMap.get(phoneNum);
+            if (phoneInfo && (phoneInfo.name || phoneInfo.notify)) {
+                setEntry(lidKey, phoneInfo);
+                const bare = lidKey.split('@')[0];
+                setEntry(bare, phoneInfo);
+                setEntry(`${bare}@lid`, phoneInfo);
             }
         }
 
@@ -291,6 +324,18 @@ export class ChatService {
             seenJids.add(canonicalJid);
             seenJids.add(msg.remoteJid);
 
+            // Resolve mentions in message preview (@digits -> @Name)
+            let resolvedContent = msg.content;
+            if (resolvedContent && resolvedContent.includes('@')) {
+                resolvedContent = resolvedContent.replace(/@(\d{8,25})/g, (match, digits) => {
+                    const found = infoMap.get(digits) ||
+                        infoMap.get(`${digits}@lid`) ||
+                        infoMap.get(`${digits}@s.whatsapp.net`);
+                    const resolvedName = found?.name || found?.notify;
+                    return (resolvedName && !/^\+?[\d\s\-\(\)]+$/.test(resolvedName.trim())) ? `@${resolvedName}` : match;
+                });
+            }
+
             result.push({
                 jid: canonicalJid,
                 name: info?.name || null,
@@ -298,7 +343,7 @@ export class ChatService {
                 phone: info?.phoneJid ? info.phoneJid.split('@')[0] : (canonicalJid.endsWith('@lid') ? null : canonicalJid.split('@')[0]),
                 profilePic: info?.profilePic || null,
                 lastMessage: {
-                    content: msg.content,
+                    content: resolvedContent,
                     timestamp: msg.timestamp instanceof Date
                         ? msg.timestamp.toISOString()
                         : String(msg.timestamp),

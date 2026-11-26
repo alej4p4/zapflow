@@ -2,6 +2,7 @@
 import { formatPhoneNumber } from "@/lib/phone";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { globalContactMap, registerGlobalContacts } from "./chat-cache";
 import { Virtuoso } from "react-virtuoso";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
@@ -194,7 +195,16 @@ function getMessagePreview(chat: ChatContact): { text: string; isMedia: boolean;
     const rawType = (chat.lastMessage.type || "TEXT").toUpperCase();
     const rawContent = (chat.lastMessage.content || "").trim();
     const isBracketPlaceholder = /^\[(image|video|audio|document|sticker|location|contact|poll|viewonce)\]$/i.test(rawContent);
-    const cleanCaption = isBracketPlaceholder ? "" : rawContent;
+    let cleanCaption = isBracketPlaceholder ? "" : rawContent;
+
+    if (cleanCaption && cleanCaption.includes("@")) {
+        cleanCaption = cleanCaption.replace(/@(\d{8,25})/g, (match, digits) => {
+            const resolved = globalContactMap.get(digits) ||
+                globalContactMap.get(`${digits}@lid`) ||
+                globalContactMap.get(`${digits}@s.whatsapp.net`);
+            return resolved ? `@${resolved}` : match;
+        });
+    }
 
     if (rawType !== "TEXT") {
         const types: Record<string, string> = {
@@ -746,6 +756,20 @@ export function ChatList({ sessionId, onSelectChat, selectedJid }: ChatListProps
     const [newChatNumber, setNewChatNumber] = useState("");
     const [hasMore, setHasMore] = useState(true);
     const [soundMuted, setSoundMuted] = useState(false);
+
+    // Register all loaded contacts into globalContactMap for instant mention resolution
+    useEffect(() => {
+        if (!chats || chats.length === 0) return;
+        const map: Record<string, string> = {};
+        for (const c of chats) {
+            const name = c.name || c.notify;
+            if (name && !/^\+?[\d\s\-\(\)]+$/.test(name.trim())) {
+                if (c.jid) map[c.jid] = name;
+                if (c.phone) map[c.phone] = name;
+            }
+        }
+        registerGlobalContacts(map);
+    }, [chats]);
 
     // Status / Story (24h) & Call Auto-Reject states
     const [storyText, setStoryText] = useState("");
