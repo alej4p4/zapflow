@@ -109,6 +109,7 @@ export function ChatLayoutClient({ sessionId, initialJid }: ChatLayoutClientProp
             >
                 {selectedChat ? (
                     <ChatWindow
+                        key={`${sessionId}:${selectedChat.jid}`}
                         sessionId={sessionId}
                         jid={selectedChat.jid}
                         name={selectedChat.name}

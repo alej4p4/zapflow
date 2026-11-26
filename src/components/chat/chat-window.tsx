@@ -3543,24 +3543,49 @@ function ChatInputBar({
     );
 }
 
+function getInitialCachedChat(sessionId: string, jid: string) {
+    if (typeof window === "undefined") return null;
+    const cacheKey = `${sessionId}:${jid}`;
+    const cached = chatCache.get(cacheKey);
+    if (!cached || !cached.messages || cached.messages.length === 0) return null;
+    const normTarget = jid.replace("@c.us", "@s.whatsapp.net").toLowerCase();
+    const isGroupChat = normTarget.endsWith("@g.us");
+    const cleanCachedMessages = cached.messages.filter(m => {
+        const rJid = (m.remoteJid || (m as any).jid || "").trim().replace("@c.us", "@s.whatsapp.net").toLowerCase();
+        if (!rJid) return true;
+        if (isGroupChat) return rJid === normTarget;
+        if (rJid.endsWith("@g.us")) return false;
+        return true;
+    });
+    return {
+        ...cached,
+        messages: cleanCachedMessages,
+    };
+}
+
 // ─── Main Component ─────────────────
 export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWindowProps) {
     const router = useRouter();
-    const [messages, setMessages] = useState<Message[]>([]);
+    const activeJidRef = useRef(jid);
+    activeJidRef.current = jid;
+
+    const initialCached = useMemo(() => getInitialCachedChat(sessionId, jid), [sessionId, jid]);
+
+    const [messages, setMessages] = useState<Message[]>(() => initialCached?.messages || []);
     const scrollRef = useRef<HTMLDivElement>(null);
     const bottomRef = useRef<HTMLDivElement>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
     const [uploadType, setUploadType] = useState<string>("image");
     const [isDragging, setIsDragging] = useState(false);
-    const [loading, setLoading] = useState(true);
-    const [hasMore, setHasMore] = useState(false);
+    const [loading, setLoading] = useState(() => !initialCached);
+    const [hasMore, setHasMore] = useState(() => initialCached?.hasMore || false);
     const [loadingMore, setLoadingMore] = useState(false);
-    const [contactMap, setContactMap] = useState<Record<string, string>>({});
+    const [contactMap, setContactMap] = useState<Record<string, string>>(() => initialCached?.contactMap || {});
     const [lightboxMedia, setLightboxMedia] = useState<{ src: string; caption?: string | null } | null>(null);
     const [previewDocument, setPreviewDocument] = useState<{ src: string; title: string } | null>(null);
-    const [participantNames, setParticipantNames] = useState<string[]>([]);
-    const [participantsList, setParticipantsList] = useState<GroupParticipant[]>([]);
-    const [oldestTimestamp, setOldestTimestamp] = useState<string | null>(null);
+    const [participantNames, setParticipantNames] = useState<string[]>(() => initialCached?.participantNames || []);
+    const [participantsList, setParticipantsList] = useState<GroupParticipant[]>(() => initialCached?.participantsList || []);
+    const [oldestTimestamp, setOldestTimestamp] = useState<string | null>(() => initialCached?.oldestTimestamp || null);
     const [autoScroll, setAutoScroll] = useState(true);
     const [newMsgBadge, setNewMsgBadge] = useState(false);
 
@@ -4160,11 +4185,14 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
     }, []);
 
     const fetchMessages = useCallback(async (before?: string, silent = false, forceFresh = false) => {
+        const targetJid = jid;
         try {
             if (!before && !silent) setLoading(true);
             else if (before) setLoadingMore(true);
 
-            const data = await fetchOrGetChatMessages(sessionId, jid, PAGE_LIMIT, before, forceFresh);
+            const data = await fetchOrGetChatMessages(sessionId, targetJid, PAGE_LIMIT, before, forceFresh);
+            if (activeJidRef.current !== targetJid) return;
+
             if (data.contactMap && Object.keys(data.contactMap).length > 0) {
                 setContactMap(prev => ({ ...prev, ...data.contactMap }));
             }
@@ -4199,15 +4227,16 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
         } catch (e) {
             console.error("Falha ao carregar mensagens", e);
         } finally {
-            setLoading(false);
-            setLoadingMore(false);
+            if (activeJidRef.current === targetJid) {
+                setLoading(false);
+                setLoadingMore(false);
+            }
         }
     }, [sessionId, jid]);
 
     // Instant switch with Stale-While-Revalidate memory cache
     useEffect(() => {
-        const cacheKey = `${sessionId}:${jid}`;
-        const cached = chatCache.get(cacheKey);
+        activeJidRef.current = jid;
         const normTarget = jid.replace("@c.us", "@s.whatsapp.net").toLowerCase();
         const isGroupChat = normTarget.endsWith("@g.us");
         const bareTarget = isGroupChat ? "" : normTarget.split("@")[0].replace(/\D/g, "");
@@ -4215,26 +4244,11 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
         alternateJidsRef.current = new Set([normTarget, jid.toLowerCase()]);
         if (bareTarget) alternateJidsRef.current.add(bareTarget);
 
-        if (cached && cached.messages && cached.messages.length > 0) {
-            // INSTANT DISPLAY: Immediately show cached conversation in 0ms!
-            for (const m of cached.messages) {
+        if (initialCached && initialCached.messages && initialCached.messages.length > 0) {
+            for (const m of initialCached.messages) {
                 if (m.remoteJid) alternateJidsRef.current.add(m.remoteJid.toLowerCase());
                 if (m.senderJid) alternateJidsRef.current.add(m.senderJid.toLowerCase());
             }
-            const cleanCachedMessages = cached.messages.filter(m => {
-                const rJid = (m.remoteJid || (m as any).jid || "").trim().replace("@c.us", "@s.whatsapp.net").toLowerCase();
-                if (!rJid) return true;
-                if (isGroupChat) return rJid === normTarget;
-                if (rJid.endsWith("@g.us")) return false;
-                return true;
-            });
-            setMessages(cleanCachedMessages);
-            setHasMore(cached.hasMore);
-            setOldestTimestamp(cached.oldestTimestamp);
-            if (cached.contactMap) setContactMap(cached.contactMap);
-            if (cached.participantNames) setParticipantNames(cached.participantNames);
-            if (cached.participantsList) setParticipantsList(cached.participantsList);
-            setLoading(false);
             setAutoScroll(true);
             // Silently check for fresh messages in background without wiping screen
             fetchMessages(undefined, true, false);
@@ -4248,7 +4262,7 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
             setLoading(true);
             fetchMessages(undefined, false, true);
         }
-    }, [sessionId, jid, fetchMessages]);
+    }, [sessionId, jid, fetchMessages, initialCached]);
 
 
 
