@@ -4982,14 +4982,75 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
         const itemsToSend = [...previewFiles];
         setPreviewFiles([]);
         setActivePreviewIdx(0);
-        for (let i = 0; i < itemsToSend.length; i++) {
-            const item = itemsToSend[i];
-            if (i > 0) {
-                // Sequential delay ensures WhatsApp delivers multi-image in exact order
-                await new Promise(r => setTimeout(r, 450));
+
+        const currentReply = replyingTo;
+        setReplyingTo(null);
+
+        // Instant Optimistic Render: display ALL files in chat simultaneously on Frame 0
+        const prepared = itemsToSend.map((item, idx) => {
+            const tempKeyId = `temp-${Date.now()}-${idx}-${Math.random().toString(36).slice(2, 7)}`;
+            const localBlobUrl = item.previewUrl || URL.createObjectURL(item.file);
+            let type = item.type;
+            if (!type || type === '*') {
+                if (item.file.type.startsWith('image/')) type = 'image';
+                else if (item.file.type.startsWith('video/')) type = 'video';
+                else if (item.file.type.startsWith('audio/')) type = 'audio';
+                else type = 'document';
             }
-            await processFileUpload(item.file, item.type, item.caption);
-            if (item.previewUrl) URL.revokeObjectURL(item.previewUrl);
+            const mappedMsgType = type === "image" ? "IMAGE" : type === "video" ? "VIDEO" : type === "audio" ? "AUDIO" : "DOCUMENT";
+            const displayContent = item.caption || (mappedMsgType === "DOCUMENT" ? item.file.name : "");
+            const nowIso = new Date().toISOString();
+
+            const optimisticMsg: Message = {
+                id: tempKeyId,
+                keyId: tempKeyId,
+                remoteJid: jid,
+                fromMe: true,
+                pushName: undefined,
+                type: mappedMsgType,
+                content: displayContent,
+                mediaUrl: localBlobUrl,
+                status: "PENDING",
+                timestamp: nowIso,
+                quoteId: idx === 0 ? currentReply?.keyId || null : null,
+            };
+
+            return { item, tempKeyId, type, optimisticMsg, displayContent, nowIso, mappedMsgType };
+        });
+
+        setMessages(prev => [...prev, ...prepared.map(p => p.optimisticMsg)]);
+        scrollToBottom(false);
+
+        for (let i = 0; i < prepared.length; i++) {
+            const { item, tempKeyId, type, displayContent, nowIso, mappedMsgType } = prepared[i];
+            const formData = new FormData();
+            formData.append("file", item.file);
+            formData.append("type", type);
+            formData.append("sessionId", sessionId);
+            formData.append("jid", jid);
+            if (item.caption) formData.append("caption", item.caption);
+            if (i === 0 && currentReply?.keyId) {
+                formData.append("quoteId", currentReply.keyId);
+            }
+
+            if (typeof window !== "undefined") {
+                window.dispatchEvent(new CustomEvent("zapflow:local-message-sent", {
+                    detail: { jid, content: displayContent || item.file.name, timestamp: nowIso, type: mappedMsgType, keyId: tempKeyId }
+                }));
+            }
+
+            try {
+                const res = await sendMediaMessage(formData);
+                setMessages(prev => prev.map(m => m.keyId === tempKeyId ? {
+                    ...m,
+                    keyId: res?.keyId || m.keyId,
+                    ...(res?.mediaUrl ? { mediaUrl: res.mediaUrl } : {}),
+                    status: "SENT"
+                } : m));
+            } catch (error: any) {
+                toast.error(error.message || `Falha ao enviar arquivo ${item.file.name}`);
+                setMessages(prev => prev.map(m => m.keyId === tempKeyId ? { ...m, status: "FAILED" } : m));
+            }
         }
     };
 
