@@ -195,7 +195,7 @@ function getMessagePreview(chat: ChatContact): { text: string; isMedia: boolean;
     const rawType = (chat.lastMessage.type || "TEXT").toUpperCase();
     const rawContent = (chat.lastMessage.content || "").trim();
     const isBracketPlaceholder = /^\[(image|video|audio|document|sticker|location|contact|poll|viewonce)\]$/i.test(rawContent);
-    let cleanCaption = isBracketPlaceholder ? "" : rawContent;
+    let cleanCaption = isBracketPlaceholder ? "" : rawContent.replace(/\r?\n+/g, " ");
 
     if (cleanCaption && cleanCaption.includes("@")) {
         cleanCaption = cleanCaption.replace(/@(\d{8,25})/g, (match, digits) => {

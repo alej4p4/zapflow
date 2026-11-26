@@ -165,14 +165,66 @@ function normalizeSearchText(text: string): string {
     return (text || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim();
 }
 
+function renderFlagEmojis(text: string): React.ReactNode {
+    if (!text) return text;
+    // Matches regional indicator flag pairs like 🇨🇳, 🇧🇷, 🇺🇸, etc.
+    const flagRegex = /([\uD83C][\uDDE6-\uDDFF]){2}/gu;
+    if (!flagRegex.test(text)) return text;
+
+    flagRegex.lastIndex = 0;
+    const parts: React.ReactNode[] = [];
+    let lastIdx = 0;
+    let match: RegExpExecArray | null;
+
+    while ((match = flagRegex.exec(text)) !== null) {
+        if (match.index > lastIdx) {
+            parts.push(text.slice(lastIdx, match.index));
+        }
+        const flag = match[0];
+        const codePoints = Array.from(flag)
+            .map(c => c.codePointAt(0)!.toString(16))
+            .join("-");
+
+        parts.push(
+            <img
+                key={`flag-${match.index}-${codePoints}`}
+                src={`https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/svg/${codePoints}.svg`}
+                alt={flag}
+                className="inline-block h-4 w-4 mx-0.5 align-[-0.15em] pointer-events-none select-none"
+                loading="lazy"
+                draggable={false}
+                onError={(e) => {
+                    e.currentTarget.style.display = 'none';
+                }}
+            />
+        );
+        lastIdx = match.index + flag.length;
+    }
+
+    if (lastIdx < text.length) {
+        parts.push(text.slice(lastIdx));
+    }
+
+    return parts;
+}
+
+function getQuotedSnippet(content: string | null | undefined): string {
+    if (!content) return "";
+    const cleanLines = content.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+    if (cleanLines.length > 2) {
+        return cleanLines.slice(0, 2).join("\n") + "...";
+    }
+    return content.length > 140 ? content.slice(0, 140) + "..." : content;
+}
+
 function highlightText(text: string, query?: string): React.ReactNode {
-    if (!text || !query || !query.trim()) return text;
+    if (!text || !query || !query.trim()) return renderFlagEmojis(text);
     const cleanQ = normalizeSearchText(query);
-    if (!cleanQ) return text;
+    if (!cleanQ) return renderFlagEmojis(text);
 
     const normText = text.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
     const idx = normText.indexOf(cleanQ);
-    if (idx === -1) return text;
+    if (idx === -1) return renderFlagEmojis(text);
 
     const parts: React.ReactNode[] = [];
     let lastIdx = 0;
@@ -180,12 +232,12 @@ function highlightText(text: string, query?: string): React.ReactNode {
 
     while (currIdx !== -1) {
         if (currIdx > lastIdx) {
-            parts.push(text.slice(lastIdx, currIdx));
+            parts.push(renderFlagEmojis(text.slice(lastIdx, currIdx)));
         }
         const matchEnd = currIdx + cleanQ.length;
         parts.push(
             <mark key={currIdx} className="bg-amber-300 dark:bg-amber-500/80 text-black dark:text-white rounded-xs px-0.5 font-medium">
-                {text.slice(currIdx, matchEnd)}
+                {renderFlagEmojis(text.slice(currIdx, matchEnd))}
             </mark>
         );
         lastIdx = matchEnd;
@@ -193,7 +245,7 @@ function highlightText(text: string, query?: string): React.ReactNode {
     }
 
     if (lastIdx < text.length) {
-        parts.push(text.slice(lastIdx));
+        parts.push(renderFlagEmojis(text.slice(lastIdx)));
     }
 
     return parts;
@@ -463,6 +515,69 @@ function renderMessageContent(content: string | null | undefined, contactMap?: R
     }
 
     return parts;
+}
+
+// ─── Message Body with WhatsApp Web style 'Ler mais' for long lists/messages ───
+function MessageBody({
+    content,
+    contactMap,
+    searchQuery,
+    isExpanded,
+    onToggleExpand
+}: {
+    content: string | null | undefined;
+    contactMap?: Record<string, string>;
+    searchQuery?: string;
+    isExpanded: boolean;
+    onToggleExpand: () => void;
+}) {
+    if (!content) return null;
+
+    const isLong = useMemo(() => {
+        if (content.length > 700) return true;
+        const lineCount = (content.match(/\n/g) || []).length;
+        return lineCount > 13;
+    }, [content]);
+
+    if (!isLong || isExpanded) {
+        return (
+            <span className="flex-1 break-words whitespace-pre-wrap text-[14.2px] leading-[19px]">
+                {renderMessageContent(content, contactMap, searchQuery)}
+                {isLong && isExpanded && (
+                    <button
+                        type="button"
+                        onClick={(e) => { e.stopPropagation(); onToggleExpand(); }}
+                        className="ml-1 text-[13px] text-[#027eb5] dark:text-[#53bdeb] hover:underline cursor-pointer font-medium select-none"
+                    >
+                        Ler menos
+                    </button>
+                )}
+            </span>
+        );
+    }
+
+    // Truncate to first ~13 lines or ~600 chars matching WhatsApp Web
+    const lines = content.split("\n");
+    let truncatedText = "";
+    if (lines.length > 13) {
+        truncatedText = lines.slice(0, 13).join("\n");
+    } else {
+        truncatedText = content.slice(0, 600);
+    }
+
+    return (
+        <span className="flex-1 break-words whitespace-pre-wrap text-[14.2px] leading-[19px]">
+            {renderMessageContent(truncatedText, contactMap, searchQuery)}
+            <span className="inline text-muted-foreground select-none">... </span>
+            <button
+                type="button"
+                onClick={(e) => { e.stopPropagation(); onToggleExpand(); }}
+                className="text-[13px] text-[#027eb5] dark:text-[#53bdeb] hover:underline cursor-pointer font-medium select-none"
+            >
+                Ler mais
+            </button>
+        </span>
+    );
 }
 
 // ─── Lazy media with fallback ──────────────────
@@ -3017,16 +3132,16 @@ function ChatInputBar({
 
                 return (
                     <div className="mb-2 p-2.5 rounded-xl bg-white/95 dark:bg-[#111b21] backdrop-blur-sm border-l-[4px] border-[#00a884] flex items-start justify-between gap-3 text-xs shadow-xs animate-in slide-in-from-bottom-2 duration-150">
-                        <div className="flex-1 min-w-0 pr-1">
+                        <div className="flex-1 min-w-0 pr-1 overflow-hidden">
                             <span className="font-semibold text-[13px] text-[#00a884] dark:text-[#25d366] block truncate mb-0.5">
                                 {quotedSender}
                             </span>
-                            <div className="text-[12.5px] text-[#54656f] dark:text-[#8696a0] line-clamp-3 leading-relaxed whitespace-pre-wrap break-words">
+                            <div className="text-[12.5px] text-[#54656f] dark:text-[#8696a0] line-clamp-2 max-h-[36px] overflow-hidden leading-relaxed whitespace-pre-wrap break-words">
                                 {replyingTo.type === 'IMAGE' && <Camera className="h-3.5 w-3.5 inline mr-1 opacity-70 text-[#00a884]" />}
                                 {replyingTo.type === 'VIDEO' && <Video className="h-3.5 w-3.5 inline mr-1 opacity-70 text-[#00a884]" />}
                                 {replyingTo.type === 'AUDIO' && <Mic className="h-3.5 w-3.5 inline mr-1 opacity-70 text-[#00a884]" />}
                                 {replyingTo.type === 'DOCUMENT' && <FileText className="h-3.5 w-3.5 inline mr-1 opacity-70 text-[#00a884]" />}
-                                {replyingTo.content || (replyingTo.type === 'IMAGE' ? "Foto" : replyingTo.type === 'VIDEO' ? "Vídeo" : replyingTo.type === 'AUDIO' ? "Mensagem de voz" : `[${replyingTo.type}]`)}
+                                {renderMessageContent(getQuotedSnippet(replyingTo.content) || (replyingTo.type === 'IMAGE' ? "Foto" : (replyingTo.type === 'VIDEO' ? "Vídeo" : (replyingTo.type === 'AUDIO' ? "Mensagem de voz" : `[${replyingTo.type}]`))))}
                             </div>
                         </div>
                         {(replyingTo.type === 'IMAGE' || replyingTo.type === 'VIDEO') && replyingTo.mediaUrl && (
@@ -3630,6 +3745,7 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
     const [oldestTimestamp, setOldestTimestamp] = useState<string | null>(() => initialCached?.oldestTimestamp || null);
     const [autoScroll, setAutoScroll] = useState(true);
     const [newMsgBadge, setNewMsgBadge] = useState(false);
+    const [expandedMessageIds, setExpandedMessageIds] = useState<Set<string>>(() => new Set());
 
     // Keep globalContactMap synchronized across conversations for instant mention resolution
     useEffect(() => {
@@ -7288,7 +7404,7 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
                                         {msg.quoted && (
                                             <div
                                                 className={cn(
-                                                    "mb-1 px-2.5 py-1.5 rounded-lg border-l-4 text-xs select-none cursor-pointer text-left transition-opacity hover:opacity-90 flex items-center justify-between gap-2",
+                                                    "mb-1 px-2.5 py-1.5 rounded-lg border-l-4 text-xs select-none cursor-pointer text-left transition-opacity hover:opacity-90 flex items-center justify-between gap-2 max-h-[54px] overflow-hidden",
                                                     msg.fromMe
                                                         ? "border-[#00a884] bg-black/5 dark:bg-black/20 text-[#111b21] dark:text-[#e9edef]"
                                                         : "border-[#00a884] bg-black/5 dark:bg-white/5 text-[#111b21] dark:text-[#e9edef]"
@@ -7321,7 +7437,7 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
                                                     }, 100);
                                                 }}
                                             >
-                                                <div className="flex-1 min-w-0">
+                                                <div className="flex-1 min-w-0 overflow-hidden">
                                                     <span className="font-semibold block text-[11px] text-[#00a884] dark:text-[#25d366] truncate mb-0.5">
                                                         {(() => {
                                                             if (msg.quoted.fromMe) return "Você";
@@ -7334,11 +7450,13 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
                                                                    "Contato";
                                                         })()}
                                                     </span>
-                                                    <span className="line-clamp-2 block break-all text-xs opacity-80">
+                                                    <div className="text-[12px] leading-[16px] text-foreground/80 dark:text-[#e9edef]/80 line-clamp-2 overflow-hidden whitespace-pre-wrap break-words max-h-[34px]">
                                                         {msg.quoted.type === 'IMAGE' && <Camera className="h-3 w-3 inline mr-1 opacity-70" />}
                                                         {msg.quoted.type === 'VIDEO' && <Video className="h-3 w-3 inline mr-1 opacity-70" />}
-                                                        {renderMessageContent(msg.quoted.content || (msg.quoted.type === 'IMAGE' ? "Foto" : (msg.quoted.type === 'VIDEO' ? "Vídeo" : (msg.quoted.type === 'AUDIO' ? "Áudio" : "Mídia"))), contactMap)}
-                                                    </span>
+                                                        {msg.quoted.type === 'AUDIO' && <Mic className="h-3 w-3 inline mr-1 opacity-70" />}
+                                                        {msg.quoted.type === 'DOCUMENT' && <FileText className="h-3 w-3 inline mr-1 opacity-70" />}
+                                                        {renderMessageContent(getQuotedSnippet(msg.quoted.content) || (msg.quoted.type === 'IMAGE' ? "Foto" : (msg.quoted.type === 'VIDEO' ? "Vídeo" : (msg.quoted.type === 'AUDIO' ? "Áudio" : "Mídia"))), contactMap)}
+                                                    </div>
                                                 </div>
                                                 {msg.quoted && (msg.quoted.type === 'IMAGE' || msg.quoted.type === 'VIDEO' || msg.quoted.type === 'STICKER') && msg.quoted.mediaUrl && (
                                                     <div className="h-10 w-10 shrink-0 rounded-md overflow-hidden bg-black/10 dark:bg-white/10 border border-black/5 dark:border-white/10 shadow-xs">
@@ -7757,9 +7875,20 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
                                             msg.type === 'AUDIO' && !msg.content && "-mt-[18px] pointer-events-none [&_*]:pointer-events-auto"
                                         )}>
                                             {msg.type !== 'DOCUMENT' && msg.type !== 'LOCATION' && msg.type !== 'CONTACT' && msg.type !== 'POLL' && (
-                                                <span className="flex-1 break-words whitespace-pre-wrap text-[14.2px] leading-[19px]">
-                                                    {renderMessageContent(msg.content, contactMap, searchQuery)}
-                                                </span>
+                                                <MessageBody
+                                                    content={msg.content}
+                                                    contactMap={contactMap}
+                                                    searchQuery={searchQuery}
+                                                    isExpanded={expandedMessageIds.has(msg.keyId)}
+                                                    onToggleExpand={() => {
+                                                        setExpandedMessageIds(prev => {
+                                                            const next = new Set(prev);
+                                                            if (next.has(msg.keyId)) next.delete(msg.keyId);
+                                                            else next.add(msg.keyId);
+                                                            return next;
+                                                        });
+                                                    }}
+                                                />
                                             )}
                                             <div className="inline-flex items-center gap-1 shrink-0 ml-auto select-none pt-0.5">
                                                 {starredIds.includes(msg.keyId) && (
