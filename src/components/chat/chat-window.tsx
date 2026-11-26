@@ -127,23 +127,26 @@ interface ChatWindowProps {
 
 const PAGE_LIMIT = 50;
 
-function getParticipantColor(name: string): string {
-    const colors = [
-        "#00a884",
-        "#1f7a8c",
-        "#e542a3",
-        "#e06d53",
-        "#8338ec",
-        "#3a86ff",
-        "#028090",
-        "#d97706",
-        "#16a34a",
-    ];
+const WA_PARTICIPANT_COLORS = [
+    "#ea5b5b", // coral / red
+    "#00a884", // emerald green
+    "#027eb5", // cyan blue
+    "#9c27b0", // purple
+    "#e65100", // deep orange
+    "#00897b", // teal
+    "#d81b60", // pink
+    "#3949ab", // indigo
+    "#f59e0b", // amber
+    "#06b6d4", // light cyan
+];
+
+function getParticipantColor(name?: string | null): string {
+    if (!name) return "#00a884";
     let hash = 0;
     for (let i = 0; i < name.length; i++) {
         hash = name.charCodeAt(i) + ((hash << 5) - hash);
     }
-    return colors[Math.abs(hash) % colors.length];
+    return WA_PARTICIPANT_COLORS[Math.abs(hash) % WA_PARTICIPANT_COLORS.length];
 }
 
 function MessageStatusCheck({ status, light }: { status: string; light?: boolean }) {
@@ -211,10 +214,31 @@ function renderFlagEmojis(text: string): React.ReactNode {
 function getQuotedSnippet(content: string | null | undefined): string {
     if (!content) return "";
     const cleanLines = content.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
-    if (cleanLines.length > 2) {
-        return cleanLines.slice(0, 2).join("\n") + "...";
+    if (cleanLines.length === 0) return "";
+    if (cleanLines.length === 1) {
+        const line = cleanLines[0];
+        return line.length > 75 ? line.slice(0, 75) + "..." : line;
     }
-    return content.length > 140 ? content.slice(0, 140) + "..." : content;
+    // Multi-line list or formatted message: take first line and append '...'
+    const firstLine = cleanLines[0];
+    const cleanFirst = firstLine.length > 65 ? firstLine.slice(0, 65) + "..." : firstLine;
+    return `${cleanFirst}\n...`;
+}
+
+function QuotedMapThumbnail() {
+    return (
+        <div className="h-10 w-10 shrink-0 rounded-md overflow-hidden bg-[#e5e3df] dark:bg-[#1f2c34] border border-black/5 dark:border-white/10 relative flex items-center justify-center select-none shadow-2xs">
+            <svg className="absolute inset-0 w-full h-full opacity-60 pointer-events-none" viewBox="0 0 40 40" fill="none">
+                <rect width="40" height="40" fill="#e8ece9" className="dark:fill-[#1b262c]" />
+                <path d="M-5 15 L45 25" stroke="#ffffff" strokeWidth="3" className="dark:stroke-[#2d3a40]" />
+                <path d="M25 -5 L15 45" stroke="#ffffff" strokeWidth="2.5" className="dark:stroke-[#2d3a40]" />
+                <path d="M0 32 Q20 20 40 30" stroke="#fcd34d" strokeWidth="1.5" strokeOpacity="0.8" />
+            </svg>
+            <div className="relative z-10 flex items-center justify-center">
+                <MapPin className="h-5 w-5 text-[#ea4335] fill-[#ea4335] drop-shadow-[0_1px_2px_rgba(0,0,0,0.3)] animate-in zoom-in duration-100" />
+            </div>
+        </div>
+    );
 }
 
 function highlightText(text: string, query?: string): React.ReactNode {
@@ -3130,13 +3154,36 @@ function ChatInputBar({
                     return replyingTo.pushName || (isGroup ? replyingTo.senderJid?.split('@')[0] || "Contato" : (contactName || jid.split('@')[0]));
                 })();
 
+                const senderColor = replyingTo.fromMe
+                    ? "#00a884"
+                    : getParticipantColor(replyingTo.senderJid || quotedSender);
+
+                const hasQuotedMedia = Boolean(replyingTo.mediaUrl);
+                const isQuotedLocation = replyingTo.type === 'LOCATION' ||
+                    Boolean(replyingTo.content && /(maps\.app\.goo\.gl|maps\.google\.com|goo\.gl\/maps)/i.test(replyingTo.content));
+
                 return (
-                    <div className="mb-2 p-2.5 rounded-xl bg-white/95 dark:bg-[#111b21] backdrop-blur-sm border-l-[4px] border-[#00a884] flex items-start justify-between gap-3 text-xs shadow-xs animate-in slide-in-from-bottom-2 duration-150">
-                        <div className="flex-1 min-w-0 pr-1 overflow-hidden">
-                            <span className="font-semibold text-[13px] text-[#00a884] dark:text-[#25d366] block truncate mb-0.5">
+                    <div
+                        style={{ borderLeftColor: senderColor, maxHeight: '64px', overflow: 'hidden' }}
+                        className="mb-2 p-2.5 rounded-xl bg-white/95 dark:bg-[#111b21] backdrop-blur-sm border-l-[4px] flex items-center justify-between gap-3 text-xs shadow-xs animate-in slide-in-from-bottom-2 duration-150"
+                    >
+                        <div className="flex-1 min-w-0 pr-1 overflow-hidden" style={{ maxHeight: '48px' }}>
+                            <span
+                                className="font-semibold text-[13px] block truncate mb-0.5 leading-tight"
+                                style={{ color: senderColor }}
+                            >
                                 {quotedSender}
                             </span>
-                            <div className="text-[12.5px] text-[#54656f] dark:text-[#8696a0] line-clamp-2 max-h-[36px] overflow-hidden leading-relaxed whitespace-pre-wrap break-words">
+                            <div
+                                className="text-[12.5px] text-[#54656f] dark:text-[#8696a0] leading-relaxed whitespace-pre-line break-words overflow-hidden"
+                                style={{
+                                    maxHeight: '32px',
+                                    display: '-webkit-box',
+                                    WebkitLineClamp: 2,
+                                    WebkitBoxOrient: 'vertical',
+                                    overflow: 'hidden'
+                                }}
+                            >
                                 {replyingTo.type === 'IMAGE' && <Camera className="h-3.5 w-3.5 inline mr-1 opacity-70 text-[#00a884]" />}
                                 {replyingTo.type === 'VIDEO' && <Video className="h-3.5 w-3.5 inline mr-1 opacity-70 text-[#00a884]" />}
                                 {replyingTo.type === 'AUDIO' && <Mic className="h-3.5 w-3.5 inline mr-1 opacity-70 text-[#00a884]" />}
@@ -3144,11 +3191,13 @@ function ChatInputBar({
                                 {renderMessageContent(getQuotedSnippet(replyingTo.content) || (replyingTo.type === 'IMAGE' ? "Foto" : (replyingTo.type === 'VIDEO' ? "Vídeo" : (replyingTo.type === 'AUDIO' ? "Mensagem de voz" : `[${replyingTo.type}]`))))}
                             </div>
                         </div>
-                        {(replyingTo.type === 'IMAGE' || replyingTo.type === 'VIDEO') && replyingTo.mediaUrl && (
+                        {hasQuotedMedia ? (
                             <div className="h-11 w-11 shrink-0 rounded-md overflow-hidden bg-black/10 border border-black/5 dark:border-white/10">
                                 <img src={replyingTo.mediaUrl} alt="Thumbnail" className="h-full w-full object-cover" />
                             </div>
-                        )}
+                        ) : isQuotedLocation ? (
+                            <QuotedMapThumbnail />
+                        ) : null}
                         <button
                             type="button"
                             onClick={onCancelReply}
@@ -7401,70 +7450,97 @@ export function ChatWindow({ sessionId, jid, name, profilePic, onBack }: ChatWin
                                         })()}
 
                                         {/* Quoted Message Box inside bubble with mentions and preview */}
-                                        {msg.quoted && (
-                                            <div
-                                                className={cn(
-                                                    "mb-1 px-2.5 py-1.5 rounded-lg border-l-4 text-xs select-none cursor-pointer text-left transition-opacity hover:opacity-90 flex items-center justify-between gap-2 max-h-[54px] overflow-hidden",
-                                                    msg.fromMe
-                                                        ? "border-[#00a884] bg-black/5 dark:bg-black/20 text-[#111b21] dark:text-[#e9edef]"
-                                                        : "border-[#00a884] bg-black/5 dark:bg-white/5 text-[#111b21] dark:text-[#e9edef]"
-                                                )}
-                                                onClick={async (e) => {
-                                                    e.stopPropagation();
-                                                    if (!msg.quoted?.keyId) return;
-                                                    const qKeyId = msg.quoted.keyId;
-                                                    let target = document.getElementById(`msg-${qKeyId}`);
-                                                    if (!target) {
-                                                        try {
-                                                            const ctx = await getChatMessagesAround(sessionId, jid, qKeyId);
-                                                            if (ctx?.messages && ctx.messages.length > 0) {
-                                                                setMessages(ctx.messages);
-                                                                if (ctx.contactMap) setContactMap(prev => ({ ...prev, ...ctx.contactMap }));
-                                                            }
-                                                        } catch {}
-                                                    }
-                                                    setTimeout(() => {
-                                                        const el = document.getElementById(`msg-${qKeyId}`);
-                                                        if (el) {
-                                                            el.scrollIntoView({ behavior: "smooth", block: "center" });
-                                                            el.classList.add("bg-amber-300/40", "dark:bg-amber-500/40", "ring-2", "ring-amber-500", "rounded-xl", "transition-all", "duration-500");
-                                                            setTimeout(() => {
-                                                                el.classList.remove("bg-amber-300/40", "dark:bg-amber-500/40", "ring-2", "ring-amber-500");
-                                                            }, 2500);
-                                                        } else {
-                                                            toast.info("Mensagem original não localizada");
+                                        {msg.quoted && (() => {
+                                            const quotedSender = (() => {
+                                                if (msg.quoted.fromMe) return "Você";
+                                                const qJid = msg.quoted.senderJid || "";
+                                                const bare = qJid.split('@')[0];
+                                                return (qJid && contactMap[qJid]) ||
+                                                       (bare && contactMap[bare]) ||
+                                                       msg.quoted.pushName ||
+                                                       bare ||
+                                                       "Contato";
+                                            })();
+
+                                            const senderColor = msg.quoted.fromMe
+                                                ? "#00a884"
+                                                : getParticipantColor(msg.quoted.senderJid || quotedSender);
+
+                                            const hasQuotedMedia = Boolean(msg.quoted.mediaUrl);
+                                            const isQuotedLocation = msg.quoted.type === 'LOCATION' ||
+                                                Boolean(msg.quoted.content && /(maps\.app\.goo\.gl|maps\.google\.com|goo\.gl\/maps)/i.test(msg.quoted.content));
+
+                                            return (
+                                                <div
+                                                    style={{ borderLeftColor: senderColor, maxHeight: '54px', overflow: 'hidden' }}
+                                                    className={cn(
+                                                        "mb-1 px-2.5 py-1.5 rounded-lg border-l-4 text-xs select-none cursor-pointer text-left transition-opacity hover:opacity-90 flex items-center justify-between gap-2 overflow-hidden",
+                                                        msg.fromMe
+                                                            ? "bg-black/5 dark:bg-black/20 text-[#111b21] dark:text-[#e9edef]"
+                                                            : "bg-black/5 dark:bg-white/5 text-[#111b21] dark:text-[#e9edef]"
+                                                    )}
+                                                    onClick={async (e) => {
+                                                        e.stopPropagation();
+                                                        if (!msg.quoted?.keyId) return;
+                                                        const qKeyId = msg.quoted.keyId;
+                                                        let target = document.getElementById(`msg-${qKeyId}`);
+                                                        if (!target) {
+                                                            try {
+                                                                const ctx = await getChatMessagesAround(sessionId, jid, qKeyId);
+                                                                if (ctx?.messages && ctx.messages.length > 0) {
+                                                                    setMessages(ctx.messages);
+                                                                    if (ctx.contactMap) setContactMap(prev => ({ ...prev, ...ctx.contactMap }));
+                                                                }
+                                                            } catch {}
                                                         }
-                                                    }, 100);
-                                                }}
-                                            >
-                                                <div className="flex-1 min-w-0 overflow-hidden">
-                                                    <span className="font-semibold block text-[11px] text-[#00a884] dark:text-[#25d366] truncate mb-0.5">
-                                                        {(() => {
-                                                            if (msg.quoted.fromMe) return "Você";
-                                                            const qJid = msg.quoted.senderJid || "";
-                                                            const bare = qJid.split('@')[0];
-                                                            return (qJid && contactMap[qJid]) ||
-                                                                   (bare && contactMap[bare]) ||
-                                                                   msg.quoted.pushName ||
-                                                                   bare ||
-                                                                   "Contato";
-                                                        })()}
-                                                    </span>
-                                                    <div className="text-[12px] leading-[16px] text-foreground/80 dark:text-[#e9edef]/80 line-clamp-2 overflow-hidden whitespace-pre-wrap break-words max-h-[34px]">
-                                                        {msg.quoted.type === 'IMAGE' && <Camera className="h-3 w-3 inline mr-1 opacity-70" />}
-                                                        {msg.quoted.type === 'VIDEO' && <Video className="h-3 w-3 inline mr-1 opacity-70" />}
-                                                        {msg.quoted.type === 'AUDIO' && <Mic className="h-3 w-3 inline mr-1 opacity-70" />}
-                                                        {msg.quoted.type === 'DOCUMENT' && <FileText className="h-3 w-3 inline mr-1 opacity-70" />}
-                                                        {renderMessageContent(getQuotedSnippet(msg.quoted.content) || (msg.quoted.type === 'IMAGE' ? "Foto" : (msg.quoted.type === 'VIDEO' ? "Vídeo" : (msg.quoted.type === 'AUDIO' ? "Áudio" : "Mídia"))), contactMap)}
+                                                        setTimeout(() => {
+                                                            const el = document.getElementById(`msg-${qKeyId}`);
+                                                            if (el) {
+                                                                el.scrollIntoView({ behavior: "smooth", block: "center" });
+                                                                el.classList.add("bg-amber-300/40", "dark:bg-amber-500/40", "ring-2", "ring-amber-500", "rounded-xl", "transition-all", "duration-500");
+                                                                setTimeout(() => {
+                                                                    el.classList.remove("bg-amber-300/40", "dark:bg-amber-500/40", "ring-2", "ring-amber-500");
+                                                                }, 2500);
+                                                            } else {
+                                                                toast.info("Mensagem original não localizada");
+                                                            }
+                                                        }, 100);
+                                                    }}
+                                                >
+                                                    <div className="flex-1 min-w-0 overflow-hidden" style={{ maxHeight: '44px' }}>
+                                                        <span
+                                                            className="font-semibold block text-[11px] truncate mb-0.5 leading-tight"
+                                                            style={{ color: senderColor }}
+                                                        >
+                                                            {quotedSender}
+                                                        </span>
+                                                        <div
+                                                            className="text-[12px] leading-[15px] text-foreground/80 dark:text-[#e9edef]/80 overflow-hidden whitespace-pre-line break-words"
+                                                            style={{
+                                                                maxHeight: '30px',
+                                                                display: '-webkit-box',
+                                                                WebkitLineClamp: 2,
+                                                                WebkitBoxOrient: 'vertical',
+                                                                overflow: 'hidden'
+                                                            }}
+                                                        >
+                                                            {msg.quoted.type === 'IMAGE' && <Camera className="h-3 w-3 inline mr-1 opacity-70" />}
+                                                            {msg.quoted.type === 'VIDEO' && <Video className="h-3 w-3 inline mr-1 opacity-70" />}
+                                                            {msg.quoted.type === 'AUDIO' && <Mic className="h-3 w-3 inline mr-1 opacity-70" />}
+                                                            {msg.quoted.type === 'DOCUMENT' && <FileText className="h-3 w-3 inline mr-1 opacity-70" />}
+                                                            {renderMessageContent(getQuotedSnippet(msg.quoted.content) || (msg.quoted.type === 'IMAGE' ? "Foto" : (msg.quoted.type === 'VIDEO' ? "Vídeo" : (msg.quoted.type === 'AUDIO' ? "Áudio" : "Mídia"))), contactMap)}
+                                                        </div>
                                                     </div>
+                                                    {hasQuotedMedia ? (
+                                                        <div className="h-10 w-10 shrink-0 rounded-md overflow-hidden bg-black/10 dark:bg-white/10 border border-black/5 dark:border-white/10 shadow-xs">
+                                                            <img src={msg.quoted.mediaUrl!} alt="Thumbnail" className="h-full w-full object-cover" loading="lazy" />
+                                                        </div>
+                                                    ) : isQuotedLocation ? (
+                                                        <QuotedMapThumbnail />
+                                                    ) : null}
                                                 </div>
-                                                {msg.quoted && (msg.quoted.type === 'IMAGE' || msg.quoted.type === 'VIDEO' || msg.quoted.type === 'STICKER') && msg.quoted.mediaUrl && (
-                                                    <div className="h-10 w-10 shrink-0 rounded-md overflow-hidden bg-black/10 dark:bg-white/10 border border-black/5 dark:border-white/10 shadow-xs">
-                                                        <img src={msg.quoted.mediaUrl} alt="Thumbnail" className="h-full w-full object-cover" loading="lazy" />
-                                                    </div>
-                                                )}
-                                            </div>
-                                        )}
+                                            );
+                                        })()}
 
                                         {/* IMAGE (with fallback if mediaUrl is missing) */}
                                         {msg.type === 'IMAGE' && (
